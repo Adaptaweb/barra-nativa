@@ -36,7 +36,10 @@ pub enum ConfigError {
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub version: u32,
+    /// Pinned items in dock order: apps, and the ids of `groups`.
     pub pinned: Vec<String>,
+    /// Pinned apps gathered in one dock icon each.
+    pub groups: Vec<DockGroup>,
     pub recent: Vec<String>,
     /// The apps pinned to the Windows taskbar when the dock last looked, to
     /// bring pins and unpins made there (even while Muelle was closed) to the
@@ -79,6 +82,16 @@ pub struct Config {
     pub language: Language,
 }
 
+/// Pinned apps the user gathered in one dock icon by dropping one on
+/// another. Its `id` stands for it in `pinned`, in its place.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+#[serde(rename_all = "camelCase")]
+pub struct DockGroup {
+    pub id: String,
+    pub apps: Vec<String>,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Language {
@@ -119,6 +132,7 @@ impl Default for Config {
         Self {
             version: CURRENT_VERSION,
             pinned: Vec::new(),
+            groups: Vec::new(),
             recent: Vec::new(),
             taskbar_pins: None,
             auto_hide: false,
@@ -239,6 +253,25 @@ mod tests {
         assert!(config.auto_update);
         assert!(config.ai_usage);
         assert!(!config.show_minimized);
+    }
+
+    #[test]
+    fn load_should_read_dock_groups() {
+        let path = scratch("groups");
+        save(&path, &Config::default()).ok();
+        fs::write(
+            &path,
+            r#"{"pinned":["a","muelle:group:1"],"groups":[{"id":"muelle:group:1","apps":["b","c"]}]}"#,
+        )
+        .ok();
+        let config = load(&path).ok().flatten().unwrap_or_default();
+        assert_eq!(
+            config.groups,
+            [DockGroup {
+                id: "muelle:group:1".into(),
+                apps: vec!["b".into(), "c".into()],
+            }]
+        );
     }
 
     #[test]

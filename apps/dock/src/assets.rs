@@ -135,6 +135,17 @@ impl Visuals {
         self.ready.get(&request).and_then(Option::as_ref)
     }
 
+    /// Like `get`, but only reads what is loaded already: several loaded
+    /// visuals can then be borrowed at once (a group's tile).
+    pub fn peek(&self, id: &str, variant: &'static str) -> Option<&AppVisual> {
+        self.ready
+            .get(&Request {
+                id: id.to_owned(),
+                variant,
+            })
+            .and_then(Option::as_ref)
+    }
+
     pub fn collect(&mut self) -> Vec<String> {
         let mut changed = Vec::new();
         for loaded in self.results.try_iter() {

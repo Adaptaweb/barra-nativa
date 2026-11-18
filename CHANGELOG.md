@@ -8,6 +8,26 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+### English
+
+- Dock groups: drag a pinned app onto the middle of another one (a blue frame
+  shows it) to put both in a group that takes a single place in the dock;
+  drop more apps on the group to add them. A group shows its first apps'
+  icons on a framed tile, and lists their names on hover. Clicking it fans
+  its apps out above it (a grid when there are many); drag one out of the
+  fan to take it out of the group, into the dock where it is dropped.
+  Right-click a group to ungroup it.
+
+### Español
+
+- Grupos en el dock: arrastra una app fijada al centro de otra (un marco azul
+  lo indica) para reunirlas en un grupo que ocupa un solo lugar en el dock;
+  suelta más apps sobre el grupo para añadirlas. Un grupo muestra los iconos
+  de sus primeras apps en un mosaico enmarcado, y sus nombres al pasar el
+  puntero. Al hacer clic se despliegan en abanico encima (en cuadrícula si son
+  muchas); arrastra una fuera del abanico para sacarla del grupo, al lugar del
+  dock donde la sueltes. Clic derecho en un grupo para desagruparlo.
+
 ## [0.1.12]
 
 ### English

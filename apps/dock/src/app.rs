@@ -22,17 +22,19 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use muelle_config::Config;
+use muelle_config::{Config, DockGroup};
 use muelle_core::{
     bounce,
     layout::{ItemKind, Layout, Metrics, layout},
     magnify::{Magnifier, magnify},
-    roster::Roster,
+    roster::{Group, Roster},
     spring::Spring,
 };
 use muelle_shell::{
     appbar::{ABN_FULLSCREENAPP, AppBar, Edge},
-    files, launcher,
+    files,
+    icons::IconImage,
+    launcher,
     pins::{self, app_exists, taskbar_pins, taskbar_pins_if_readable},
     power,
     recycle_bin::{self, BinWatch},
@@ -91,6 +93,7 @@ use crate::{
     drop::DropTarget,
     flight::{Flight, Snapshot},
     gfx::{Gfx, LabelBrush},
+    group_view::{DragGhost, GroupItem, GroupView, Placement, Released},
     mascot,
     menu::{self, MenuItem},
     menubar::MenuBar,
@@ -225,6 +228,12 @@ const SLIDE_OMEGA: f32 = 24.0;
 const REVEAL_STRIP: i32 = 2;
 /// An icon released this far above the magnified dock, in icon heights, leaves it.
 const REMOVE_DISTANCE: f32 = 0.8;
+/// A dragged app joins the icon under it (in a group) when released over
+/// its middle, past this fraction of its width from either side; over its
+/// sides, it moves between icons as usual.
+const MERGE_SIDE: f32 = 0.25;
+/// Longest hover label of a group, which lists its apps.
+const GROUP_LABEL_CHARS: usize = 48;
 
 const START_ID: &str = "muelle:start";
 const WINDOW_ID_PREFIX: &str = "muelle:window:";
@@ -246,6 +255,7 @@ const CMD_RUN_AS_ADMIN: u32 = 11;
 const CMD_SHOW_DESKTOP: u32 = 12;
 const CMD_TASK_MANAGER: u32 = 13;
 const CMD_TASKBAR_SETTINGS: u32 = 14;
+const CMD_UNGROUP: u32 = 15;
 const CMD_WINDOW: u32 = 100;
 const MENU_WINDOWS: usize = 12;
 const MENU_TITLE_CHARS: usize = 60;
@@ -308,11 +318,16 @@ struct Entry {
     id: Option<String>,
     role: Role,
     running: bool,
+    /// A group's apps, in order; empty for anything else. Part of the
+    /// scene's key: the group's tile shows them.
+    members: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
     App,
+    /// Pinned apps gathered in one icon; a click unfolds them.
+    Group,
     Start,
     /// A minimized window, shown as a live thumbnail.
     Window,
@@ -374,6 +389,8 @@ enum MenuTarget {
 struct Asset {
     icon: Option<CompositionSurfaceBrush>,
     label: Option<LabelBrush>,
+    /// A group's apps when its tile was drawn; empty for anything else.
+    drawn_for: Vec<String>,
 }
 
 struct Press {
@@ -385,6 +402,10 @@ struct Dragging {
     id: String,
     point: POINT,
     removing: bool,
+    /// The pinned app or group it would join if released now.
+    merge: Option<String>,
+    /// Dragged out of an open group (see `start_group_drag`).
+    from_group: bool,
 }
 
 /// What dropping the dragged files at a given place would do.
@@ -571,6 +592,13 @@ struct App {
     hovered: Option<usize>,
     preview_candidate: Option<String>,
     preview: Option<MultiWindowView>,
+    /// A group's apps, unfolded above it after a click.
+    group_view: Option<GroupView>,
+    /// The group whose view a press on the dock closed: releasing on that
+    /// group then leaves it closed rather than opening it again.
+    group_was_open: Option<String>,
+    /// The icon following the pointer while an app is dragged out of a group.
+    ghost: Option<DragGhost>,
     /// The crab, while it is out (see `perform`).
     mascot: Option<mascot::Mascot>,
     /// Charging and energy saver at the last power change.
@@ -621,13 +649,26 @@ fn load_config() -> Config {
     }
 }
 
-/// The Explorer is always pinned, like Finder.
+/// The Explorer is always pinned, like Finder, on its own.
 fn roster_from(config: &Config) -> Roster {
     let explorer = explorer_id();
     let mut pinned = config.pinned.clone();
     pinned.retain(|id| *id != explorer);
-    pinned.insert(0, explorer);
-    Roster::new(pinned, config.recent.clone())
+    pinned.insert(0, explorer.clone());
+    let groups = config
+        .groups
+        .iter()
+        .map(|group| Group {
+            id: group.id.clone(),
+            apps: group
+                .apps
+                .iter()
+                .filter(|id| **id != explorer)
+                .cloned()
+                .collect(),
+        })
+        .collect();
+    Roster::new(pinned, config.recent.clone()).with_groups(groups)
 }
 
 fn save_settings(roster: &Roster, config: &Config) {
@@ -639,6 +680,14 @@ fn save_settings(roster: &Roster, config: &Config) {
     }
     let config = Config {
         pinned: roster.pinned().to_vec(),
+        groups: roster
+            .groups()
+            .iter()
+            .map(|group| DockGroup {
+                id: group.id.clone(),
+                apps: group.apps.clone(),
+            })
+            .collect(),
         recent: roster.recent().to_vec(),
         ..config.clone()
     };
@@ -707,19 +756,27 @@ impl App {
             id: None,
             role: Role::Folder,
             running: false,
+            members: Vec::new(),
         };
         let icon = |id: &str, role: Role, running: bool| Entry {
             kind: ItemKind::Icon,
             id: Some(id.to_owned()),
             role,
             running,
+            members: Vec::new(),
         };
 
         let mut entries: Vec<Entry> = self
             .roster
             .apps()
             .iter()
-            .map(|app| icon(&app.id, Role::App, app.running))
+            .map(|app| match self.roster.group(&app.id) {
+                Some(group) => Entry {
+                    members: group.apps.clone(),
+                    ..icon(&app.id, Role::Group, app.running)
+                },
+                None => icon(&app.id, Role::App, app.running),
+            })
             .collect();
         entries.insert(0, icon(START_ID, Role::Start, false));
         if self.config.show_recents && !self.roster.recent().is_empty() {
@@ -762,7 +819,59 @@ impl App {
         if self.placeholder.is_none() {
             self.placeholder = self.gfx.placeholder_brush(wanted, light).ok();
         }
-        for id in self.entries.iter().filter_map(|entry| entry.id.as_ref()) {
+        for entry in &self.entries {
+            let Some(id) = entry.id.as_ref() else {
+                continue;
+            };
+            if entry.role == Role::Group {
+                if self
+                    .assets
+                    .get(id)
+                    .is_some_and(|asset| asset.drawn_for == entry.members)
+                {
+                    continue;
+                }
+                // Every app is asked for, not only the four on the tile: the
+                // unfolded group shows them all.
+                for member in &entry.members {
+                    let _ = self.icons.get(member, "");
+                }
+                let images: Vec<Option<&IconImage>> = entry
+                    .members
+                    .iter()
+                    .take(4)
+                    .map(|member| self.icons.peek(member, "").map(|visual| &visual.icon))
+                    .collect();
+                let icon = self
+                    .gfx
+                    .group_brush(wanted, &images, entry.members.len(), light)
+                    .inspect_err(|error| eprintln!("muelle: icono del grupo `{id}`: {error:#}"))
+                    .ok()
+                    .or_else(|| self.placeholder.clone());
+                let names: Vec<String> = entry
+                    .members
+                    .iter()
+                    .map(|member| {
+                        self.icons
+                            .peek(member, "")
+                            .map_or_else(|| fallback_name(member), |visual| visual.name.clone())
+                    })
+                    .collect();
+                let label = self
+                    .gfx
+                    .label_brush(&shorten(&names.join(", "), GROUP_LABEL_CHARS), scale, light)
+                    .inspect_err(|error| eprintln!("muelle: etiqueta del grupo `{id}`: {error:#}"))
+                    .ok();
+                self.assets.insert(
+                    id.clone(),
+                    Asset {
+                        icon,
+                        label,
+                        drawn_for: entry.members.clone(),
+                    },
+                );
+                continue;
+            }
             let variant = if id == recycle_bin::PARSING_NAME {
                 if self.bin_full { "llena" } else { "vacia" }
             } else {
@@ -779,13 +888,27 @@ impl App {
             if let Some(hwnd) = window_of(id) {
                 let title = shorten(&tracker::title(hwnd), WINDOW_TITLE_CHARS);
                 let label = self.gfx.label_brush(&title, scale, light).ok();
-                self.assets.insert(id.clone(), Asset { icon: None, label });
+                self.assets.insert(
+                    id.clone(),
+                    Asset {
+                        icon: None,
+                        label,
+                        drawn_for: Vec::new(),
+                    },
+                );
                 continue;
             }
             if id == START_ID {
                 let icon = self.gfx.start_brush(wanted).ok();
                 let label = self.gfx.label_brush(text().start, scale, light).ok();
-                self.assets.insert(id.clone(), Asset { icon, label });
+                self.assets.insert(
+                    id.clone(),
+                    Asset {
+                        icon,
+                        label,
+                        drawn_for: Vec::new(),
+                    },
+                );
                 continue;
             }
             // A missing icon should not prevent the rest of the dock from rendering.
@@ -804,16 +927,27 @@ impl App {
                 .label_brush(&name, scale, light)
                 .inspect_err(|error| eprintln!("muelle: etiqueta de `{id}`: {error:#}"))
                 .ok();
-            self.assets.insert(id.clone(), Asset { icon, label });
+            self.assets.insert(
+                id.clone(),
+                Asset {
+                    icon,
+                    label,
+                    drawn_for: Vec::new(),
+                },
+            );
         }
         let entries = &self.entries;
         self.assets
             .retain(|id, _| entries.iter().any(|entry| entry.id.as_ref() == Some(id)));
         let windows = &self.windows;
         let explorer = explorer_id();
+        // The apps in groups keep their icons: their group's tile and its
+        // unfolded view draw them.
         self.icons.retain(|id| {
             id == explorer
-                || entries.iter().any(|entry| entry.id.as_deref() == Some(id))
+                || entries.iter().any(|entry| {
+                    entry.id.as_deref() == Some(id) || entry.members.iter().any(|app| app == id)
+                })
                 || windows.iter().any(|window| window.app_id == id)
         });
     }
@@ -826,6 +960,16 @@ impl App {
         for id in &loaded {
             self.assets.remove(id);
             self.names.remove(id);
+        }
+        // A group's tile and label show its apps' icons and names.
+        let groups: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.members.iter().any(|app| loaded.contains(app)))
+            .filter_map(|entry| entry.id.clone())
+            .collect();
+        for id in &groups {
+            self.assets.remove(id);
         }
         self.stage = None;
         self.refresh()?;
@@ -858,6 +1002,15 @@ impl App {
             return Ok(());
         }
         self.close_preview();
+        // An unfolded group shows its apps as they were: it closes if they changed.
+        if let Some(view) = &self.group_view
+            && self
+                .roster
+                .group(&view.group_id)
+                .is_none_or(|group| group.apps.as_slice() != view.apps())
+        {
+            self.close_group_view();
+        }
 
         let scale = monitor.scale;
         let max_scale = key.max_scale;
@@ -1029,18 +1182,23 @@ impl App {
             .flatten();
 
         let now = Instant::now();
+        let lift_of = |id: &str| {
+            self.bounces.get(id).map_or(0.0, |bounce| {
+                let elapsed = now.duration_since(bounce.start).as_secs_f32();
+                bounce::lift(elapsed, stage.icon * BOUNCE_HEIGHT)
+            })
+        };
+        // A group bounces for any of its apps (opening, asking for attention).
         let lifts: Vec<f32> = self
             .entries
             .iter()
-            .map(|entry| {
-                entry
-                    .id
-                    .as_ref()
-                    .and_then(|id| self.bounces.get(id))
-                    .map_or(0.0, |bounce| {
-                        let elapsed = now.duration_since(bounce.start).as_secs_f32();
-                        bounce::lift(elapsed, stage.icon * BOUNCE_HEIGHT)
-                    })
+            .map(|entry| match entry.role {
+                Role::Group => entry
+                    .members
+                    .iter()
+                    .map(|app| lift_of(app.as_str()))
+                    .fold(0.0, f32::max),
+                _ => entry.id.as_deref().map_or(0.0, lift_of),
             })
             .collect();
 
@@ -1055,11 +1213,27 @@ impl App {
                     (drag.point.y - stage.dock_origin.y) as f32,
                 ),
                 removing: drag.removing,
+                ghost: drag.from_group,
             })
         });
+        let target = self
+            .drag
+            .as_ref()
+            .and_then(|drag| drag.merge.as_deref())
+            .and_then(|merge| {
+                self.entries
+                    .iter()
+                    .position(|entry| entry.id.as_deref() == Some(merge))
+            });
         if drag.is_some() {
             self.hovered = None;
         }
+        // The open group's name would cover its unfolded apps.
+        let open_group = self.group_view.as_ref().and_then(|view| {
+            self.entries
+                .iter()
+                .position(|entry| entry.id.as_deref() == Some(view.group_id.as_str()))
+        });
         let at_rest = self.amount.value == 0.0
             && self.bounces.is_empty()
             && self.slide.is_settled()
@@ -1067,9 +1241,12 @@ impl App {
         let slide = self.slide.value * stage.slide_distance;
         stage.scene.apply(&Frame {
             state: &state,
-            hovered: self.hovered.filter(|_| self.preview.is_none()),
+            hovered: self
+                .hovered
+                .filter(|&index| self.preview.is_none() && open_group != Some(index)),
             lifts: &lifts,
             drag,
+            target,
             slide,
             snap: at_rest,
         })?;
@@ -1116,10 +1293,16 @@ impl App {
         } else {
             window_id(hwnd)
         };
+        // An app in a group lives in its group's icon.
         let index = self
             .entries
             .iter()
-            .position(|entry| entry.id.as_deref() == Some(id.as_str()))?;
+            .position(|entry| entry.id.as_deref() == Some(id.as_str()))
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .position(|entry| entry.members.contains(&id))
+            })?;
         let rect = stage.layout.slots.get(index)?.rect;
         let (width, height) = if aspect >= 1.0 {
             (rect.width, rect.width / aspect)
@@ -1349,6 +1532,7 @@ impl App {
             || self.drag_over
             || self.fullscreen
             || self.switching
+            || self.group_view.is_some()
         {
             return None;
         }
@@ -1525,6 +1709,7 @@ impl App {
         }
         self.switching = true;
         self.close_preview();
+        self.close_group_view();
         self.flights.clear();
         self.switch_started = Instant::now();
         // SAFETY: Timers on our own window.
@@ -1701,6 +1886,11 @@ impl App {
                 self.entries
                     .iter()
                     .position(|entry| entry.role == Role::App && entry.id.as_ref() == Some(&app))
+                    .or_else(|| {
+                        self.entries
+                            .iter()
+                            .position(|entry| entry.members.contains(&app))
+                    })
             });
         let (Some(index), Some(stage)) = (index, &self.stage) else {
             return self.stop_following();
@@ -1923,6 +2113,7 @@ impl App {
             || self.drag.is_some()
             || self.switching
             || self.preview.is_some()
+            || self.group_view.is_some()
         {
             return Ok(());
         }
@@ -1931,10 +2122,10 @@ impl App {
         self.place_windows()
     }
 
-    /// Only running or pinned apps can be dragged; the Explorer, Start,
-    /// recent apps, Downloads, and the recycle bin stay in place.
+    /// Only running or pinned apps, and groups, can be dragged; the Explorer,
+    /// Start, recent apps, Downloads, and the recycle bin stay in place.
     fn is_draggable(&self, entry: &Entry) -> bool {
-        entry.role == Role::App
+        matches!(entry.role, Role::App | Role::Group)
             && entry.id.as_ref().is_some_and(|id| {
                 *id != explorer_id() && (self.roster.is_pinned(id) || self.roster.is_running(id))
             })
@@ -1942,6 +2133,10 @@ impl App {
 
     fn on_press(&mut self) -> Result<()> {
         self.close_preview();
+        // Any press on the dock closes an unfolded group; on the group
+        // itself, `on_click` then leaves it closed.
+        self.group_was_open = self.group_view.as_ref().map(|view| view.group_id.clone());
+        self.close_group_view();
         let Some(at) = self.pointer_at_click()? else {
             return Ok(());
         };
@@ -2001,6 +2196,8 @@ impl App {
                     id: press.id.clone(),
                     point,
                     removing: false,
+                    merge: None,
+                    from_group: false,
                 });
             }
         }
@@ -2008,17 +2205,28 @@ impl App {
     }
 
     /// Moves the dragged icon and reorders the pinned apps live, as in macOS.
+    /// Held over the middle of another pinned app or a group, the dragged
+    /// app would join it in a group instead (see `MERGE_SIDE`).
     fn drag_to(&mut self, point: POINT) -> Result<()> {
         let (Some(stage), Some(drag)) = (&self.stage, &mut self.drag) else {
             return Ok(());
         };
         drag.point = point;
+        if let Some(ghost) = &self.ghost {
+            ghost.move_to(point);
+        }
         let id = drag.id.clone();
         let pinned = self.roster.is_pinned(&id);
+        let group = self.roster.is_group(&id);
         let top = stage.dock_origin.y as f32
             - stage.icon * (stage.magnifier.max_scale - 1.0 + REMOVE_DISTANCE);
-        drag.removing = pinned && (point.y as f32) < top;
-        if drag.removing {
+        let above = (point.y as f32) < top;
+        // A group never leaves the dock this way (it can be ungrouped from
+        // its menu), and an app taken out of a group stays in the dock,
+        // where it was last placed, wherever it is released.
+        drag.removing = pinned && above && !group && !drag.from_group;
+        drag.merge = None;
+        if drag.removing || (above && drag.from_group) {
             return self.render();
         }
 
@@ -2029,13 +2237,35 @@ impl App {
             &stage.magnifier,
         );
         let explorer = explorer_id();
+        let rise = stage.icon * (stage.magnifier.max_scale - 1.0);
+        let in_dock = (point.y as f32) >= stage.dock_origin.y as f32 - rise;
+        if !group && in_dock {
+            drag.merge = self
+                .entries
+                .iter()
+                .zip(&state.rects)
+                .find(|(entry, rect)| {
+                    let side = rect.width * MERGE_SIDE;
+                    matches!(entry.role, Role::App | Role::Group)
+                        && entry.id.as_ref().is_some_and(|other| {
+                            *other != id && *other != explorer && self.roster.is_pinned(other)
+                        })
+                        && self.cursor >= rect.x + side
+                        && self.cursor <= rect.x + rect.width - side
+                })
+                .and_then(|(entry, _)| entry.id.clone());
+            if drag.merge.is_some() {
+                return self.render();
+            }
+        }
+
         let mut before: Option<String> = None;
         let mut pinned_end = f32::MIN;
         for (entry, rect) in self.entries.iter().zip(&state.rects) {
             let Some(other) = entry.id.as_ref() else {
                 continue;
             };
-            if entry.role != Role::App
+            if !matches!(entry.role, Role::App | Role::Group)
                 || *other == id
                 || *other == explorer
                 || !self.roster.is_pinned(other)
@@ -2110,7 +2340,7 @@ impl App {
                     .all(|file| files::same_volume(file, &id)),
                 folder: id,
             },
-            Role::App | Role::Start | Role::Window => DropAction::Nothing,
+            Role::App | Role::Group | Role::Start | Role::Window => DropAction::Nothing,
         }
     }
 
@@ -2125,7 +2355,7 @@ impl App {
             .iter()
             .zip(&state.rects)
             .find(|(entry, rect)| {
-                entry.role == Role::App
+                matches!(entry.role, Role::App | Role::Group)
                     && entry.id.as_ref().is_some_and(|other| {
                         *other != explorer && *other != id && self.roster.is_pinned(other)
                     })
@@ -2287,12 +2517,16 @@ impl App {
         unsafe {
             let _ = ReleaseCapture();
         }
-        if drag.removing {
+        self.ghost = None;
+        if let Some(target) = &drag.merge {
+            self.roster.group_with(&drag.id, target);
+        } else if drag.removing {
             self.roster.unpin(&drag.id);
         }
         save_settings(&self.roster, &self.config);
         self.refresh()?;
         self.leave_if_outside(drag.point)?;
+        self.after_group_drag(&drag)?;
         Ok(None)
     }
 
@@ -2303,9 +2537,25 @@ impl App {
         let Some(drag) = self.drag.take() else {
             return Ok(());
         };
+        self.ghost = None;
         save_settings(&self.roster, &self.config);
         self.leave_if_outside(drag.point)?;
+        self.after_group_drag(&drag)?;
         self.render()
+    }
+
+    /// A drag out of a group starts away from the dock, so no hover ends
+    /// with it: the input area shrinks back now, and an auto-hidden dock
+    /// goes down.
+    fn after_group_drag(&mut self, drag: &Dragging) -> Result<()> {
+        if !drag.from_group || self.hovering {
+            return Ok(());
+        }
+        if self.config.auto_hide {
+            // SAFETY: Timer on our own window.
+            unsafe { SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None) };
+        }
+        self.place_windows()
     }
 
     fn leave_if_outside(&mut self, point: POINT) -> Result<()> {
@@ -2336,6 +2586,7 @@ impl App {
     /// foreground. Clicking the app that is already in front minimizes it, as
     /// the Windows taskbar does; the next click brings it back.
     fn on_click(&mut self) -> Result<Option<Outside>> {
+        let group_was_open = self.group_was_open.take();
         if self.pointer_at_click()?.is_none() {
             return Ok(None);
         }
@@ -2345,47 +2596,259 @@ impl App {
         let (Some(id), role) = (entry.id.clone(), entry.role) else {
             return Ok(None);
         };
-        let windows = self.windows_of(&id);
-
-        // As on the Windows taskbar: Shift+click opens another window of the
-        // app, Ctrl+Shift+click opens it as administrator.
-        if role == Role::App {
-            // SAFETY: Read-only keyboard state queries.
-            let (shift, ctrl) = unsafe {
-                (
-                    GetKeyState(i32::from(VK_SHIFT.0)) < 0,
-                    GetKeyState(i32::from(VK_CONTROL.0)) < 0,
-                )
-            };
-            if shift {
-                self.start_bounce(id.clone(), None);
-                return Ok(Some(if ctrl {
-                    Outside::OpenAsAdmin(id)
-                } else {
-                    Outside::Open(id)
-                }));
-            }
-        }
 
         Ok(match role {
-            Role::App if windows.is_empty() => {
-                self.start_bounce(id.clone(), None);
-                Some(Outside::Open(id))
+            Role::App => self.click_app(id),
+            // A click unfolds the group; another click on it folds it back.
+            Role::Group => {
+                if group_was_open.as_deref() != Some(id.as_str()) {
+                    self.open_group_view(&id)?;
+                }
+                None
             }
-            Role::App if windows.contains(&tracker::foreground_window()) => {
-                Some(Outside::Minimize(windows))
-            }
-            Role::App => self.activating(windows),
             Role::Start => Some(Outside::OpenStart),
             Role::Window => window_of(&id).and_then(|hwnd| self.activating(vec![hwnd])),
             Role::Folder | Role::Trash => Some(Outside::Open(id)),
         })
     }
 
+    /// What clicking the app `id` does, in the dock or in an unfolded group:
+    /// open it, bring its windows to the front, or minimize them if it is the
+    /// app in front.
+    fn click_app(&mut self, id: String) -> Option<Outside> {
+        let windows = self.windows_of(&id);
+        // As on the Windows taskbar: Shift+click opens another window of the
+        // app, Ctrl+Shift+click opens it as administrator.
+        // SAFETY: Read-only keyboard state queries.
+        let (shift, ctrl) = unsafe {
+            (
+                GetKeyState(i32::from(VK_SHIFT.0)) < 0,
+                GetKeyState(i32::from(VK_CONTROL.0)) < 0,
+            )
+        };
+        if shift {
+            self.start_bounce(id.clone(), None);
+            return Some(if ctrl {
+                Outside::OpenAsAdmin(id)
+            } else {
+                Outside::Open(id)
+            });
+        }
+        if windows.is_empty() {
+            self.start_bounce(id.clone(), None);
+            Some(Outside::Open(id))
+        } else if windows.contains(&tracker::foreground_window()) {
+            Some(Outside::Minimize(windows))
+        } else {
+            self.activating(windows)
+        }
+    }
+
+    /// Unfolds the group `id` above its icon.
+    fn open_group_view(&mut self, id: &str) -> Result<()> {
+        self.close_preview();
+        self.close_group_view();
+        let Some(stage) = &self.stage else {
+            return Ok(());
+        };
+        let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.id.as_deref() == Some(id))
+        else {
+            return Ok(());
+        };
+        let state = magnify(
+            &stage.layout,
+            self.cursor,
+            self.amount.value,
+            &stage.magnifier,
+        );
+        let Some(rect) = state.rects.get(index) else {
+            return Ok(());
+        };
+        let anchor = RECT {
+            left: stage.dock_origin.x + rect.x.round() as i32,
+            top: stage.dock_origin.y + rect.y.round() as i32,
+            right: stage.dock_origin.x + (rect.x + rect.width).round() as i32,
+            bottom: stage.dock_origin.y + (rect.y + rect.height).round() as i32,
+        };
+        let (icon, scale) = (stage.icon.round(), stage.scale);
+        let theme = Theme::for_system(stage.key.light, stage.key.glass);
+        let Some(monitor) = primary_monitor() else {
+            return Ok(());
+        };
+        let items = self.group_items(id, icon as u32);
+        self.group_view = Some(GroupView::show(
+            &self.gfx,
+            id.to_owned(),
+            &items,
+            &Placement {
+                anchor,
+                screen: monitor.screen,
+                scale,
+                icon,
+                theme,
+                dock: self.input,
+            },
+        )?);
+        self.render()
+    }
+
+    /// The apps of the group `id`, drawn `side` pixels wide.
+    fn group_items(&mut self, id: &str, side: u32) -> Vec<GroupItem> {
+        let apps = self
+            .roster
+            .group(id)
+            .map(|group| group.apps.clone())
+            .unwrap_or_default();
+        let mut items = Vec::with_capacity(apps.len());
+        for app in apps {
+            let visual = self.icons.get(&app, "");
+            let icon = visual
+                .and_then(|visual| {
+                    self.gfx
+                        .icon_brush(&visual.icon, side.min(visual.icon.width))
+                        .inspect_err(|error| eprintln!("muelle: icono de `{app}`: {error:#}"))
+                        .ok()
+                })
+                .or_else(|| self.placeholder.clone());
+            let name = visual.map_or_else(|| fallback_name(&app), |visual| visual.name.clone());
+            items.push(GroupItem {
+                running: self.roster.is_running(&app),
+                id: app,
+                name,
+                icon,
+            });
+        }
+        items
+    }
+
+    fn close_group_view(&mut self) {
+        if self.group_view.take().is_some()
+            && self.config.auto_hide
+            && !self.hovering
+            && self.drag.is_none()
+        {
+            // SAFETY: Timer on our own window.
+            unsafe { SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None) };
+        }
+    }
+
+    /// The pointer moved over the unfolded group: past the drag threshold,
+    /// the app pressed leaves the group.
+    fn group_view_moved(&mut self) -> Result<()> {
+        let Some(view) = &mut self.group_view else {
+            return Ok(());
+        };
+        if let Some((id, point)) = view.drag_started()? {
+            return self.start_group_drag(id, point);
+        }
+        view.update()
+    }
+
+    /// An app dragged out of an unfolded group: it leaves the group for the
+    /// dock, right after the group, and the drag goes on as a dock drag. So
+    /// it can be placed among the icons or dropped on another group, and
+    /// released anywhere else it simply stays out of the group.
+    fn start_group_drag(&mut self, id: String, point: POINT) -> Result<()> {
+        // Closing the view also releases the mouse it held.
+        self.close_group_view();
+        if !self.roster.ungroup(&id) {
+            return Ok(());
+        }
+        let side = self.stage.as_ref().map_or(48.0, |stage| {
+            (stage.icon * stage.magnifier.max_scale).round()
+        });
+        let brush = self
+            .icons
+            .get(&id, "")
+            .and_then(|visual| {
+                self.gfx
+                    .icon_brush(&visual.icon, (side as u32).min(visual.icon.width))
+                    .ok()
+            })
+            .or_else(|| self.placeholder.clone());
+        self.ghost = brush.and_then(|brush| {
+            DragGhost::show(&self.gfx, &brush, side, point)
+                .inspect_err(|error| eprintln!("muelle: icono arrastrado: {error:#}"))
+                .ok()
+        });
+        self.press = None;
+        self.drag = Some(Dragging {
+            id,
+            point,
+            removing: false,
+            merge: None,
+            from_group: true,
+        });
+        self.refresh()?;
+        if let Some(stage) = &self.stage {
+            self.cursor = (point.x - stage.dock_origin.x) as f32;
+        }
+        // SAFETY: Capture keeps mouse input while dragging outside the dock.
+        unsafe {
+            SetCapture(self.input);
+        }
+        self.drag_to(point)
+    }
+
+    fn group_view_released(&mut self) -> Result<Option<Outside>> {
+        let Some(view) = &mut self.group_view else {
+            return Ok(None);
+        };
+        Ok(match view.release()? {
+            Released::Item(id) => {
+                self.close_group_view();
+                self.click_app(id)
+            }
+            Released::Dismiss => {
+                self.close_group_view();
+                None
+            }
+            Released::Nothing => None,
+        })
+    }
+
+    /// Right-click on an app in an unfolded group: that app's dock menu.
+    fn group_view_menu(&mut self) -> Result<Option<Outside>> {
+        let Some(view) = &self.group_view else {
+            return Ok(None);
+        };
+        let hit = view.item_at_cursor()?;
+        self.close_group_view();
+        let Some((id, rect)) = hit else {
+            return Ok(None);
+        };
+        let windows = self.windows_of(&id);
+        let items = self.entry_menu(&id, Role::App, &windows);
+        let gap = self
+            .stage
+            .as_ref()
+            .map_or(0, |stage| (stage.gap / 2.0).round() as i32);
+        let anchor = POINT {
+            x: (rect.left + rect.right) / 2,
+            y: rect.top - gap,
+        };
+        self.render()?;
+        Ok(Some(Outside::Menu(MenuRequest {
+            gfx: self.gfx.clone(),
+            target: MenuTarget::Entry {
+                id,
+                role: Role::App,
+                windows,
+            },
+            items,
+            anchor,
+            dark: !uses_light_theme(),
+        })))
+    }
+
     /// Middle click on an app opens another window of it, as on the Windows
     /// taskbar.
     fn on_middle_click(&mut self) -> Result<Option<Outside>> {
         self.close_preview();
+        self.close_group_view();
         if self.pointer_at_click()?.is_none() {
             return Ok(None);
         }
@@ -2403,6 +2866,7 @@ impl App {
     /// menu when over empty space or a divider.
     fn on_right_click(&mut self) -> Result<Option<Outside>> {
         self.close_preview();
+        self.close_group_view();
         if self.pointer_at_click()?.is_none() {
             return Ok(None);
         }
@@ -2510,6 +2974,11 @@ impl App {
                     items.push(MenuItem::action(CMD_QUIT_APP, t.quit_app));
                 }
             }
+            Role::Group => {
+                items.push(MenuItem::action(CMD_OPEN, t.open));
+                items.push(MenuItem::Separator);
+                items.push(MenuItem::action(CMD_UNGROUP, t.ungroup));
+            }
             Role::Start => items.push(MenuItem::action(CMD_OPEN, t.open)),
             Role::Window => {
                 items.push(MenuItem::action(CMD_OPEN, t.open));
@@ -2547,6 +3016,18 @@ impl App {
             };
         };
         Ok(match command {
+            CMD_OPEN if role == Role::Group => {
+                self.open_group_view(&id)?;
+                None
+            }
+            // The group's apps go back to the dock, in its place.
+            CMD_UNGROUP => {
+                self.close_group_view();
+                self.roster.dissolve(&id);
+                save_settings(&self.roster, &self.config);
+                self.refresh()?;
+                None
+            }
             CMD_OPEN if role == Role::Start => Some(Outside::OpenStart),
             CMD_OPEN if role == Role::Window => {
                 window_of(&id).and_then(|hwnd| self.activating(vec![hwnd]))
@@ -2599,6 +3080,7 @@ impl App {
     /// The settings app saved a change: read it and apply what differs.
     fn reload_config(&mut self) -> Result<()> {
         self.close_preview();
+        self.close_group_view();
         let Ok(Some(saved)) = muelle_config::load(&muelle_config::default_path()) else {
             return Ok(());
         };
@@ -2606,6 +3088,7 @@ impl App {
         // changes the rest.
         let config = Config {
             pinned: self.config.pinned.clone(),
+            groups: self.config.groups.clone(),
             recent: self.config.recent.clone(),
             taskbar_pins: self.config.taskbar_pins.clone(),
             ..saved
@@ -2687,14 +3170,14 @@ impl App {
     }
 
     /// Unpins apps that were uninstalled, so no broken icon stays behind, as
-    /// the Windows taskbar drops them. Returns whether anything changed.
+    /// the Windows taskbar drops them; apps in groups too. Returns whether
+    /// anything changed.
     fn prune_missing_pins(&mut self) -> bool {
         let missing: Vec<String> = self
             .roster
-            .pinned()
-            .iter()
+            .pinned_apps()
+            .into_iter()
             .filter(|id| !app_exists(id))
-            .cloned()
             .collect();
         for id in &missing {
             self.roster.unpin(id);
@@ -2957,6 +3440,7 @@ impl App {
             if fullscreen {
                 self.stop_mascot();
                 self.close_preview();
+                self.close_group_view();
                 SetTimer(
                     Some(self.input),
                     FULLSCREEN_TIMER,
@@ -2981,6 +3465,7 @@ impl App {
                 self.amount = Spring::at(0.0, HOVER_OMEGA);
                 self.press = None;
                 self.drag = None;
+                self.ghost = None;
             }
             if let Err(error) = self.place_windows() {
                 self.fullscreen = previous;
@@ -3184,6 +3669,45 @@ pub fn multi_window_view_scroll(previous: bool) {
 pub fn multi_window_view_dismiss() {
     with_app("cerrar vistas", |app| {
         app.close_preview();
+        Ok(())
+    });
+}
+
+pub fn group_view_tick() {
+    with_app("grupo", |app| {
+        if let Some(view) = &mut app.group_view
+            && !view.tick()?
+        {
+            app.close_group_view();
+        }
+        Ok(())
+    });
+}
+
+pub fn group_view_press() {
+    with_app("grupo", |app| match &mut app.group_view {
+        Some(view) => view.press(),
+        None => Ok(()),
+    });
+}
+
+pub fn group_view_moved() {
+    with_app("arrastre desde un grupo", App::group_view_moved);
+}
+
+pub fn group_view_release() {
+    with_app_then("abrir desde un grupo", App::group_view_released);
+}
+
+pub fn group_view_menu() {
+    with_app_then("menú de un grupo", App::group_view_menu);
+}
+
+pub fn group_view_press_lost() {
+    with_app("grupo", |app| {
+        if let Some(view) = &mut app.group_view {
+            view.cancel_press();
+        }
         Ok(())
     });
 }
@@ -3726,6 +4250,9 @@ pub fn run() -> Result<()> {
             hovered: None,
             preview_candidate: None,
             preview: None,
+            group_view: None,
+            group_was_open: None,
+            ghost: None,
             mascot: None,
             // Initial registration notifications establish the baseline after
             // the queue starts, without playing a startup charging/saver act.

@@ -21,6 +21,7 @@ fn merged_with_disk(config: Config) -> Config {
     match muelle_config::load(&muelle_config::default_path()) {
         Ok(Some(disk)) => Config {
             pinned: disk.pinned,
+            groups: disk.groups,
             recent: disk.recent,
             taskbar_pins: disk.taskbar_pins,
             ..config

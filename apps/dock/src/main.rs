@@ -16,6 +16,7 @@ mod assets;
 mod drop;
 mod flight;
 mod gfx;
+mod group_view;
 mod guard;
 mod mascot;
 mod media;

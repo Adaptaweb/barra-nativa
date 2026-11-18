@@ -42,7 +42,7 @@ use windows::{
                 DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
                 DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_METRICS, DWRITE_TRIMMING,
                 DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP,
-                DWriteCreateFactory, IDWriteFactory,
+                DWriteCreateFactory, IDWriteFactory, IDWriteTextLayout,
             },
             Dxgi::{Common::DXGI_FORMAT_B8G8R8A8_UNORM, IDXGIDevice},
         },
@@ -432,6 +432,218 @@ impl Gfx {
                 dc.FillGeometry(&triangle, &fill, None);
 
                 let ink = dc.CreateSolidColorBrush(&ink, None)?;
+                dc.DrawTextLayout(
+                    Vector2 { X: pad_x, Y: pad_y },
+                    &layout,
+                    &ink,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                );
+            }
+            Ok(())
+        })?;
+        Ok(LabelBrush {
+            brush,
+            width,
+            height,
+        })
+    }
+
+    /// A group's icon: a frosted rounded square with a rim, holding the first
+    /// apps' icons in a 2×2 grid, so a group never looks like a single app.
+    /// With more than four apps the last cell counts the others. `icons` are
+    /// the first apps' images (`None` while one is loading); `count` is how
+    /// many apps the group has.
+    pub fn group_brush(
+        &self,
+        side: u32,
+        icons: &[Option<&IconImage>],
+        count: usize,
+        light: bool,
+    ) -> Result<CompositionSurfaceBrush> {
+        let size = side as f32;
+        let inset = size * 0.08;
+        let tile = size - 2.0 * inset;
+        let radius = tile * 0.225;
+        let pad = tile * 0.13;
+        let gap = tile * 0.08;
+        let cell = (tile - 2.0 * pad - gap) / 2.0;
+        let stroke = (size * 0.022).max(1.0);
+        let more = if count > 4 {
+            Some(self.centered_text(&format!("+{}", count - 3), cell * 0.5, cell)?)
+        } else {
+            None
+        };
+        let (fill_color, rim_color, slot_color, ink_color) = if light {
+            (
+                rgb(1.0, 1.0, 1.0, 0.55),
+                rgb(0.0, 0.0, 0.0, 0.22),
+                rgb(0.0, 0.0, 0.0, 0.10),
+                rgb(0.0, 0.0, 0.0, 0.75),
+            )
+        } else {
+            (
+                rgb(0.30, 0.30, 0.33, 0.62),
+                rgb(1.0, 1.0, 1.0, 0.34),
+                rgb(1.0, 1.0, 1.0, 0.12),
+                rgb(1.0, 1.0, 1.0, 0.92),
+            )
+        };
+        self.draw(side, side, |dc| {
+            let half = stroke / 2.0;
+            // SAFETY: Brushes, the text layout and the images stay alive
+            // through the drawing calls.
+            unsafe {
+                let fill = dc.CreateSolidColorBrush(&fill_color, None)?;
+                dc.FillRoundedRectangle(
+                    &D2D1_ROUNDED_RECT {
+                        rect: D2D_RECT_F {
+                            left: inset,
+                            top: inset,
+                            right: size - inset,
+                            bottom: size - inset,
+                        },
+                        radiusX: radius,
+                        radiusY: radius,
+                    },
+                    &fill,
+                );
+                let rim = dc.CreateSolidColorBrush(&rim_color, None)?;
+                dc.DrawRoundedRectangle(
+                    &D2D1_ROUNDED_RECT {
+                        rect: D2D_RECT_F {
+                            left: inset + half,
+                            top: inset + half,
+                            right: size - inset - half,
+                            bottom: size - inset - half,
+                        },
+                        radiusX: radius - half,
+                        radiusY: radius - half,
+                    },
+                    &rim,
+                    stroke,
+                    None,
+                );
+                let slot = dc.CreateSolidColorBrush(&slot_color, None)?;
+                let ink = dc.CreateSolidColorBrush(&ink_color, None)?;
+                for index in 0..count.min(4) {
+                    let left = inset + pad + (index % 2) as f32 * (cell + gap);
+                    let top = inset + pad + (index / 2) as f32 * (cell + gap);
+                    let rect = D2D_RECT_F {
+                        left,
+                        top,
+                        right: left + cell,
+                        bottom: top + cell,
+                    };
+                    let rounded = D2D1_ROUNDED_RECT {
+                        rect,
+                        radiusX: cell * 0.22,
+                        radiusY: cell * 0.22,
+                    };
+                    if index == 3
+                        && let Some(more) = &more
+                    {
+                        dc.FillRoundedRectangle(&rounded, &slot);
+                        dc.DrawTextLayout(
+                            Vector2 { X: left, Y: top },
+                            more,
+                            &ink,
+                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                        );
+                    } else if let Some(Some(icon)) = icons.get(index) {
+                        draw_image_in(dc, icon, rect, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC)?;
+                    } else {
+                        dc.FillRoundedRectangle(&rounded, &slot);
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// One line centered in a `side` × `side` square, to draw inside an icon.
+    fn centered_text(&self, text: &str, font_size: f32, side: f32) -> Result<IDWriteTextLayout> {
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        // SAFETY: The string and the format live through each call.
+        unsafe {
+            let format = self.dwrite.CreateTextFormat(
+                text_font(),
+                None,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                font_size.max(1.0),
+                w!(""),
+            )?;
+            format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
+            format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+            Ok(self
+                .dwrite
+                .CreateTextLayout(&utf16, &format, side.max(1.0), side.max(1.0))?)
+        }
+    }
+
+    /// A name on a rounded pill, cut with an ellipsis to fit `max_width`:
+    /// the names beside the apps of an unfolded group.
+    pub fn pill_brush(
+        &self,
+        text: &str,
+        scale: f32,
+        light: bool,
+        max_width: f32,
+    ) -> Result<LabelBrush> {
+        let (pad_x, pad_y) = (10.0 * scale, 4.0 * scale);
+        let (fill_color, ink_color) = if light {
+            (rgb(0.96, 0.96, 0.97, 0.92), rgb(0.0, 0.0, 0.0, 0.88))
+        } else {
+            (rgb(0.13, 0.13, 0.14, 0.86), rgb(1.0, 1.0, 1.0, 0.95))
+        };
+        let room = (max_width - 2.0 * pad_x).max(1.0);
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        // SAFETY: Strings and structures passed to each call remain alive for its duration.
+        let (layout, metrics) = unsafe {
+            let format = self.dwrite.CreateTextFormat(
+                text_font(),
+                None,
+                DWRITE_FONT_WEIGHT_MEDIUM,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                13.0 * scale,
+                w!(""),
+            )?;
+            let layout = self.dwrite.CreateTextLayout(&utf16, &format, room, 256.0)?;
+            layout.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+            let ellipsis = self.dwrite.CreateEllipsisTrimmingSign(&format)?;
+            layout.SetTrimming(
+                &DWRITE_TRIMMING {
+                    granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER,
+                    ..Default::default()
+                },
+                &ellipsis,
+            )?;
+            let mut metrics = DWRITE_TEXT_METRICS::default();
+            layout.GetMetrics(&mut metrics)?;
+            (layout, metrics)
+        };
+        let width = (metrics.width.ceil().clamp(1.0, room) + 2.0 * pad_x).ceil();
+        let height = (metrics.height + 2.0 * pad_y).ceil();
+        let brush = self.draw(width as u32, height as u32, |dc| {
+            // SAFETY: The brushes and the layout live through the drawing calls.
+            unsafe {
+                let fill = dc.CreateSolidColorBrush(&fill_color, None)?;
+                dc.FillRoundedRectangle(
+                    &D2D1_ROUNDED_RECT {
+                        rect: D2D_RECT_F {
+                            left: 0.0,
+                            top: 0.0,
+                            right: width,
+                            bottom: height,
+                        },
+                        radiusX: height / 2.0,
+                        radiusY: height / 2.0,
+                    },
+                    &fill,
+                );
+                let ink = dc.CreateSolidColorBrush(&ink_color, None)?;
                 dc.DrawTextLayout(
                     Vector2 { X: pad_x, Y: pad_y },
                     &layout,
@@ -896,6 +1108,22 @@ fn draw_image(
     height: f32,
     interpolation: D2D1_INTERPOLATION_MODE,
 ) -> Result<()> {
+    let dest = D2D_RECT_F {
+        left: 0.0,
+        top: 0.0,
+        right: width,
+        bottom: height,
+    };
+    draw_image_in(dc, image, dest, interpolation)
+}
+
+/// Draws `image` stretched over `dest`.
+fn draw_image_in(
+    dc: &ID2D1DeviceContext,
+    image: &IconImage,
+    dest: D2D_RECT_F,
+    interpolation: D2D1_INTERPOLATION_MODE,
+) -> Result<()> {
     let properties = D2D1_BITMAP_PROPERTIES1 {
         pixelFormat: D2D1_PIXEL_FORMAT {
             format: DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -905,12 +1133,6 @@ fn draw_image(
         dpiY: 96.0,
         bitmapOptions: D2D1_BITMAP_OPTIONS_NONE,
         ..Default::default()
-    };
-    let dest = D2D_RECT_F {
-        left: 0.0,
-        top: 0.0,
-        right: width,
-        bottom: height,
     };
     // SAFETY: `image.bgra` contains `width * height * 4` bytes and the stride is `width * 4`.
     unsafe {
