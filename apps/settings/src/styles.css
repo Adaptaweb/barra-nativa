@@ -338,6 +338,8 @@ input:focus-visible {
   color: var(--text-dim);
   font-size: 11.5px;
   line-height: 1.35;
+  /* A folder path has no spaces to wrap at. */
+  overflow-wrap: anywhere;
 }
 
 .row-control {
@@ -433,6 +435,11 @@ input:focus-visible {
 
 .push:disabled {
   opacity: 0.5;
+}
+
+.push-group {
+  display: flex;
+  gap: 6px;
 }
 
 .push-danger {

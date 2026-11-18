@@ -250,12 +250,26 @@ pub fn downloads_folder() -> Option<String> {
     }
 }
 
+/// The languages Muelle's text comes in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiLanguage {
+    Spanish,
+    English,
+    French,
+}
+
+/// The Windows display language, or English when Muelle has no text in it.
 #[must_use]
-pub fn ui_language_is_spanish() -> bool {
+pub fn ui_language() -> UiLanguage {
     const LANG_SPANISH: u16 = 0x0A;
+    const LANG_FRENCH: u16 = 0x0C;
     // SAFETY: Read-only query.
     let language = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
-    language & 0x3FF == LANG_SPANISH
+    match language & 0x3FF {
+        LANG_SPANISH => UiLanguage::Spanish,
+        LANG_FRENCH => UiLanguage::French,
+        _ => UiLanguage::English,
+    }
 }
 
 /// `false` if the user turned off "Animation effects" in Windows settings.

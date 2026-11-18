@@ -26,6 +26,8 @@ Smooth magnification, live window previews, and an optional Genie-style minimize
 
 - Glass-style dock with smooth, cursor-based icon magnification.
 - Launch, pin, reorder, and manage apps, including recent apps and open windows.
+- Group pinned apps into a single dock icon: drop one app onto another, click
+  the group to fan its apps out, and drag one out of the fan to take it back.
 - Hover over an app with multiple windows to show live, titled previews;
   click a preview to switch to that window. Scroll over the previews for more
   windows, or press Escape to dismiss it.
@@ -34,6 +36,8 @@ Smooth magnification, live window previews, and an optional Genie-style minimize
   on the right side of the dock instead.
 - Click the app already in front to minimize it, as on the Windows taskbar.
 - Drag and drop files onto apps, Downloads, or the Recycle Bin.
+- A shortcuts folder at the right of the dock: its contents open as a menu,
+  with a submenu for each folder inside, like a Windows 10 taskbar toolbar.
 - Optional auto-hide.
 - A top menu bar with the app in front, clock, network, volume and battery, the
   input language, microphone/camera in use, the hidden tray icons, plus
@@ -41,7 +45,7 @@ Smooth magnification, live window previews, and an optional Genie-style minimize
 - A curved island in the menu bar for usage limits from Claude Code, Codex,
   OpenCode Go, Gemini CLI, and Antigravity. Gemini Pro
   and Flash quotas appear separately when available.
-- Separate Settings app with live changes, Spanish and English, and a
+- Separate Settings app with live changes, Spanish, English and French, and a
   configurable Genie-style minimize animation.
 - A watchdog restores the Windows taskbar if the dock exits unexpectedly.
 

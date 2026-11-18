@@ -40,7 +40,10 @@ pub enum ConfigError {
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub version: u32,
+    /// Pinned items in dock order: apps, and the ids of `groups`.
     pub pinned: Vec<String>,
+    /// Pinned apps gathered in one dock icon each.
+    pub groups: Vec<DockGroup>,
     pub recent: Vec<String>,
     /// The apps pinned to the Windows taskbar when the dock last looked, to
     /// bring pins and unpins made there (even while Muelle was closed) to the
@@ -81,16 +84,34 @@ pub struct Config {
     /// computer, new versions are downloaded and installed without asking.
     pub auto_update: bool,
     pub language: Language,
+    /// A folder shown at the right of the dock whose contents open as a
+    /// menu, with a submenu for each folder inside, like a Windows 10 taskbar
+    /// toolbar. Only one: the user arranges the folder as they like.
+    pub shortcuts_folder: Option<String>,
+}
+
+/// Pinned apps the user gathered in one dock icon by dropping one on
+/// another. Its `id` stands for it in `pinned`, in its place.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+#[serde(rename_all = "camelCase")]
+pub struct DockGroup {
+    pub id: String,
+    pub apps: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Language {
-    /// Follow the Windows display language.
-    #[default]
-    Auto,
     Es,
     En,
+    Fr,
+    /// Follow the Windows display language. Also what a language added by a
+    /// newer version reads as, so the file stays valid for older versions
+    /// (serde requires this fallback to be the last variant).
+    #[default]
+    #[serde(other)]
+    Auto,
 }
 
 pub const ICON_SIZE_RANGE: (u32, u32) = (32, 96);
@@ -104,6 +125,10 @@ impl Config {
         self.magnified_size = self
             .magnified_size
             .clamp(self.icon_size, MAX_MAGNIFIED_SIZE);
+        self.shortcuts_folder = self
+            .shortcuts_folder
+            .map(|folder| folder.trim().to_owned())
+            .filter(|folder| !folder.is_empty());
         self
     }
 
@@ -123,6 +148,7 @@ impl Default for Config {
         Self {
             version: CURRENT_VERSION,
             pinned: Vec::new(),
+            groups: Vec::new(),
             recent: Vec::new(),
             taskbar_pins: None,
             auto_hide: false,
@@ -141,6 +167,7 @@ impl Default for Config {
             check_updates: true,
             auto_update: true,
             language: Language::Auto,
+            shortcuts_folder: None,
         }
     }
 }
@@ -212,7 +239,7 @@ pub fn update_preferences(
                 if fields.contains_key(&key)
                     && !matches!(
                         key.as_str(),
-                        "version" | "pinned" | "recent" | "taskbarPins"
+                        "version" | "pinned" | "groups" | "recent" | "taskbarPins"
                     )
                 {
                     fields.insert(key, value);
@@ -320,6 +347,31 @@ mod tests {
     }
 
     #[test]
+    fn settings_patch_keeps_the_dock_groups() -> Result<(), ConfigError> {
+        let path = scratch("settings-patch-groups");
+        let group = DockGroup {
+            id: "muelle:group:1".into(),
+            apps: vec!["a".into(), "b".into()],
+        };
+        save(
+            &path,
+            &Config {
+                pinned: vec![group.id.clone()],
+                groups: vec![group.clone()],
+                ..Config::default()
+            },
+        )?;
+        let patch = serde_json::Map::from_iter([
+            ("iconSize".into(), 64.into()),
+            ("groups".into(), serde_json::Value::Array(Vec::new())),
+        ]);
+        let saved = update_preferences(&path, patch)?;
+        assert_eq!(saved.groups, [group]);
+        assert_eq!(saved.icon_size, 64);
+        Ok(())
+    }
+
+    #[test]
     fn a_busy_writer_keeps_the_last_complete_configuration() -> Result<(), ConfigError> {
         let path = scratch("write-contention");
         let original = Config::default();
@@ -357,6 +409,25 @@ mod tests {
     }
 
     #[test]
+    fn load_should_read_dock_groups() {
+        let path = scratch("groups");
+        save(&path, &Config::default()).ok();
+        fs::write(
+            &path,
+            r#"{"pinned":["a","muelle:group:1"],"groups":[{"id":"muelle:group:1","apps":["b","c"]}]}"#,
+        )
+        .ok();
+        let config = load(&path).ok().flatten().unwrap_or_default();
+        assert_eq!(
+            config.groups,
+            [DockGroup {
+                id: "muelle:group:1".into(),
+                apps: vec!["b".into(), "c".into()],
+            }]
+        );
+    }
+
+    #[test]
     fn load_should_read_show_minimized() {
         let path = scratch("show-minimized");
         save(&path, &Config::default()).ok();
@@ -385,6 +456,45 @@ mod tests {
         .ok();
         let config = load(&path).ok().flatten().unwrap_or_default();
         assert!(!config.show_recents && !config.bounce_on_open);
+    }
+
+    #[test]
+    fn load_should_read_french() {
+        let path = scratch("french");
+        save(&path, &Config::default()).ok();
+        fs::write(&path, r#"{"language":"fr"}"#).ok();
+        let config = load(&path).ok().flatten().unwrap_or_default();
+        assert_eq!(config.language, Language::Fr);
+    }
+
+    #[test]
+    fn load_should_read_an_unknown_language_as_auto() {
+        let path = scratch("unknown-language");
+        save(&path, &Config::default()).ok();
+        fs::write(&path, r#"{"language":"de","iconSize":56}"#).ok();
+        let config = load(&path).ok().flatten();
+        assert_eq!(
+            config.map(|config| (config.language, config.icon_size)),
+            Some((Language::Auto, 56))
+        );
+    }
+
+    #[test]
+    fn load_should_read_the_shortcuts_folder() {
+        let path = scratch("shortcuts-folder");
+        save(&path, &Config::default()).ok();
+        fs::write(&path, r#"{"shortcutsFolder":"D:\\Racc"}"#).ok();
+        let config = load(&path).ok().flatten().unwrap_or_default();
+        assert_eq!(config.shortcuts_folder.as_deref(), Some(r"D:\Racc"));
+    }
+
+    #[test]
+    fn sanitized_should_forget_a_blank_shortcuts_folder() {
+        let config = Config {
+            shortcuts_folder: Some("  ".into()),
+            ..Config::default()
+        };
+        assert_eq!(config.sanitized().shortcuts_folder, None);
     }
 
     #[test]

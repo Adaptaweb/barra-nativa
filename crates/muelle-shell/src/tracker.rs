@@ -449,7 +449,21 @@ fn app_id(hwnd: HWND) -> Option<String> {
                 &mut len,
             )
             .ok()
-            .map(|()| normalize_id(&String::from_utf16_lossy(&buffer[..len as usize])))
+            .map(|()| {
+                let image = String::from_utf16_lossy(&buffer[..len as usize]);
+                // A program whose windows belong to a host that is no .exe
+                // (LibreOffice's soffice.bin) has no icon or name of its own
+                // there; its windows say which app they are (Calc, Writer),
+                // and the taskbar shows that app.
+                if is_program(&image) {
+                    normalize_id(&image)
+                } else {
+                    window_aumid(hwnd).map_or_else(
+                        || normalize_id(&image),
+                        |aumid| format!("{APPS_FOLDER}{aumid}"),
+                    )
+                }
+            })
         };
         let _ = CloseHandle(process);
         id
@@ -460,6 +474,15 @@ fn app_id(hwnd: HWND) -> Option<String> {
 #[must_use]
 pub fn is_shortcut(id: &str) -> bool {
     id.len() > 4 && id[id.len() - 4..].eq_ignore_ascii_case(".lnk")
+}
+
+/// `true` for the path of a program (`.exe`).
+#[must_use]
+pub fn is_program(path: &str) -> bool {
+    path.len() > 4
+        && path
+            .get(path.len() - 4..)
+            .is_some_and(|extension| extension.eq_ignore_ascii_case(".exe"))
 }
 
 /// The class of the window in front, to tell in the log what was there.
@@ -520,6 +543,17 @@ mod tests {
             normalize_id("C:\\Windows\\Explorer.EXE"),
             "c:\\windows\\explorer.exe"
         );
+    }
+
+    #[test]
+    fn is_program_should_accept_only_exe_files() {
+        assert!(is_program(r"C:\Program Files\App\App.EXE"));
+        assert!(!is_program(
+            r"C:\Program Files\LibreOffice\program\soffice.bin"
+        ));
+        assert!(!is_program(".exe"));
+        // A name ending inside a multi-byte character is no program, never a panic.
+        assert!(!is_program(r"C:\app\x€ab"));
     }
 
     #[test]

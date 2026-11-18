@@ -10,7 +10,55 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Dock groups: drag a pinned app onto the middle of another one (a blue frame
+  shows it) to put both in a group that takes a single place in the dock;
+  drop more apps on the group to add them. A group shows its first apps'
+  icons on a framed tile, and lists their names on hover. Clicking it fans
+  its apps out above it (a grid when there are many); drag one out of the
+  fan to take it out of the group, into the dock where it is dropped.
+  Right-click a group to ungroup it.
+- Shortcuts folder: choose a folder in Settings → Dock and it shows at the
+  right of the dock. Clicking it opens its contents as a menu, as a Windows 10
+  taskbar toolbar did: folders first, each one a submenu, then files, with
+  Explorer's names and icons; choosing an item opens it. Right-click it to
+  open the folder, change it or remove it.
+- French: the dock, Settings and the installer are now also in French. Choose
+  it in Settings → System, or leave Automatic to follow Windows. A language
+  Muelle does not know in the settings file now reads as Automatic instead of
+  making the file invalid.
+- Apps that showed a blank page instead of their icon now show it, as on the
+  taskbar: LibreOffice (its windows belong to `soffice.bin`; the dock now
+  shows LibreOffice Calc, Writer… with their names and icons), and programs
+  whose icon the Windows shell cannot draw although it is valid (one made
+  only of PNG images, as some Electron tools write). Icons are read again
+  once after updating.
+
 ### Español
+
+- Grupos en el dock: arrastra una app fijada al centro de otra (un marco azul
+  lo indica) para reunirlas en un grupo que ocupa un solo lugar en el dock;
+  suelta más apps sobre el grupo para añadirlas. Un grupo muestra los iconos
+  de sus primeras apps en un mosaico enmarcado, y sus nombres al pasar el
+  puntero. Al hacer clic se despliegan en abanico encima (en cuadrícula si son
+  muchas); arrastra una fuera del abanico para sacarla del grupo, al lugar del
+  dock donde la sueltes. Clic derecho en un grupo para desagruparlo.
+- Carpeta de accesos directos: elige una carpeta en Ajustes → Dock y aparece
+  a la derecha del dock. Al hacer clic, su contenido se abre como un menú,
+  como una barra de herramientas de la barra de tareas de Windows 10: primero
+  las carpetas, cada una un submenú, luego los archivos, con los nombres e
+  iconos del Explorador; al elegir un elemento se abre. Clic derecho para
+  abrir la carpeta, cambiarla o quitarla.
+- Francés: el dock, Ajustes y el instalador también están en francés.
+  Elígelo en Ajustes → Sistema, o deja Automático para seguir a Windows. Un
+  idioma que Muelle no conoce en el archivo de ajustes ahora se lee como
+  Automático en lugar de invalidar el archivo.
+- Las apps que mostraban una página en blanco en lugar de su icono ahora lo
+  muestran, como en la barra de tareas: LibreOffice (sus ventanas pertenecen
+  a `soffice.bin`; el dock ahora muestra LibreOffice Calc, Writer… con sus
+  nombres e iconos) y los programas cuyo icono el shell de Windows no sabe
+  dibujar aunque sea válido (uno hecho solo de imágenes PNG, como escriben
+  algunas herramientas de Electron). Los iconos se vuelven a leer una vez
+  tras actualizar.
 
 ## [0.1.14]
 

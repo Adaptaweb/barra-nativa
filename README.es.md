@@ -6,7 +6,7 @@
 
   Ampliación suave, miniaturas de ventanas en vivo y un efecto genio opcional al minimizar.
 
-  [English](README.md) · **Español**
+  [English](README.md) · **Español** · [Français](README.fr.md)
 </div>
 
 Muelle sustituye la barra de tareas de Windows por un dock personalizable y una
@@ -19,11 +19,17 @@ en desarrollo activo.
 
 - Dock de cristal con ampliación suave de los iconos bajo el cursor.
 - Abrir, fijar, reordenar y gestionar apps, incluidas las recientes y las ventanas abiertas.
+- Agrupar apps fijadas en un solo icono del dock: suelta una app sobre otra, haz
+  clic en el grupo para desplegar sus apps en abanico y arrastra una fuera del
+  abanico para sacarla.
 - Las ventanas minimizadas se guardan en el icono de su app con el efecto genio;
   activa Ajustes → Ventanas → *Mostrar ventanas minimizadas* para verlas como
   miniaturas en vivo a la derecha del dock.
 - Clic en la app que ya está delante para minimizarla, como en la barra de Windows.
 - Arrastrar y soltar archivos sobre apps, Descargas o la Papelera.
+- Una carpeta de accesos directos a la derecha del dock: su contenido se abre
+  como un menú, con un submenú para cada carpeta, como una barra de
+  herramientas de la barra de tareas de Windows 10.
 - Ocultación automática opcional.
 - Barra superior con la app en primer plano, hora, red, volumen y batería, el idioma
   del teclado, el micrófono/cámara en uso y los iconos ocultos de la bandeja,
@@ -32,7 +38,7 @@ en desarrollo activo.
 - Una isla curva en la barra superior con los límites de Claude Code, Codex,
   OpenCode Go, Gemini CLI y Antigravity. Las cuotas de
   Gemini Pro y Flash aparecen por separado cuando están disponibles.
-- App de Ajustes aparte, con cambios en vivo, en español e inglés, y efecto genio configurable.
+- App de Ajustes aparte, con cambios en vivo, en español, inglés y francés, y efecto genio configurable.
 - Un proceso guardián devuelve la barra de tareas de Windows si el dock se cierra de forma inesperada.
 
 El efecto genio está **activado por defecto** y se puede desactivar en Ajustes →

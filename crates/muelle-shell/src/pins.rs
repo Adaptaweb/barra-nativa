@@ -25,7 +25,10 @@ use windows::{
 
 const TASKBAND: PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband");
 
-use crate::{tracker::normalize_id, watch::RegistryWatch};
+use crate::{
+    tracker::{is_program, normalize_id},
+    watch::RegistryWatch,
+};
 
 /// The apps pinned to the Windows taskbar, in the taskbar's order: desktop
 /// apps by the program their shortcut opens, Store apps (Media Player, Phone
@@ -389,10 +392,6 @@ pub fn kept_shortcut_for(id: &str) -> Option<String> {
                 .is_some_and(|target| normalize_id(&target) == id)
         })
         .map(|link| link.to_string_lossy().into_owned())
-}
-
-fn is_program(path: &str) -> bool {
-    path.len() > 4 && path[path.len() - 4..].eq_ignore_ascii_case(".exe")
 }
 
 /// The folder where Muelle keeps its own copy of shortcuts pinned from

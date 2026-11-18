@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Language = "auto" | "es" | "en";
+export type Language = "auto" | "es" | "en" | "fr";
 
 /** Mirrors `muelle_config::Config`. */
 export interface Config {
@@ -23,6 +23,8 @@ export interface Config {
   checkUpdates: boolean;
   autoUpdate: boolean;
   language: Language;
+  /** The folder shown at the right of the dock, whose contents open as a menu. */
+  shortcutsFolder: string | null;
 }
 
 export const ICON_SIZE = { min: 32, max: 96 } as const;
@@ -36,6 +38,9 @@ export const getAutostart = () => invoke<boolean>("get_autostart");
 export const windowsAnimations = () => invoke<boolean>("windows_animations");
 export const openAnimationSettings = () => invoke<void>("open_animation_settings");
 export const setAutostart = (enabled: boolean) => invoke<void>("set_autostart", { enabled });
+/** The folder the user picks, or null if they cancel. */
+export const pickFolder = (current: string | null) =>
+  invoke<string | null>("pick_folder", { current });
 export interface UpdateInfo {
   version: string;
   /** Release page with the notes, if the manifest has one. */

@@ -16,6 +16,7 @@ import {
   installUpdate,
   loadConfig,
   openReleaseNotes,
+  pickFolder,
   saveConfig,
   setAutostart,
 } from "./config";
@@ -24,6 +25,7 @@ import { type SectionId, SectionIcon } from "./icons";
 import { UpdateBanner } from "./UpdateBanner";
 import en from "./i18n/en.json";
 import es from "./i18n/es.json";
+import fr from "./i18n/fr.json";
 
 type UpdateState =
   | { kind: "off" }
@@ -54,10 +56,15 @@ const SAVE_DELAY_MS = 60;
 /** How long the reset button stays armed after the first click. */
 const RESET_CONFIRM_MS = 4000;
 
+const TEXTS: Record<Exclude<Language, "auto">, Texts> = { es, en, fr };
+
 function textsFor(language: Language): Texts {
-  const spanish =
-    language === "es" || (language === "auto" && navigator.language.toLowerCase().startsWith("es"));
-  return spanish ? es : en;
+  if (language !== "auto") {
+    return TEXTS[language];
+  }
+  // Follow the Windows display language, English when there is no text in it.
+  const windows = navigator.language.toLowerCase().slice(0, 2);
+  return windows === "es" || windows === "fr" ? TEXTS[windows] : en;
 }
 
 export function App() {
@@ -197,12 +204,19 @@ export function App() {
     }
     setConfirmingReset(false);
     defaultConfig()
-      .then(({ pinned: _pinned, recent: _recent, ...defaults }) => update(defaults))
+      .then(({ pinned: _pinned, recent: _recent, shortcutsFolder: _folder, ...defaults }) =>
+        update(defaults),
+      )
       .catch(() => setFailed(true));
   }, [confirmingReset, update]);
 
   if (!config) return <div className="window" />;
   const t = textsFor(config.language);
+  const chooseFolder = () => {
+    pickFolder(config.shortcutsFolder)
+      .then((folder) => folder && update({ shortcutsFolder: folder }))
+      .catch(() => setFailed(true));
+  };
   const appWindow = getCurrentWindow();
   const waiting = pendingUpdate(updateState);
   // An update the user asked for keeps its banner even after "Later".
@@ -334,6 +348,20 @@ export function App() {
                   />
                 </Row>
               </Card>
+              <Card>
+                <Row label={t.shortcutsFolder} hint={config.shortcutsFolder ?? t.shortcutsFolderHint}>
+                  <div className="push-group">
+                    {config.shortcutsFolder ? (
+                      <button type="button" className="push" onClick={() => update({ shortcutsFolder: null })}>
+                        {t.shortcutsFolderRemove}
+                      </button>
+                    ) : null}
+                    <button type="button" className="push" onClick={chooseFolder}>
+                      {t.shortcutsFolderChoose}
+                    </button>
+                  </div>
+                </Row>
+              </Card>
             </>
           ) : section === "windows" ? (
             <>
@@ -397,6 +425,7 @@ export function App() {
                       { value: "auto", label: t.languageAuto },
                       { value: "es", label: "Español" },
                       { value: "en", label: "English" },
+                      { value: "fr", label: "Français" },
                     ]}
                     onChange={(language) => update({ language })}
                   />

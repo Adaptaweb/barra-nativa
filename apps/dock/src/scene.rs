@@ -1,6 +1,8 @@
 //! Dock visual tree: shadow, glass, specular border, dividers, icons, indicators,
 //! and labels. It is built once per configuration; only its elements move per frame.
 
+use std::cell::Cell;
+
 use anyhow::Result;
 use muelle_core::{
     layout::{ItemKind, Layout, Rect},
@@ -62,6 +64,15 @@ impl Theme {
                 shadow: rgba(0, 0, 0, 96),
                 indicator: rgba(255, 255, 255, 215),
             }
+        }
+    }
+
+    /// Inside the frame around the icon a dragged app would join.
+    fn merge_fill(&self) -> Color {
+        if self.light {
+            rgba(255, 255, 255, 120)
+        } else {
+            rgba(255, 255, 255, 46)
         }
     }
 
@@ -166,6 +177,9 @@ impl GlassSurface {
     }
 }
 
+/// Outline of the icon a dragged app would join in a group.
+const MERGE_ACCENT: Color = rgba(80, 150, 255, 230);
+
 const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
     Color {
         A: a,
@@ -215,6 +229,10 @@ pub struct Drag {
     pub center: (f32, f32),
     /// Released here, the icon would leave the dock.
     pub removing: bool,
+    /// Taken out of a group: a window of its own follows the pointer (see
+    /// `group_view::DragGhost`), and the slot only shows, faded, where the
+    /// app will land.
+    pub ghost: bool,
 }
 
 /// Everything that changes from one frame to the next.
@@ -223,6 +241,8 @@ pub struct Frame<'a> {
     pub hovered: Option<usize>,
     pub lifts: &'a [f32],
     pub drag: Option<Drag>,
+    /// The icon the dragged app would join in a group if released now.
+    pub target: Option<usize>,
     /// Vertical offset of the whole dock (auto-hide), in pixels.
     pub slide: f32,
     /// Align to whole pixels; only at rest, where sharpness matters.
@@ -260,6 +280,14 @@ pub struct Scene {
     frames: [Visual; 3],
     outline: CompositionRoundedRectangleGeometry,
     rim_geometry: CompositionRoundedRectangleGeometry,
+    content: ContainerVisual,
+    /// Frame drawn around the icon a dragged app would join.
+    merge: ShapeVisual,
+    merge_geometry: CompositionRoundedRectangleGeometry,
+    merge_stroke: f32,
+    /// The slot brought to the front for the current drag, so it passes
+    /// over the icons it is dropped on.
+    raised: Cell<Option<usize>>,
     slots: Vec<SpriteVisual>,
     badges: Vec<Option<SpriteVisual>>,
     indicators: Vec<Option<ShapeVisual>>,
@@ -313,6 +341,19 @@ impl Scene {
         dot.SetCenter(v2(indicator_size / 2.0, indicator_size / 2.0))?;
         dot.SetRadius(v2(indicator_size / 2.0, indicator_size / 2.0))?;
         let dot_brush = c.CreateColorBrushWithColor(theme.indicator)?;
+
+        // Below the icons: it frames the one under the dragged app.
+        let merge_stroke = (2.0 * scale).max(1.0);
+        let merge_geometry = c.CreateRoundedRectangleGeometry()?;
+        merge_geometry.SetOffset(v2(merge_stroke / 2.0, merge_stroke / 2.0))?;
+        let merge_shape = c.CreateSpriteShapeWithGeometry(&merge_geometry)?;
+        merge_shape.SetFillBrush(&c.CreateColorBrushWithColor(theme.merge_fill())?)?;
+        merge_shape.SetStrokeBrush(&c.CreateColorBrushWithColor(MERGE_ACCENT)?)?;
+        merge_shape.SetStrokeThickness(merge_stroke)?;
+        let merge = c.CreateShapeVisual()?;
+        merge.Shapes()?.Append(&merge_shape)?;
+        merge.SetIsVisible(false)?;
+        children.InsertAtTop(&merge)?;
 
         let mut slots = Vec::with_capacity(layout.slots.len());
         let mut badges = Vec::with_capacity(layout.slots.len());
@@ -374,6 +415,11 @@ impl Scene {
             frames: [shadow_host.cast()?, glass.cast()?, rim.cast()?],
             outline,
             rim_geometry,
+            content,
+            merge,
+            merge_geometry,
+            merge_stroke,
+            raised: Cell::new(None),
             slots,
             badges,
             indicators,
@@ -391,11 +437,19 @@ impl Scene {
             hovered,
             lifts,
             drag,
+            target,
             slide,
             snap,
         } = *frame;
         let fit = |value: f32| if snap { value.round() } else { value };
         self.root.SetOffset(v3(0.0, slide))?;
+        self.raise(drag.map(|drag| drag.index))?;
+        self.place_merge(target.and_then(|index| {
+            Some((
+                *state.rects.get(index)?,
+                lifts.get(index).copied().unwrap_or(0.0),
+            ))
+        }))?;
 
         let size = v2(fit(state.right - state.left), self.height);
         let offset = v3(self.origin.0 + fit(state.left), self.origin.1);
@@ -415,7 +469,7 @@ impl Scene {
                 height,
             } = *rect;
             let dragged = drag.filter(|drag| drag.index == index);
-            let (x, y) = match dragged {
+            let (x, y) = match dragged.filter(|drag| !drag.ghost) {
                 Some(drag) => (drag.center.0 - width / 2.0, drag.center.1 - height / 2.0),
                 None => (x, y - lifts.get(index).copied().unwrap_or(0.0)),
             };
@@ -423,8 +477,12 @@ impl Scene {
             if let Some(visual) = self.slots.get(index) {
                 visual.SetOffset(v3(fit(x), fit(y)))?;
                 visual.SetSize(v2(fit(width), fit(height)))?;
-                let removing = dragged.is_some_and(|drag| drag.removing);
-                visual.SetOpacity(if removing { 0.55 } else { 1.0 })?;
+                let opacity = match dragged {
+                    Some(drag) if drag.removing => 0.55,
+                    Some(drag) if drag.ghost => 0.35,
+                    _ => 1.0,
+                };
+                visual.SetOpacity(opacity)?;
             }
             if let Some(Some(badge)) = self.badges.get(index) {
                 let side = width * BADGE_SIZE;
@@ -460,6 +518,41 @@ impl Scene {
         {
             label.visual.SetIsVisible(false)?;
         }
+        Ok(())
+    }
+
+    /// Brings the dragged slot above the others, once per drag (the scene
+    /// is rebuilt whenever the order changes).
+    fn raise(&self, index: Option<usize>) -> Result<()> {
+        if index.is_none() || self.raised.get() == index {
+            return Ok(());
+        }
+        if let Some(visual) = index.and_then(|index| self.slots.get(index)) {
+            let children = self.content.Children()?;
+            children.Remove(visual)?;
+            children.InsertAtTop(visual)?;
+        }
+        self.raised.set(index);
+        Ok(())
+    }
+
+    /// Frames `target` (its rectangle and how far it is lifted), or hides
+    /// the frame.
+    fn place_merge(&self, target: Option<(Rect, f32)>) -> Result<()> {
+        let Some((rect, lift)) = target else {
+            self.merge.SetIsVisible(false)?;
+            return Ok(());
+        };
+        let pad = (rect.width * 0.1).round();
+        let size = v2(rect.width + 2.0 * pad, rect.height + 2.0 * pad);
+        self.merge
+            .SetOffset(v3(rect.x - pad, rect.y - pad - lift))?;
+        self.merge.SetSize(size)?;
+        self.merge_geometry
+            .SetSize(v2(size.X - self.merge_stroke, size.Y - self.merge_stroke))?;
+        let radius = size.X * 0.26;
+        self.merge_geometry.SetCornerRadius(v2(radius, radius))?;
+        self.merge.SetIsVisible(true)?;
         Ok(())
     }
 

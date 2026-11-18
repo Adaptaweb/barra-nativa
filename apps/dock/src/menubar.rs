@@ -17,6 +17,7 @@
 //! and volume changes arrive as `STATUS_CHANGED`; nothing polls.
 
 use anyhow::Result;
+use muelle_config::Language;
 use muelle_shell::{
     appbar::{AppBar, Edge},
     launcher,
@@ -165,7 +166,7 @@ struct Status {
 /// What the bar was last drawn for.
 #[derive(Clone, PartialEq)]
 struct Look {
-    spanish: bool,
+    language: Language,
     screen: RECT,
     scale: f32,
     light: bool,
@@ -1377,7 +1378,7 @@ impl MenuBar {
             usage.refresh(false);
         }
         let look = Look {
-            spanish: strings::is_spanish(),
+            language: strings::language(),
             screen: monitor.screen,
             scale: monitor.scale,
             light: system::uses_light_theme(),
@@ -2520,7 +2521,6 @@ mod island_tests {
     #[test]
     #[ignore = "Requires Windows desktop composition"]
     fn changing_ui_language_redraws_unchanged_menu_bar_content() -> Result<()> {
-        use muelle_config::Language;
         use windows::Win32::System::WinRT::{
             CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
             DispatcherQueueOptions,
@@ -2531,11 +2531,7 @@ mod island_tests {
                 strings::set_language(self.0);
             }
         }
-        let _restore = RestoreLanguage(if strings::is_spanish() {
-            Language::Es
-        } else {
-            Language::En
-        });
+        let _restore = RestoreLanguage(strings::language());
         let _queue = unsafe {
             CreateDispatcherQueueController(DispatcherQueueOptions {
                 dwSize: size_of::<DispatcherQueueOptions>() as u32,
@@ -2546,7 +2542,11 @@ mod island_tests {
         let gfx = Gfx::new()?;
         strings::set_language(Language::Es);
         let mut bar = MenuBar::create(&gfx, false, true)?;
-        assert!(bar.look.as_ref().is_some_and(|look| look.spanish));
+        assert!(
+            bar.look
+                .as_ref()
+                .is_some_and(|look| look.language == Language::Es)
+        );
         let previous = bar.surface.Children()?.First()?.Current()?;
         strings::set_language(Language::En);
         bar.refresh(&gfx)?;
@@ -2555,7 +2555,11 @@ mod island_tests {
             bar.surface.Children()?.First()?.Current()?,
             "translation-only changes must rebuild the content"
         );
-        assert!(bar.look.as_ref().is_some_and(|look| !look.spanish));
+        assert!(
+            bar.look
+                .as_ref()
+                .is_some_and(|look| look.language == Language::En)
+        );
         Ok(())
     }
 
