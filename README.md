@@ -26,6 +26,8 @@ Smooth magnification, live window previews, and an optional Genie-style minimize
 
 - Glass-style dock with smooth, cursor-based icon magnification.
 - Launch, pin, reorder, and manage apps, including recent apps and open windows.
+- Group pinned apps into a single dock icon: drop one app onto another, click
+  the group to fan its apps out, and drag one out of the fan to take it back.
 - Hover over an app with multiple windows to show live, titled previews;
   click a preview to switch to that window. Scroll over the previews for more
   windows, or press Escape to dismiss it.
