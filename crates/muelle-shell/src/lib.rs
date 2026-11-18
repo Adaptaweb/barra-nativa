@@ -2,6 +2,7 @@ pub mod appbar;
 pub mod autostart;
 pub mod dock_link;
 pub mod files;
+pub mod folder;
 pub mod icon_cache;
 pub mod icons;
 pub mod launcher;

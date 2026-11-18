@@ -15,6 +15,7 @@ mod app;
 mod assets;
 mod drop;
 mod flight;
+mod folder_menu;
 mod gfx;
 mod group_view;
 mod guard;

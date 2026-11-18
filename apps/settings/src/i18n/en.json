@@ -67,5 +67,9 @@
   "groupBehavior": "Behavior",
   "groupMinimize": "Minimizing",
   "zoom": "Zoom",
-  "updatesNow": "This version"
+  "updatesNow": "This version",
+  "shortcutsFolder": "Shortcuts folder",
+  "shortcutsFolderHint": "A folder at the right of the Dock: its contents open as a menu, with a submenu for each folder inside.",
+  "shortcutsFolderChoose": "Choose…",
+  "shortcutsFolderRemove": "Remove"
 }

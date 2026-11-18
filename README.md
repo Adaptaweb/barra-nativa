@@ -34,6 +34,8 @@ Smooth magnification, live window previews, and an optional Genie-style minimize
   on the right side of the dock instead.
 - Click the app already in front to minimize it, as on the Windows taskbar.
 - Drag and drop files onto apps, Downloads, or the Recycle Bin.
+- A shortcuts folder at the right of the dock: its contents open as a menu,
+  with a submenu for each folder inside, like a Windows 10 taskbar toolbar.
 - Optional auto-hide.
 - A top menu bar with the app in front, clock, network, volume and battery, the
   input language, microphone/camera in use, the hidden tray icons, plus

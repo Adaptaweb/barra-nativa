@@ -104,9 +104,17 @@ fn program_icon(path: &str, size: u32) -> Option<IconImage> {
         return None;
     }
     let icon = OwnedIcon(icon);
+    icon_image(icon.0)
+}
+
+/// The pixels of `icon`, premultiplied; `None` for a monochrome icon. The
+/// caller keeps the icon and destroys it.
+#[must_use]
+pub fn icon_image(icon: HICON) -> Option<IconImage> {
     let mut info = ICONINFO::default();
-    // SAFETY: `icon` is valid; GetIconInfo creates two bitmaps, owned below.
-    unsafe { GetIconInfo(icon.0, &mut info) }.ok()?;
+    // SAFETY: The caller passes a valid icon; GetIconInfo creates two
+    // bitmaps, owned below.
+    unsafe { GetIconInfo(icon, &mut info) }.ok()?;
     let (color, mask) = (OwnedBitmap(info.hbmColor), OwnedBitmap(info.hbmMask));
     // A monochrome icon has no color bitmap: left to the shell.
     if color.0.is_invalid() {

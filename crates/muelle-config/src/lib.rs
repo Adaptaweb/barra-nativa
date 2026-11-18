@@ -80,6 +80,10 @@ pub struct Config {
     /// computer, new versions are downloaded and installed without asking.
     pub auto_update: bool,
     pub language: Language,
+    /// A folder shown at the right of the dock whose contents open as a
+    /// menu, with a submenu for each folder inside, like a Windows 10 taskbar
+    /// toolbar. Only one: the user arranges the folder as they like.
+    pub shortcuts_folder: Option<String>,
 }
 
 /// Pinned apps the user gathered in one dock icon by dropping one on
@@ -117,6 +121,10 @@ impl Config {
         self.magnified_size = self
             .magnified_size
             .clamp(self.icon_size, MAX_MAGNIFIED_SIZE);
+        self.shortcuts_folder = self
+            .shortcuts_folder
+            .map(|folder| folder.trim().to_owned())
+            .filter(|folder| !folder.is_empty());
         self
     }
 
@@ -155,6 +163,7 @@ impl Default for Config {
             check_updates: true,
             auto_update: true,
             language: Language::Auto,
+            shortcuts_folder: None,
         }
     }
 }
@@ -328,6 +337,24 @@ mod tests {
             config.map(|config| (config.language, config.icon_size)),
             Some((Language::Auto, 56))
         );
+    }
+
+    #[test]
+    fn load_should_read_the_shortcuts_folder() {
+        let path = scratch("shortcuts-folder");
+        save(&path, &Config::default()).ok();
+        fs::write(&path, r#"{"shortcutsFolder":"D:\\Racc"}"#).ok();
+        let config = load(&path).ok().flatten().unwrap_or_default();
+        assert_eq!(config.shortcuts_folder.as_deref(), Some(r"D:\Racc"));
+    }
+
+    #[test]
+    fn sanitized_should_forget_a_blank_shortcuts_folder() {
+        let config = Config {
+            shortcuts_folder: Some("  ".into()),
+            ..Config::default()
+        };
+        assert_eq!(config.sanitized().shortcuts_folder, None);
     }
 
     #[test]

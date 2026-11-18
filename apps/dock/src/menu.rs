@@ -851,7 +851,7 @@ fn show_native(owner: HWND, items: &[MenuItem], anchor: POINT, dark: bool) -> Op
 /// Windows has no public API for dark Win32 menus, so this uses `uxtheme.dll`
 /// functions by ordinal, as Windows Terminal and Notepad++ do. If unavailable
 /// on another Windows version, the menu remains light.
-fn apply_theme(dark: bool) {
+pub fn apply_theme(dark: bool) {
     type SetPreferredAppMode = unsafe extern "system" fn(i32) -> i32;
     type FlushMenuThemes = unsafe extern "system" fn();
     const FORCE_DARK: i32 = 2;

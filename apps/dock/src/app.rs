@@ -72,16 +72,17 @@ use windows::{
                 CreateWindowExW, DefWindowProcW, DispatchMessageW, EVENT_OBJECT_CLOAKED,
                 EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND,
                 EVENT_SYSTEM_MINIMIZESTART, FindWindowW, GetCursorPos, GetMessageW,
-                GetSystemMetrics, HWND_TOPMOST, IDC_ARROW, KillTimer, LoadCursorW, MA_ACTIVATE,
-                MA_NOACTIVATE, MSG, OBJID_WINDOW, PM_REMOVE, PeekMessageW, PostMessageW,
-                PostQuitMessage, RegisterClassW, RegisterShellHookWindow, RegisterWindowMessageW,
-                SM_CXDRAG, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetTimer, SetWindowPos,
-                WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP,
-                WM_CAPTURECHANGED, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED,
-                WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE,
-                WM_MOUSEMOVE, WM_QUIT, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW,
-                WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
-                WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+                GetSystemMetrics, HMENU, HWND_TOPMOST, IDC_ARROW, KillTimer, LoadCursorW,
+                MA_ACTIVATE, MA_NOACTIVATE, MSG, OBJID_WINDOW, PM_REMOVE, PeekMessageW,
+                PostMessageW, PostQuitMessage, RegisterClassW, RegisterShellHookWindow,
+                RegisterWindowMessageW, SM_CXDRAG, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+                SetTimer, SetWindowPos, WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT,
+                WINEVENT_SKIPOWNPROCESS, WM_APP, WM_CAPTURECHANGED, WM_CLOSE, WM_DESTROY,
+                WM_DISPLAYCHANGE, WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
+                WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_QUIT,
+                WM_RBUTTONUP, WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
+                WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+                WS_EX_TRANSPARENT, WS_POPUP,
             },
         },
     },
@@ -92,6 +93,7 @@ use crate::{
     assets::{Visuals, fallback_name},
     drop::DropTarget,
     flight::{Flight, Snapshot},
+    folder_menu,
     gfx::{Gfx, LabelBrush},
     group_view::{DragGhost, GroupItem, GroupView, Placement, Released},
     mascot,
@@ -256,6 +258,7 @@ const CMD_SHOW_DESKTOP: u32 = 12;
 const CMD_TASK_MANAGER: u32 = 13;
 const CMD_TASKBAR_SETTINGS: u32 = 14;
 const CMD_UNGROUP: u32 = 15;
+const CMD_REMOVE_FOLDER: u32 = 16;
 const CMD_WINDOW: u32 = 100;
 const MENU_WINDOWS: usize = 12;
 const MENU_TITLE_CHARS: usize = 60;
@@ -332,6 +335,8 @@ enum Role {
     /// A minimized window, shown as a live thumbnail.
     Window,
     Folder,
+    /// The shortcuts folder: a click opens its contents as a menu.
+    Shortcuts,
     Trash,
 }
 
@@ -361,6 +366,12 @@ enum Outside {
         copy: bool,
     },
     Menu(MenuRequest),
+    /// The shortcuts folder's contents, as a menu above its icon.
+    FolderMenu {
+        folder: String,
+        anchor: POINT,
+        dark: bool,
+    },
     QuitDock,
     OpenSettings,
     OpenAsAdmin(String),
@@ -797,6 +808,9 @@ impl App {
                     .iter()
                     .map(|&hwnd| icon(&window_id(hwnd), Role::Window, false)),
             );
+        }
+        if let Some(folder) = &self.config.shortcuts_folder {
+            entries.push(icon(folder, Role::Shortcuts, false));
         }
         if let Some(downloads) = &self.downloads {
             entries.push(icon(downloads, Role::Folder, false));
@@ -2340,7 +2354,10 @@ impl App {
                     .all(|file| files::same_volume(file, &id)),
                 folder: id,
             },
-            Role::App | Role::Group | Role::Start | Role::Window => DropAction::Nothing,
+            // The user arranges the shortcuts folder in Explorer.
+            Role::App | Role::Group | Role::Start | Role::Window | Role::Shortcuts => {
+                DropAction::Nothing
+            }
         }
     }
 
@@ -2608,7 +2625,43 @@ impl App {
             }
             Role::Start => Some(Outside::OpenStart),
             Role::Window => window_of(&id).and_then(|hwnd| self.activating(vec![hwnd])),
+            Role::Shortcuts => self.folder_menu(id)?,
             Role::Folder | Role::Trash => Some(Outside::Open(id)),
+        })
+    }
+
+    /// The shortcuts folder's menu, above its icon. The label hides while
+    /// the menu is open, as for the context menu.
+    fn folder_menu(&mut self, folder: String) -> Result<Option<Outside>> {
+        let Some(anchor) = self.hovered.and_then(|index| self.anchor_above(index)) else {
+            return Ok(None);
+        };
+        self.close_preview();
+        self.close_group_view();
+        self.hovered = None;
+        self.hovering = false;
+        self.render()?;
+        Ok(Some(Outside::FolderMenu {
+            folder,
+            anchor,
+            dark: !uses_light_theme(),
+        }))
+    }
+
+    /// Where a menu for the icon at `index` opens: centered just above it.
+    fn anchor_above(&self, index: usize) -> Option<POINT> {
+        let stage = self.stage.as_ref()?;
+        let state = magnify(
+            &stage.layout,
+            self.cursor,
+            self.amount.value,
+            &stage.magnifier,
+        );
+        let rect = state.rects.get(index)?;
+        let gap = (stage.gap / 2.0).round() as i32;
+        Some(POINT {
+            x: stage.dock_origin.x + (rect.x + rect.width / 2.0).round() as i32,
+            y: stage.dock_origin.y + rect.y.round() as i32 - gap,
         })
     }
 
@@ -2989,6 +3042,13 @@ impl App {
                 items.push(MenuItem::action(CMD_OPEN, t.open));
                 items.push(MenuItem::action(CMD_REVEAL, t.show_in_explorer));
             }
+            // The folder is chosen in Settings, so changing it opens them.
+            Role::Shortcuts => {
+                items.push(MenuItem::action(CMD_OPEN, t.open));
+                items.push(MenuItem::action(CMD_SETTINGS, t.change_folder));
+                items.push(MenuItem::Separator);
+                items.push(MenuItem::action(CMD_REMOVE_FOLDER, t.remove_from_dock));
+            }
             Role::Trash => {
                 items.push(MenuItem::action(CMD_OPEN, t.open));
                 items.push(MenuItem::Separator);
@@ -3034,6 +3094,13 @@ impl App {
             }
             CMD_CLOSE_WINDOW => {
                 launcher::close(&window_of(&id).into_iter().collect::<Vec<_>>());
+                None
+            }
+            CMD_SETTINGS => Some(Outside::OpenSettings),
+            CMD_REMOVE_FOLDER => {
+                self.config.shortcuts_folder = None;
+                save_settings(&self.roster, &self.config);
+                self.refresh()?;
                 None
             }
             CMD_OPEN => {
@@ -3888,6 +3955,17 @@ fn run_outside(outside: Outside) {
                 });
             }
         }
+        Outside::FolderMenu {
+            folder,
+            anchor,
+            dark,
+        } => {
+            let chosen = folder_menu::show(main_window(), &folder, anchor, dark);
+            with_app("menú cerrado", App::after_menu);
+            if let Some(path) = chosen {
+                submit(ShellAction::Open { id: path });
+            }
+        }
     }
 }
 
@@ -4050,6 +4128,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             // SAFETY: `hwnd` is this live window on its owning UI thread.
             unsafe { SetTimer(Some(hwnd), TASKBAR_TIMER, TASKBAR_DELAY_MS, None) };
         }
+        // A folder's submenu in the shortcuts folder's menu is about to open.
+        WM_INITMENUPOPUP if folder_menu::init_popup(HMENU(w.0 as *mut _)) => {}
         WM_DESTROY => unsafe { PostQuitMessage(0) },
         _ if SHELL_HOOK.get() == Some(&msg) => match w.0 {
             // Changing the foreground window does not change the app list; it

@@ -16,6 +16,7 @@ import {
   installUpdate,
   loadConfig,
   openReleaseNotes,
+  pickFolder,
   saveConfig,
   setAutostart,
 } from "./config";
@@ -182,12 +183,19 @@ export function App() {
     }
     setConfirmingReset(false);
     defaultConfig()
-      .then(({ pinned: _pinned, recent: _recent, ...defaults }) => update(defaults))
+      .then(({ pinned: _pinned, recent: _recent, shortcutsFolder: _folder, ...defaults }) =>
+        update(defaults),
+      )
       .catch(() => setFailed(true));
   }, [confirmingReset, update]);
 
   if (!config) return <div className="window" />;
   const t = textsFor(config.language);
+  const chooseFolder = () => {
+    pickFolder(config.shortcutsFolder)
+      .then((folder) => folder && update({ shortcutsFolder: folder }))
+      .catch(() => setFailed(true));
+  };
   const appWindow = getCurrentWindow();
   const waiting = pendingUpdate(updateState);
   // An update the user asked for keeps its banner even after "Later".
@@ -317,6 +325,20 @@ export function App() {
                     checked={config.showRecents}
                     onChange={(showRecents) => update({ showRecents })}
                   />
+                </Row>
+              </Card>
+              <Card>
+                <Row label={t.shortcutsFolder} hint={config.shortcutsFolder ?? t.shortcutsFolderHint}>
+                  <div className="push-group">
+                    {config.shortcutsFolder ? (
+                      <button type="button" className="push" onClick={() => update({ shortcutsFolder: null })}>
+                        {t.shortcutsFolderRemove}
+                      </button>
+                    ) : null}
+                    <button type="button" className="push" onClick={chooseFolder}>
+                      {t.shortcutsFolderChoose}
+                    </button>
+                  </div>
                 </Row>
               </Card>
             </>

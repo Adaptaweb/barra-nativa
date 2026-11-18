@@ -37,6 +37,10 @@ pub struct Strings {
     pub usage_updated: &'static str,
     pub usage_used: &'static str,
     pub media_title: &'static str,
+    pub folder_empty: &'static str,
+    pub folder_unavailable: &'static str,
+    pub change_folder: &'static str,
+    pub remove_from_dock: &'static str,
     pub shell_operation_failed: &'static str,
 }
 
@@ -71,6 +75,10 @@ const ES: Strings = Strings {
     usage_updated: "Actualizado hace",
     usage_used: "usado",
     media_title: "Reproducción",
+    folder_empty: "(vacía)",
+    folder_unavailable: "Carpeta no disponible",
+    change_folder: "&Cambiar de carpeta…",
+    remove_from_dock: "&Quitar del Dock",
 };
 
 const EN: Strings = Strings {
@@ -104,6 +112,10 @@ const EN: Strings = Strings {
     usage_updated: "Updated",
     usage_used: "used",
     media_title: "Now playing",
+    folder_empty: "(empty)",
+    folder_unavailable: "Folder unavailable",
+    change_folder: "&Change Folder…",
+    remove_from_dock: "&Remove from Dock",
 };
 
 const FR: Strings = Strings {
@@ -137,6 +149,10 @@ const FR: Strings = Strings {
     usage_updated: "Actualisé il y a",
     usage_used: "utilisé",
     media_title: "En cours de lecture",
+    folder_empty: "(vide)",
+    folder_unavailable: "Dossier introuvable",
+    change_folder: "&Changer de dossier…",
+    remove_from_dock: "&Retirer du Dock",
 };
 
 /// 0 = not chosen yet (follow Windows), 1 = Spanish, 2 = English, 3 = French.

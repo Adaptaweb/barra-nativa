@@ -67,5 +67,9 @@
   "groupBehavior": "Comportamiento",
   "groupMinimize": "Al minimizar",
   "zoom": "Ampliar",
-  "updatesNow": "Esta versión"
+  "updatesNow": "Esta versión",
+  "shortcutsFolder": "Carpeta de accesos directos",
+  "shortcutsFolderHint": "Una carpeta a la derecha del Dock: su contenido se abre como un menú, con un submenú por cada carpeta que contiene.",
+  "shortcutsFolderChoose": "Elegir…",
+  "shortcutsFolderRemove": "Quitar"
 }

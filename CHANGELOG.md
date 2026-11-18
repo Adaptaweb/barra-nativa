@@ -17,6 +17,11 @@ copia la sección de la versión que se publica a la release de GitHub.
   its apps out above it (a grid when there are many); drag one out of the
   fan to take it out of the group, into the dock where it is dropped.
   Right-click a group to ungroup it.
+- Shortcuts folder: choose a folder in Settings → Dock and it shows at the
+  right of the dock. Clicking it opens its contents as a menu, as a Windows 10
+  taskbar toolbar did: folders first, each one a submenu, then files, with
+  Explorer's names and icons; choosing an item opens it. Right-click it to
+  open the folder, change it or remove it.
 - French: the dock, Settings and the installer are now also in French. Choose
   it in Settings → System, or leave Automatic to follow Windows. A language
   Muelle does not know in the settings file now reads as Automatic instead of
@@ -37,6 +42,12 @@ copia la sección de la versión que se publica a la release de GitHub.
   puntero. Al hacer clic se despliegan en abanico encima (en cuadrícula si son
   muchas); arrastra una fuera del abanico para sacarla del grupo, al lugar del
   dock donde la sueltes. Clic derecho en un grupo para desagruparlo.
+- Carpeta de accesos directos: elige una carpeta en Ajustes → Dock y aparece
+  a la derecha del dock. Al hacer clic, su contenido se abre como un menú,
+  como una barra de herramientas de la barra de tareas de Windows 10: primero
+  las carpetas, cada una un submenú, luego los archivos, con los nombres e
+  iconos del Explorador; al elegir un elemento se abre. Clic derecho para
+  abrir la carpeta, cambiarla o quitarla.
 - Francés: el dock, Ajustes y el instalador también están en francés.
   Elígelo en Ajustes → Sistema, o deja Automático para seguir a Windows. Un
   idioma que Muelle no conoce en el archivo de ajustes ahora se lee como

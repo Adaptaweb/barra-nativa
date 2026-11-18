@@ -77,6 +77,25 @@ fn open_animation_settings() -> Result<(), String> {
     launcher::open(page).map_err(|error| error.to_string())
 }
 
+/// Asks for the folder the dock shows as a menu, opened at `current`;
+/// `None` if the user cancels. The dialog runs on its own thread, so the
+/// window keeps drawing behind it.
+#[tauri::command]
+async fn pick_folder(
+    window: tauri::WebviewWindow,
+    current: Option<String>,
+) -> Result<Option<String>, String> {
+    let owner = window
+        .hwnd()
+        .map(|hwnd| hwnd.0 as isize)
+        .unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        muelle_shell::folder::pick(owner, current.as_deref())
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn get_autostart() -> bool {
     autostart::is_enabled()
@@ -262,6 +281,7 @@ fn main() {
             set_autostart,
             windows_animations,
             open_animation_settings,
+            pick_folder,
             check_update,
             install_update,
             open_release_notes

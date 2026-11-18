@@ -67,5 +67,9 @@
   "groupBehavior": "Comportement",
   "groupMinimize": "Réduction",
   "zoom": "Agrandir",
-  "updatesNow": "Cette version"
+  "updatesNow": "Cette version",
+  "shortcutsFolder": "Dossier de raccourcis",
+  "shortcutsFolderHint": "Un dossier à droite du Dock : son contenu s'ouvre en menu, avec un sous-menu pour chaque dossier qu'il contient.",
+  "shortcutsFolderChoose": "Choisir…",
+  "shortcutsFolderRemove": "Retirer"
 }
