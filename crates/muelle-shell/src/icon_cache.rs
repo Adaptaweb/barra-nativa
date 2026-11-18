@@ -20,7 +20,9 @@ use crate::{
     names::display_name,
 };
 
-const MAGIC: &[u8; 4] = b"WDI1";
+/// Changed when icons are read differently, so entries from before are read
+/// again (2: programs' icons come from their own resources).
+const MAGIC: &[u8; 4] = b"WDI2";
 const HEADER_LEN: usize = 4 + 8 + 4 + 4 + 4;
 const SECONDS_PER_DAY: u64 = 86_400;
 

@@ -21,6 +21,12 @@ copia la sección de la versión que se publica a la release de GitHub.
   it in Settings → System, or leave Automatic to follow Windows. A language
   Muelle does not know in the settings file now reads as Automatic instead of
   making the file invalid.
+- Apps that showed a blank page instead of their icon now show it, as on the
+  taskbar: LibreOffice (its windows belong to `soffice.bin`; the dock now
+  shows LibreOffice Calc, Writer… with their names and icons), and programs
+  whose icon the Windows shell cannot draw although it is valid (one made
+  only of PNG images, as some Electron tools write). Icons are read again
+  once after updating.
 
 ### Español
 
@@ -35,6 +41,13 @@ copia la sección de la versión que se publica a la release de GitHub.
   Elígelo en Ajustes → Sistema, o deja Automático para seguir a Windows. Un
   idioma que Muelle no conoce en el archivo de ajustes ahora se lee como
   Automático en lugar de invalidar el archivo.
+- Las apps que mostraban una página en blanco en lugar de su icono ahora lo
+  muestran, como en la barra de tareas: LibreOffice (sus ventanas pertenecen
+  a `soffice.bin`; el dock ahora muestra LibreOffice Calc, Writer… con sus
+  nombres e iconos) y los programas cuyo icono el shell de Windows no sabe
+  dibujar aunque sea válido (uno hecho solo de imágenes PNG, como escriben
+  algunas herramientas de Electron). Los iconos se vuelven a leer una vez
+  tras actualizar.
 
 ## [0.1.12]
 
