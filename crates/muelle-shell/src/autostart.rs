@@ -32,7 +32,7 @@ use windows::{
             },
             TaskScheduler::{
                 IExecAction, ITaskFolder, ITaskService, TASK_CREATE_OR_UPDATE,
-                TASK_LOGON_INTERACTIVE_TOKEN, TaskScheduler,
+                TASK_LOGON_INTERACTIVE_TOKEN, TASK_UPDATE, TaskScheduler,
             },
             Threading::{
                 CreateMutexW, GetCurrentProcess, OpenProcessToken, ReleaseMutex,
@@ -59,14 +59,17 @@ pub fn set(exe: Option<&str>) -> windows::core::Result<()> {
 fn set_locked(exe: Option<&str>, sid: &str) -> windows::core::Result<()> {
     match exe {
         Some(exe) => {
-            if register_task(exe, sid).is_ok() {
+            if let Err(error) = register_task(exe, sid) {
+                crate::log::line(&format!(
+                    "inicio automático: tarea no disponible, se usa Run: {error}"
+                ));
+                set_run_value(exe)?;
+                set_marker(true)?;
+            } else {
                 // Save the fast shutdown marker before retiring the fallback.
                 set_marker(true)?;
                 delete_legacy_task(sid)?;
                 delete_run_value()?;
-            } else {
-                set_run_value(exe)?;
-                set_marker(true)?;
             }
         }
         None => {
@@ -107,6 +110,12 @@ fn migrate_inner() -> windows::core::Result<()> {
     let _lock = ConfigurationLock::acquire(&sid)?;
     let exe = env::current_exe()?;
     let exe = exe.to_string_lossy();
+    // Current SID-based registrations also need policy upgrades. Only this
+    // exact executable may update its task, and a disabled task stays disabled.
+    let current = with_tasks(|folder| upgrade_task(folder, &task_name(&sid), &exe, &sid))?;
+    if current {
+        return Ok(());
+    }
     let migratable = if let Some(command) = run_value() {
         run_approved() && command.trim().trim_matches('"').eq_ignore_ascii_case(&exe)
     } else if marker() {
@@ -136,6 +145,92 @@ fn migrate_inner() -> windows::core::Result<()> {
         set_locked(Some(&exe), &sid)?;
     }
     Ok(())
+}
+
+/// Query the actual startup registration for Settings, instead of presenting
+/// the fast shutdown marker as proof that a task still exists and is enabled.
+pub fn enabled_for(exe: &str) -> windows::core::Result<bool> {
+    if let Some(command) = run_value() {
+        return Ok(run_approved() && command.trim().trim_matches('"').eq_ignore_ascii_case(exe));
+    }
+    let sid = user_sid()?;
+    with_tasks(|folder| {
+        for name in [task_name(&sid), legacy_task_name()] {
+            let task = match unsafe { folder.GetTask(&name) } {
+                Ok(task) => task,
+                Err(error) if task_missing(&error) => continue,
+                Err(error) => return Err(error),
+            };
+            let mut path = BSTR::new();
+            unsafe {
+                task.Definition()?
+                    .Actions()?
+                    .get_Item(1)?
+                    .cast::<IExecAction>()?
+                    .Path(&mut path)?;
+                if path.to_string().eq_ignore_ascii_case(exe) {
+                    return Ok(task.Enabled()?.as_bool());
+                }
+            }
+        }
+        Ok(false)
+    })
+}
+
+fn upgrade_task(
+    folder: &ITaskFolder,
+    name: &BSTR,
+    exe: &str,
+    sid: &str,
+) -> windows::core::Result<bool> {
+    // SAFETY: This query and registration run off the UI thread under the
+    // configuration lock; preserve the existing triggers and user settings.
+    unsafe {
+        let task = match folder.GetTask(name) {
+            Ok(task) => task,
+            Err(error) if task_missing(&error) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let definition = task.Definition()?;
+        let mut path = BSTR::new();
+        definition
+            .Actions()?
+            .get_Item(1)?
+            .cast::<IExecAction>()?
+            .Path(&mut path)?;
+        if !path.to_string().eq_ignore_ascii_case(exe) {
+            return Ok(true);
+        }
+        if !task.Enabled()?.as_bool() {
+            return Ok(true);
+        }
+        let mut account = BSTR::new();
+        definition.Principal()?.UserId(&mut account)?;
+        if account_sid(&account.to_string())? != sid {
+            return Ok(true);
+        }
+        let settings = definition.Settings()?;
+        let mut count = 0;
+        let mut interval = BSTR::new();
+        settings.RestartCount(&mut count)?;
+        settings.RestartInterval(&mut interval)?;
+        if count != 3 || interval != "PT1M" {
+            settings.SetRestartInterval(&BSTR::from("PT1M"))?;
+            settings.SetRestartCount(3)?;
+            let none = VARIANT::default();
+            folder.RegisterTaskDefinition(
+                name,
+                &definition,
+                TASK_UPDATE.0,
+                &none,
+                &none,
+                TASK_LOGON_INTERACTIVE_TOKEN,
+                &none,
+            )?;
+            crate::log::line("inicio automático: recuperación tras error actualizada");
+        }
+        Ok(true)
+    }
 }
 
 /// Stable account identity survives account renames and local/domain name
@@ -381,6 +476,10 @@ fn task_xml(user: &str, exe: &str) -> String {
     </Principal>
   </Principals>
   <Settings>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
@@ -524,6 +623,9 @@ mod tests {
         assert!(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"));
         assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
         assert!(xml.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"));
+        assert!(xml.contains("<RestartOnFailure>"));
+        assert!(xml.contains("<Interval>PT1M</Interval>"));
+        assert!(xml.contains("<Count>3</Count>"));
     }
 
     #[test]
@@ -598,6 +700,63 @@ mod tests {
                 }
                 assert_eq!(path.to_string(), exe);
                 assert_eq!(account_sid(&account.to_string())?, sid);
+                // Emulate an older task. Its trigger remains disabled, so
+                // enabling the task cannot launch anything during this test.
+                let mut registered_retries = 0;
+                unsafe {
+                    task.Definition()?
+                        .Settings()?
+                        .RestartCount(&mut registered_retries)?;
+                }
+                assert_eq!(registered_retries, 3);
+                let old_xml = BSTR::from(xml.to_string().replace(
+                    "    <RestartOnFailure>\n      <Interval>PT1M</Interval>\n      <Count>3</Count>\n    </RestartOnFailure>\n", ""));
+                unsafe {
+                    folder.RegisterTask(
+                        &name,
+                        &old_xml,
+                        TASK_UPDATE.0,
+                        &none,
+                        &none,
+                        TASK_LOGON_INTERACTIVE_TOKEN,
+                        &none,
+                    )?;
+                    task.SetEnabled(false.into())?;
+                }
+                upgrade_task(folder, &name, &exe, &sid)?;
+                let restart_count = || -> windows::core::Result<i32> {
+                    let mut count = 0;
+                    unsafe {
+                        folder
+                            .GetTask(&name)?
+                            .Definition()?
+                            .Settings()?
+                            .RestartCount(&mut count)?;
+                    }
+                    Ok(count)
+                };
+                assert_eq!(restart_count()?, 0, "a disabled task must not be rewritten");
+                assert!(!unsafe { task.Enabled()? }.as_bool());
+                unsafe {
+                    task.SetEnabled(true.into())?;
+                }
+                upgrade_task(folder, &name, r"C:\Other\muelle.exe", &sid)?;
+                assert_eq!(
+                    restart_count()?,
+                    0,
+                    "another executable must not take over autostart"
+                );
+                upgrade_task(folder, &name, &exe, &sid)?;
+                assert_eq!(restart_count()?, 3);
+                let mut interval = BSTR::new();
+                unsafe {
+                    folder
+                        .GetTask(&name)?
+                        .Definition()?
+                        .Settings()?
+                        .RestartInterval(&mut interval)?;
+                }
+                assert_eq!(interval.to_string(), "PT1M");
                 Ok(())
             })();
             drop(task);

@@ -8,7 +8,7 @@
   "magnificationHint": "Los iconos crecen al pasar el cursor.",
   "magnifiedSize": "Tamaño ampliado",
   "autoHide": "Ocultar y mostrar el Dock automáticamente",
-  "autoHideHint": "Reaparece al tocar el borde inferior de la pantalla.",
+  "autoHideHint": "Deja el puntero en el borde inferior de cualquier pantalla para mostrar el Dock allí.",
   "genie": "Efecto genio",
   "genieHint": "Mientras está activo, las ventanas no usan las animaciones de Windows al maximizar ni al cerrar.",
   "genieOff": "Las animaciones de Windows están desactivadas",

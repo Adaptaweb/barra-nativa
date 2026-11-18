@@ -1,8 +1,12 @@
 //! Persistent Muelle configuration stored in `%APPDATA%\Muelle\config.json`.
 
 use std::{
-    env, fs, io,
+    env,
+    fs::{self, File, TryLockError},
+    io,
     path::{Path, PathBuf},
+    thread,
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
@@ -204,9 +208,52 @@ pub fn load(path: &Path) -> Result<Option<Config>, ConfigError> {
         })
 }
 
-/// Saves the configuration atomically by writing a temporary file and renaming
-/// it, so an interrupted write cannot leave a truncated file.
+/// Replaces the configuration under the same lock used by incremental edits.
 pub fn save(path: &Path, config: &Config) -> Result<(), ConfigError> {
+    let _lock = lock_for_write(path)?;
+    write_config(path, config)
+}
+
+/// Reads, changes and publishes one version while other writers wait. Readers
+/// can still load the last complete version without acquiring the lock.
+pub fn update(
+    path: &Path,
+    edit: impl FnOnce(Option<Config>) -> Result<Config, ConfigError>,
+) -> Result<Config, ConfigError> {
+    let _lock = lock_for_write(path)?;
+    let config = edit(load(path)?)?.sanitized();
+    write_config(path, &config)?;
+    Ok(config)
+}
+
+/// Updates only preferences explicitly changed in Settings. The roster and
+/// schema version belong to the dock and may have changed since Settings opened.
+pub fn update_preferences(
+    path: &Path,
+    patch: serde_json::Map<String, serde_json::Value>,
+) -> Result<Config, ConfigError> {
+    update(path, |saved| {
+        let mut fields = serde_json::to_value(saved.unwrap_or_default())?;
+        if let Some(fields) = fields.as_object_mut() {
+            for (key, value) in patch {
+                if fields.contains_key(&key)
+                    && !matches!(
+                        key.as_str(),
+                        "version" | "pinned" | "groups" | "recent" | "taskbarPins"
+                    )
+                {
+                    fields.insert(key, value);
+                }
+            }
+        }
+        serde_json::from_value(fields).map_err(|source| ConfigError::Parse {
+            path: path.to_owned(),
+            source,
+        })
+    })
+}
+
+fn lock_for_write(path: &Path) -> Result<File, ConfigError> {
     let io_error = |source| ConfigError::Io {
         path: path.to_owned(),
         source,
@@ -214,6 +261,38 @@ pub fn save(path: &Path, config: &Config) -> Result<(), ConfigError> {
     if let Some(folder) = path.parent() {
         fs::create_dir_all(folder).map_err(io_error)?;
     }
+    // Lock a separate file so the atomic rename cannot replace the lock.
+    // Closing the handle releases it, including when a process exits.
+    let lock = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path.with_extension("json.lock"))
+        .map_err(io_error)?;
+    let start = Instant::now();
+    loop {
+        match lock.try_lock() {
+            Ok(()) => return Ok(lock),
+            Err(TryLockError::WouldBlock) if start.elapsed() < Duration::from_millis(80) => {
+                thread::sleep(Duration::from_millis(4));
+            }
+            Err(TryLockError::WouldBlock) => {
+                return Err(io_error(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "Ajustes y el dock están guardando la configuración",
+                )));
+            }
+            Err(TryLockError::Error(error)) => return Err(io_error(error)),
+        }
+    }
+}
+
+fn write_config(path: &Path, config: &Config) -> Result<(), ConfigError> {
+    let io_error = |source| ConfigError::Io {
+        path: path.to_owned(),
+        source,
+    };
     let temporary = path.with_extension("json.tmp");
     fs::write(&temporary, serde_json::to_string_pretty(config)?).map_err(io_error)?;
     fs::rename(&temporary, path).map_err(io_error)
@@ -243,6 +322,67 @@ mod tests {
         };
         save(&path, &config).ok();
         assert_eq!(load(&path).ok(), Some(Some(config)));
+    }
+
+    #[test]
+    fn settings_patch_keeps_dock_edits_made_since_opening() -> Result<(), ConfigError> {
+        let path = scratch("settings-patch");
+        let initial = Config::default();
+        save(&path, &initial)?;
+        update(&path, |saved| {
+            let mut config = saved.unwrap_or_default();
+            config.auto_hide = true;
+            config.pinned.push("browser".into());
+            Ok(config)
+        })?;
+        let patch = serde_json::Map::from_iter([
+            ("iconSize".into(), 64.into()),
+            ("pinned".into(), serde_json::Value::Array(Vec::new())),
+        ]);
+        let saved = update_preferences(&path, patch)?;
+        assert!(saved.auto_hide);
+        assert_eq!(saved.pinned, ["browser"]);
+        assert_eq!(saved.icon_size, 64);
+        Ok(())
+    }
+
+    #[test]
+    fn settings_patch_keeps_the_dock_groups() -> Result<(), ConfigError> {
+        let path = scratch("settings-patch-groups");
+        let group = DockGroup {
+            id: "muelle:group:1".into(),
+            apps: vec!["a".into(), "b".into()],
+        };
+        save(
+            &path,
+            &Config {
+                pinned: vec![group.id.clone()],
+                groups: vec![group.clone()],
+                ..Config::default()
+            },
+        )?;
+        let patch = serde_json::Map::from_iter([
+            ("iconSize".into(), 64.into()),
+            ("groups".into(), serde_json::Value::Array(Vec::new())),
+        ]);
+        let saved = update_preferences(&path, patch)?;
+        assert_eq!(saved.groups, [group]);
+        assert_eq!(saved.icon_size, 64);
+        Ok(())
+    }
+
+    #[test]
+    fn a_busy_writer_keeps_the_last_complete_configuration() -> Result<(), ConfigError> {
+        let path = scratch("write-contention");
+        let original = Config::default();
+        save(&path, &original)?;
+        let _writer = lock_for_write(&path)?;
+        let result = update(&path, |_| panic!("contending writer cannot edit"));
+        assert!(
+            matches!(result, Err(ConfigError::Io { source, .. }) if source.kind() == io::ErrorKind::WouldBlock)
+        );
+        assert_eq!(load(&path)?, Some(original));
+        Ok(())
     }
 
     #[test]

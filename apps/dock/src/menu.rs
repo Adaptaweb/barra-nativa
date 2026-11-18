@@ -51,10 +51,10 @@ use windows::{
                 SPI_GETSCREENREADER, SW_SHOWNA, SWP_NOACTIVATE,
                 SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor, SetForegroundWindow, SetTimer,
                 SetWindowPos, ShowWindow, SystemParametersInfoW, TPM_BOTTOMALIGN, TPM_CENTERALIGN,
-                TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, TranslateMessage,
-                WA_INACTIVE, WM_ACTIVATE, WM_CANCELMODE, WM_CAPTURECHANGED, WM_CHAR, WM_KEYDOWN,
-                WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_NULL,
-                WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER,
+                TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenuEx,
+                TranslateMessage, WA_INACTIVE, WM_ACTIVATE, WM_CANCELMODE, WM_CAPTURECHANGED,
+                WM_CHAR, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE,
+                WM_NULL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER,
                 WM_XBUTTONDOWN, WNDCLASSW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
                 WS_EX_TOPMOST, WS_POPUP,
             },
@@ -94,14 +94,41 @@ impl MenuItem {
 /// Runs a modal loop that continues dispatching messages to dock windows.
 /// The caller must not hold the app state while this function runs.
 pub fn show(gfx: &Gfx, owner: HWND, items: &[MenuItem], anchor: POINT, dark: bool) -> Option<u32> {
+    show_at(gfx, owner, items, anchor, dark, Placement::Above)
+}
+
+pub fn show_below(
+    gfx: &Gfx,
+    owner: HWND,
+    items: &[MenuItem],
+    anchor: POINT,
+    dark: bool,
+) -> Option<u32> {
+    show_at(gfx, owner, items, anchor, dark, Placement::Below)
+}
+
+#[derive(Clone, Copy)]
+enum Placement {
+    Above,
+    Below,
+}
+
+fn show_at(
+    gfx: &Gfx,
+    owner: HWND,
+    items: &[MenuItem],
+    anchor: POINT,
+    dark: bool,
+    placement: Placement,
+) -> Option<u32> {
     if needs_native_menu() {
-        return show_native(owner, items, anchor, dark);
+        return show_native(owner, items, anchor, dark, placement);
     }
-    match Popup::open(gfx, owner, items, anchor, dark) {
+    match Popup::open(gfx, owner, items, anchor, dark, placement) {
         Ok(popup) => popup.run(),
         Err(error) => {
             eprintln!("muelle: menú: {error:#}");
-            show_native(owner, items, anchor, dark)
+            show_native(owner, items, anchor, dark, placement)
         }
     }
 }
@@ -185,7 +212,14 @@ struct Popup {
 }
 
 impl Popup {
-    fn open(gfx: &Gfx, owner: HWND, items: &[MenuItem], anchor: POINT, dark: bool) -> Result<Self> {
+    fn open(
+        gfx: &Gfx,
+        owner: HWND,
+        items: &[MenuItem],
+        anchor: POINT,
+        dark: bool,
+        placement: Placement,
+    ) -> Result<Self> {
         let c = &gfx.compositor;
         // SAFETY: Read-only query on our own window.
         let scale = unsafe { GetDpiForWindow(owner) }.max(96) as f32 / 96.0;
@@ -345,7 +379,14 @@ impl Popup {
             screen.left + margin,
             (screen.right - margin - w).max(screen.left + margin),
         );
-        let top = (anchor.y - h).max(screen.top + margin);
+        let top = match placement {
+            Placement::Above => anchor.y - h,
+            Placement::Below => anchor.y,
+        }
+        .clamp(
+            screen.top + margin,
+            (screen.bottom - margin - h).max(screen.top + margin),
+        );
 
         let hwnd = create_window(dark)?;
         // SAFETY: `hwnd` is the live window created above.
@@ -419,7 +460,7 @@ impl Popup {
                 }
             }
         }
-        self.close(chosen.is_some());
+        self.close();
         chosen
     }
 
@@ -582,16 +623,19 @@ impl Popup {
         }
     }
 
-    fn close(self, chose: bool) {
+    fn close(self) {
         // SAFETY: Our own window, destroyed once; the owner gets a message
         // so its loop notices the menu is gone, as with the native menu.
         unsafe {
+            let foreground = GetForegroundWindow();
+            let restore = foreground == self.hwnd || foreground == self.owner;
             let _ = KillTimer(Some(self.hwnd), FOCUS_TIMER);
             let _ = ReleaseCapture();
             let _ = DestroyWindow(self.hwnd);
             let _ = PostMessageW(Some(self.owner), WM_NULL, WPARAM(0), LPARAM(0));
-            if !chose {
-                // Dismissing without a selection gives the focus back, as macOS does.
+            if restore {
+                // Restore after a selection as well, but never override a
+                // different app the user activated while dismissing the menu.
                 let _ = SetForegroundWindow(self.previous);
             }
         }
@@ -793,7 +837,13 @@ fn add_sprite(
 
 /* ---------------------------------------------------------- Native menu */
 
-fn show_native(owner: HWND, items: &[MenuItem], anchor: POINT, dark: bool) -> Option<u32> {
+fn show_native(
+    owner: HWND,
+    items: &[MenuItem],
+    anchor: POINT,
+    dark: bool,
+    placement: Placement,
+) -> Option<u32> {
     apply_theme(dark);
     // SAFETY: The menu is destroyed before returning, and strings live through each call.
     unsafe {
@@ -830,7 +880,15 @@ fn show_native(owner: HWND, items: &[MenuItem], anchor: POINT, dark: bool) -> Op
         let _ = SetForegroundWindow(owner);
         let chosen = TrackPopupMenuEx(
             menu,
-            (TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_CENTERALIGN).0,
+            (TPM_RETURNCMD
+                | TPM_NONOTIFY
+                | TPM_RIGHTBUTTON
+                | TPM_CENTERALIGN
+                | match placement {
+                    Placement::Above => TPM_BOTTOMALIGN,
+                    Placement::Below => TPM_TOPALIGN,
+                })
+            .0,
             anchor.x,
             anchor.y,
             owner,
@@ -840,8 +898,7 @@ fn show_native(owner: HWND, items: &[MenuItem], anchor: POINT, dark: bool) -> Op
         let _ = DestroyMenu(menu);
 
         let chosen = u32::try_from(chosen.0).ok().filter(|&command| command != 0);
-        if chosen.is_none() {
-            // Dismissing without a selection restores the previous focus, as in macOS.
+        if GetForegroundWindow() == owner {
             let _ = SetForegroundWindow(previous);
         }
         chosen
@@ -884,7 +941,85 @@ pub fn apply_theme(dark: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_mnemonic;
+    use super::*;
+
+    #[test]
+    #[ignore = "Requires an interactive Windows desktop; briefly opens a menu"]
+    fn keyboard_menu_opens_below_its_anchor_and_returns_the_selected_layout() -> Result<()> {
+        use windows::Win32::{
+            System::WinRT::{
+                CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+                DispatcherQueueOptions,
+            },
+            UI::WindowsAndMessaging::GetWindowRect,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let owner = unsafe {
+            CreateWindowExW(
+                Default::default(),
+                w!("STATIC"),
+                w!("Muelle menu test"),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                None,
+                None,
+                None,
+                None,
+            )?
+        };
+        let result = (|| -> Result<()> {
+            let anchor = POINT { x: 600, y: 60 };
+            let previous = unsafe { GetForegroundWindow() };
+            let popup = Popup::open(
+                &gfx,
+                owner,
+                &[
+                    MenuItem::action(1, "Español"),
+                    MenuItem::action(2, "English"),
+                ],
+                anchor,
+                true,
+                Placement::Below,
+            )?;
+            let mut bounds = RECT::default();
+            unsafe {
+                GetWindowRect(popup.hwnd, &mut bounds)?;
+                // Exercise the popup's real modal path without injecting any
+                // keyboard input into the user's application.
+                PostMessageW(
+                    Some(popup.hwnd),
+                    WM_KEYDOWN,
+                    WPARAM(VK_DOWN.0 as usize),
+                    LPARAM(0),
+                )?;
+                PostMessageW(
+                    Some(popup.hwnd),
+                    WM_KEYDOWN,
+                    WPARAM(VK_RETURN.0 as usize),
+                    LPARAM(0),
+                )?;
+            }
+            let chosen = popup.run();
+            assert_eq!(bounds.top, anchor.y);
+            assert_eq!(chosen, Some(1));
+            assert_eq!(unsafe { GetForegroundWindow() }, previous);
+            Ok(())
+        })();
+        unsafe {
+            let _ = DestroyWindow(owner);
+        }
+        result
+    }
 
     #[test]
     fn strip_mnemonic_should_drop_the_marker_and_keep_its_letter() {

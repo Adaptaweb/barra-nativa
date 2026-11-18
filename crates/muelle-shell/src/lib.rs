@@ -5,6 +5,7 @@ pub mod files;
 pub mod folder;
 pub mod icon_cache;
 pub mod icons;
+pub mod keyboard;
 pub mod launcher;
 pub mod log;
 pub mod names;

@@ -16,8 +16,9 @@ use windows::{
         UI::{
             Shell::{ABM_GETSTATE, ABM_SETSTATE, ABS_AUTOHIDE, APPBARDATA, SHAppBarMessage},
             WindowsAndMessaging::{
-                FindWindowExW, FindWindowW, GWL_EXSTYLE, GetWindowLongPtrW, LWA_ALPHA,
-                SetLayeredWindowAttributes, SetWindowLongPtrW, WS_EX_LAYERED, WS_EX_TRANSPARENT,
+                FindWindowExW, FindWindowW, GWL_EXSTYLE, GetLayeredWindowAttributes,
+                GetWindowLongPtrW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongPtrW,
+                WS_EX_LAYERED, WS_EX_TRANSPARENT,
             },
         },
     },
@@ -38,25 +39,37 @@ fn state_file() -> PathBuf {
 ///
 /// Idempotent; can be called again after Explorer restarts or Windows redraws
 /// the taskbar.
-pub fn take_over() {
-    let file = state_file();
+pub fn take_over() -> bool {
+    take_over_taskbars(&taskbars(), &state_file())
+}
+
+fn take_over_taskbars(bars: &[HWND], file: &std::path::Path) -> bool {
+    // A logon task can run before Explorer creates Shell_TrayWnd. Saving
+    // an absent shell's state would lose the user's original preference.
+    if bars.is_empty() {
+        return false;
+    }
     if !file.exists() {
         let original = if autohide_enabled() { "1" } else { "0" };
         let saved = file
             .parent()
             .map_or(Ok(()), fs::create_dir_all)
-            .and_then(|()| fs::write(&file, original));
+            .and_then(|()| fs::write(file, original));
         if let Err(error) = saved {
             // Never hide the system taskbar unless the guard can restore its
             // original state after a crash or hang.
-            eprintln!("muelle: no se pudo guardar el estado de la barra: {error}");
-            return;
+            crate::log::line(&format!(
+                "no se pudo guardar el estado de la barra: {error}"
+            ));
+            return false;
         }
     }
     set_autohide(true);
-    for hwnd in taskbars() {
-        set_ghost(hwnd, true);
+    let mut hidden = true;
+    for &hwnd in bars {
+        hidden &= set_ghost(hwnd, true);
     }
+    hidden
 }
 
 /// What the dock and its watchdog do when the dock stops: give the taskbar
@@ -131,16 +144,75 @@ fn set_autohide(enabled: bool) {
     unsafe { SHAppBarMessage(ABM_SETSTATE, &mut data) };
 }
 
-fn set_ghost(hwnd: HWND, ghost: bool) {
+fn set_ghost(hwnd: HWND, ghost: bool) -> bool {
     // SAFETY: `hwnd` comes from FindWindow; if the window no longer exists, the calls have no effect.
     unsafe {
         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         if ghost {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | GHOST_STYLES);
-            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+            if SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA).is_err() {
+                return false;
+            }
         } else if style & GHOST_STYLES != 0 {
             let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style & !GHOST_STYLES);
         }
+        if !ghost {
+            return true;
+        }
+        let mut alpha = 255;
+        let mut flags = Default::default();
+        GetLayeredWindowAttributes(hwnd, None, Some(&mut alpha), Some(&mut flags)).is_ok()
+            && alpha == 0
+            && flags.contains(LWA_ALPHA)
+            && GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & GHOST_STYLES == GHOST_STYLES
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_absent_shell_does_not_save_a_false_original_taskbar_state() {
+        let file = env::temp_dir().join(format!("muelle-absent-shell-{}.txt", std::process::id()));
+        assert!(!file.exists());
+        assert!(!take_over_taskbars(&[], &file));
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn a_destroyed_taskbar_is_not_reported_as_successfully_hidden() {
+        assert!(!set_ghost(HWND::default(), true));
+    }
+
+    #[test]
+    fn ghost_visibility_is_verified_and_can_be_restored() -> windows::core::Result<()> {
+        use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WS_POPUP};
+        // A hidden test window, never the user's real taskbar.
+        unsafe {
+            let window = CreateWindowExW(
+                Default::default(),
+                w!("STATIC"),
+                w!("Muelle taskbar test"),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                None,
+                None,
+                None,
+                None,
+            )?;
+            let hidden = set_ghost(window, true);
+            let restored = set_ghost(window, false);
+            let styles = GetWindowLongPtrW(window, GWL_EXSTYLE);
+            let _ = DestroyWindow(window);
+            assert!(hidden);
+            assert!(restored);
+            assert_eq!(styles & GHOST_STYLES, 0);
+        }
+        Ok(())
     }
 }

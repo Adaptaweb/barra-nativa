@@ -8,7 +8,7 @@
   "magnificationHint": "Icons grow as the pointer passes over them.",
   "magnifiedSize": "Magnified size",
   "autoHide": "Automatically hide and show the Dock",
-  "autoHideHint": "It reappears when you touch the bottom edge of the screen.",
+  "autoHideHint": "Rest the pointer at the bottom edge of any display to reveal the Dock there.",
   "genie": "Genie effect",
   "genieHint": "While it is on, windows do not use the Windows animations for maximizing or closing.",
   "genieOff": "Windows animations are off",

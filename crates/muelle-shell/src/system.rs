@@ -2,8 +2,11 @@ use std::mem::size_of;
 
 use windows::{
     Win32::{
-        Foundation::{POINT, RECT},
-        Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint},
+        Foundation::{LPARAM, POINT, RECT},
+        Graphics::Gdi::{
+            EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITOR_DEFAULTTONULL,
+            MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
+        },
         System::Com::CoTaskMemFree,
         System::Registry::{
             HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW,
@@ -61,11 +64,7 @@ pub fn energy_saver_on() -> bool {
 #[must_use]
 pub fn input_language() -> Option<String> {
     use windows::Win32::{
-        Globalization::LCIDToLocaleName,
-        UI::{
-            Input::KeyboardAndMouse::{GetKeyboardLayout, GetKeyboardLayoutList},
-            WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
-        },
+        Globalization::LCIDToLocaleName, UI::Input::KeyboardAndMouse::GetKeyboardLayoutList,
     };
     // SAFETY: Read-only queries; `name` is a valid buffer for the locale name.
     unsafe {
@@ -73,8 +72,7 @@ pub fn input_language() -> Option<String> {
             return None;
         }
         // Each thread has its own layout: the one that matters is in front.
-        let thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
-        let language = (GetKeyboardLayout(thread).0 as usize & 0xFFFF) as u32;
+        let language = (crate::keyboard::Context::current()?.layout as usize & 0xFFFF) as u32;
         let mut name = [0u16; 85];
         let len = usize::try_from(LCIDToLocaleName(language, Some(&mut name), 0)).ok()?;
         let tag = String::from_utf16_lossy(name.get(..len.checked_sub(1)?)?);
@@ -178,9 +176,47 @@ pub struct Monitor {
 /// Primary monitor. `None` only if Windows cannot describe it.
 #[must_use]
 pub fn primary_monitor() -> Option<Monitor> {
+    // SAFETY: The origin is on the primary monitor in virtual screen coordinates.
+    monitor_info(unsafe { MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY) })
+}
+
+/// The monitor containing a screen point, with no fallback for gaps or disconnected displays.
+#[must_use]
+pub fn monitor_at(point: POINT) -> Option<Monitor> {
+    // SAFETY: Read-only monitor lookup.
+    monitor_info(unsafe { MonitorFromPoint(point, MONITOR_DEFAULTTONULL) })
+}
+
+/// Physical bounds of the connected displays, including negative coordinates.
+#[must_use]
+pub fn monitor_rects() -> Vec<RECT> {
+    unsafe extern "system" fn append(_: HMONITOR, _: HDC, rect: *mut RECT, data: LPARAM) -> BOOL {
+        // SAFETY: EnumDisplayMonitors runs synchronously and supplies the
+        // current monitor bounds. The caller owns the vector for that call.
+        unsafe {
+            (&mut *(data.0 as *mut Vec<RECT>)).push(*rect);
+        }
+        BOOL(1)
+    }
+    let mut screens = Vec::new();
+    // SAFETY: The callback's vector lives through the synchronous enumeration.
+    if unsafe {
+        !EnumDisplayMonitors(
+            None,
+            None,
+            Some(append),
+            LPARAM((&raw mut screens) as isize),
+        )
+        .as_bool()
+    } {
+        screens.clear();
+    }
+    screens
+}
+
+fn monitor_info(handle: HMONITOR) -> Option<Monitor> {
     // SAFETY: Read-only queries using correctly sized structures.
     unsafe {
-        let handle = MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY);
         let mut info = MONITORINFO {
             cbSize: size_of::<MONITORINFO>() as u32,
             ..Default::default()

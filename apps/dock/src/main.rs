@@ -14,6 +14,7 @@
 mod app;
 mod assets;
 mod drop;
+mod edge_watch;
 mod flight;
 mod folder_menu;
 mod gfx;
@@ -88,6 +89,24 @@ fn run_dock() -> Result<()> {
         return Ok(());
     }
 
+    let startup = std::time::Instant::now();
+    muelle_shell::log::line(concat!(
+        "proceso iniciado, versión ",
+        env!("CARGO_PKG_VERSION")
+    ));
+    let result = initialize_dock();
+    if let Err(error) = &result {
+        muelle_shell::log::line(&format!(
+            "el dock falló tras {} ms desde el inicio del proceso: {error:#}",
+            startup.elapsed().as_millis()
+        ));
+    }
+    taskbar::give_back_on_exit();
+    muelle_shell::log::flush();
+    result
+}
+
+fn initialize_dock() -> Result<()> {
     // SAFETY: Sets DPI awareness and initializes the dispatcher before creating windows.
     let _queue = unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
@@ -106,11 +125,5 @@ fn run_dock() -> Result<()> {
     let _ = std::thread::Builder::new()
         .name("muelle-autostart".into())
         .spawn(autostart::migrate);
-    let result = app::run();
-    if let Err(error) = &result {
-        muelle_shell::log::line(&format!("el dock se cerró por un error: {error:#}"));
-    }
-    taskbar::give_back_on_exit();
-    muelle_shell::log::flush();
-    result
+    app::run()
 }

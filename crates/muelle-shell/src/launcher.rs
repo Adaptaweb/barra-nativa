@@ -13,7 +13,7 @@ use windows::{
             Input::KeyboardAndMouse::{
                 INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
                 SendInput, VIRTUAL_KEY, VK_A, VK_B, VK_D, VK_ESCAPE, VK_LCONTROL, VK_LWIN, VK_N,
-                VK_RETURN, VK_S, VK_SPACE, VK_TAB, VK_V, VK_W,
+                VK_RETURN, VK_S, VK_TAB, VK_V, VK_W,
             },
             Shell::{SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW},
             WindowsAndMessaging::{
@@ -218,12 +218,6 @@ pub fn open_sound() {
 /// button does (Win+D).
 pub fn show_desktop() {
     tap(&[VK_LWIN, VK_D]);
-}
-
-/// The input language switcher, as clicking the taskbar's language
-/// indicator (Win+Space).
-pub fn open_input_switcher() {
-    tap(&[VK_LWIN, VK_SPACE]);
 }
 
 /// How long the taskbar takes to put the focus on its notification area.

@@ -32,7 +32,7 @@ export const MAX_MAGNIFIED_SIZE = 160;
 
 export const loadConfig = () => invoke<Config>("get_config");
 export const defaultConfig = () => invoke<Config>("default_config");
-export const saveConfig = (config: Config) => invoke<Config>("set_config", { config });
+export const saveConfig = (patch: Partial<Config>) => invoke<Config>("set_config", { patch });
 export const getAutostart = () => invoke<boolean>("get_autostart");
 /** Windows' animation setting; the genie only plays while it is on. */
 export const windowsAnimations = () => invoke<boolean>("windows_animations");

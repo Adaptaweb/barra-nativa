@@ -90,9 +90,23 @@ export function App() {
   const [confirmingReset, setConfirmingReset] = useState(false);
   /** "Later" hides the banner until Settings is opened again. */
   const [bannerDismissed, setBannerDismissed] = useState(false);
-  const pending = useRef<Config | null>(null);
+  const pending = useRef<Partial<Config> | null>(null);
+  const writes = useRef(Promise.resolve());
   const timer = useRef<number | undefined>(undefined);
   const resetTimer = useRef<number | undefined>(undefined);
+
+  const flushSettings = useCallback(() => {
+    window.clearTimeout(timer.current);
+    const latest = pending.current;
+    pending.current = null;
+    if (latest) {
+      writes.current = writes.current
+        .then(() => saveConfig(latest))
+        .then(() => setFailed(false))
+        .catch(() => setFailed(true));
+    }
+    return writes.current;
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -118,13 +132,28 @@ export function App() {
       const share = payload.total ? Math.min(payload.downloaded / payload.total, 1) : null;
       setUpdateState((state) => (state.kind === "installing" ? { ...state, progress: share } : state));
     });
+    let closing = false;
+    const close = getCurrentWindow().onCloseRequested(async (event) => {
+      if (!alive || closing) {
+        event.preventDefault();
+        return;
+      }
+      closing = true;
+      // A change can be buffered or queued while an earlier write finishes.
+      let drained: Promise<void>;
+      do {
+        drained = flushSettings();
+        await drained;
+      } while (pending.current || writes.current !== drained);
+    });
     return () => {
       alive = false;
       window.clearTimeout(timer.current);
       window.clearTimeout(resetTimer.current);
       progress.then((unlisten) => unlisten()).catch(() => {});
+      close.then((unlisten) => unlisten()).catch(() => {});
     };
-  }, []);
+  }, [flushSettings]);
 
   // Shows the change at once and saves the latest value shortly after, so a
   // slider drag does not write the file on every pixel.
@@ -133,20 +162,12 @@ export function App() {
       if (!current) return current;
       const next = { ...current, ...patch };
       if (next.magnifiedSize < next.iconSize) next.magnifiedSize = next.iconSize;
-      pending.current = next;
-      window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => {
-        const latest = pending.current;
-        pending.current = null;
-        if (latest) {
-          saveConfig(latest)
-            .then(() => setFailed(false))
-            .catch(() => setFailed(true));
-        }
-      }, SAVE_DELAY_MS);
       return next;
     });
-  }, []);
+    pending.current = { ...pending.current, ...patch };
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => void flushSettings(), SAVE_DELAY_MS);
+  }, [flushSettings]);
 
   const changeAutostart = useCallback((enabled: boolean) => {
     setAutostartState(enabled);

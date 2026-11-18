@@ -1,5 +1,5 @@
 //! User-facing dock text in Spanish, English and French. The language follows
-//! the Windows display language unless Settings chooses one.
+//! the Windows display language unless the user overrides it in Settings.
 //! `&` marks the menu access key.
 
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -42,9 +42,13 @@ pub struct Strings {
     pub change_folder: &'static str,
     pub remove_from_dock: &'static str,
     pub shell_operation_failed: &'static str,
+    pub keyboard_settings: &'static str,
+    pub keyboard: &'static str,
 }
 
 const ES: Strings = Strings {
+    keyboard_settings: "Ajustes de idioma y teclado…",
+    keyboard: "Teclado",
     shell_operation_failed: "No se pudo iniciar la operación. Inténtalo de nuevo en un momento.",
     open: "&Abrir",
     new_window: "&Nueva ventana",
@@ -82,6 +86,8 @@ const ES: Strings = Strings {
 };
 
 const EN: Strings = Strings {
+    keyboard_settings: "Language and keyboard settings…",
+    keyboard: "Keyboard",
     shell_operation_failed: "The operation could not start. Please try again in a moment.",
     open: "&Open",
     new_window: "&New Window",
@@ -119,6 +125,8 @@ const EN: Strings = Strings {
 };
 
 const FR: Strings = Strings {
+    keyboard_settings: "Paramètres de langue et de clavier…",
+    keyboard: "Clavier",
     shell_operation_failed: "L'opération n'a pas pu démarrer. Réessayez dans un instant.",
     open: "&Ouvrir",
     new_window: "&Nouvelle fenêtre",
@@ -173,14 +181,30 @@ pub fn set_language(language: Language) {
     LANGUAGE.store(stored, Ordering::Relaxed);
 }
 
+fn chosen_language() -> u8 {
+    let language = LANGUAGE.load(Ordering::Relaxed);
+    if language == 0 {
+        set_language(Language::Auto);
+        LANGUAGE.load(Ordering::Relaxed)
+    } else {
+        language
+    }
+}
+
 pub fn text() -> &'static Strings {
-    match LANGUAGE.load(Ordering::Relaxed) {
-        0 => {
-            set_language(Language::Auto);
-            text()
-        }
+    match chosen_language() {
         1 => &ES,
         3 => &FR,
         _ => &EN,
+    }
+}
+
+/// The language the text is in, never `Auto`. Part of the menu bar's
+/// rendered-content key.
+pub fn language() -> Language {
+    match chosen_language() {
+        1 => Language::Es,
+        3 => Language::Fr,
+        _ => Language::En,
     }
 }

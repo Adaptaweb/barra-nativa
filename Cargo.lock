@@ -2259,7 +2259,7 @@ dependencies = [
 
 [[package]]
 name = "muelle"
-version = "0.1.12"
+version = "0.1.14"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2280,7 +2280,7 @@ dependencies = [
 
 [[package]]
 name = "muelle-config"
-version = "0.1.12"
+version = "0.1.14"
 dependencies = [
  "serde",
  "serde_json",
@@ -2289,11 +2289,11 @@ dependencies = [
 
 [[package]]
 name = "muelle-core"
-version = "0.1.12"
+version = "0.1.14"
 
 [[package]]
 name = "muelle-settings"
-version = "0.1.12"
+version = "0.1.14"
 dependencies = [
  "muelle-config",
  "muelle-shell",
@@ -2307,7 +2307,7 @@ dependencies = [
 
 [[package]]
 name = "muelle-shell"
-version = "0.1.12"
+version = "0.1.14"
 dependencies = [
  "thiserror 2.0.21",
  "windows",

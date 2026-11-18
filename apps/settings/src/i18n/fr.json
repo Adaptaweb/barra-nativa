@@ -8,7 +8,7 @@
   "magnificationHint": "Les icônes grossissent au passage du pointeur.",
   "magnifiedSize": "Taille agrandie",
   "autoHide": "Masquer et afficher automatiquement le Dock",
-  "autoHideHint": "Il réapparaît quand le pointeur touche le bord inférieur de l'écran.",
+  "autoHideHint": "Laissez le pointeur sur le bord inférieur d'un écran pour y afficher le Dock.",
   "genie": "Effet génie",
   "genieHint": "Tant qu'il est activé, les fenêtres n'utilisent pas les animations de Windows pour l'agrandissement et la fermeture.",
   "genieOff": "Les animations de Windows sont désactivées",
