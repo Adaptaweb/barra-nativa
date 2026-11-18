@@ -41,7 +41,7 @@ Smooth magnification, live window previews, and an optional Genie-style minimize
 - A curved island in the menu bar for usage limits from Claude Code, Codex,
   OpenCode Go, Gemini CLI, and Antigravity. Gemini Pro
   and Flash quotas appear separately when available.
-- Separate Settings app with live changes, Spanish and English, and a
+- Separate Settings app with live changes, Spanish, English and French, and a
   configurable Genie-style minimize animation.
 - A watchdog restores the Windows taskbar if the dock exits unexpectedly.
 

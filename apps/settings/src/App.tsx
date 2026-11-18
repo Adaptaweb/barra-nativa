@@ -24,6 +24,7 @@ import { type SectionId, SectionIcon } from "./icons";
 import { UpdateBanner } from "./UpdateBanner";
 import en from "./i18n/en.json";
 import es from "./i18n/es.json";
+import fr from "./i18n/fr.json";
 
 type UpdateState =
   | { kind: "off" }
@@ -54,10 +55,15 @@ const SAVE_DELAY_MS = 60;
 /** How long the reset button stays armed after the first click. */
 const RESET_CONFIRM_MS = 4000;
 
+const TEXTS: Record<Exclude<Language, "auto">, Texts> = { es, en, fr };
+
 function textsFor(language: Language): Texts {
-  const spanish =
-    language === "es" || (language === "auto" && navigator.language.toLowerCase().startsWith("es"));
-  return spanish ? es : en;
+  if (language !== "auto") {
+    return TEXTS[language];
+  }
+  // Follow the Windows display language, English when there is no text in it.
+  const windows = navigator.language.toLowerCase().slice(0, 2);
+  return windows === "es" || windows === "fr" ? TEXTS[windows] : en;
 }
 
 export function App() {
@@ -376,6 +382,7 @@ export function App() {
                       { value: "auto", label: t.languageAuto },
                       { value: "es", label: "Español" },
                       { value: "en", label: "English" },
+                      { value: "fr", label: "Français" },
                     ]}
                     onChange={(language) => update({ language })}
                   />

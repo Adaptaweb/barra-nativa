@@ -95,11 +95,15 @@ pub struct DockGroup {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Language {
-    /// Follow the Windows display language.
-    #[default]
-    Auto,
     Es,
     En,
+    Fr,
+    /// Follow the Windows display language. Also what a language added by a
+    /// newer version reads as, so the file stays valid for older versions
+    /// (serde requires this fallback to be the last variant).
+    #[default]
+    #[serde(other)]
+    Auto,
 }
 
 pub const ICON_SIZE_RANGE: (u32, u32) = (32, 96);
@@ -303,6 +307,27 @@ mod tests {
         .ok();
         let config = load(&path).ok().flatten().unwrap_or_default();
         assert!(!config.show_recents && !config.bounce_on_open);
+    }
+
+    #[test]
+    fn load_should_read_french() {
+        let path = scratch("french");
+        save(&path, &Config::default()).ok();
+        fs::write(&path, r#"{"language":"fr"}"#).ok();
+        let config = load(&path).ok().flatten().unwrap_or_default();
+        assert_eq!(config.language, Language::Fr);
+    }
+
+    #[test]
+    fn load_should_read_an_unknown_language_as_auto() {
+        let path = scratch("unknown-language");
+        save(&path, &Config::default()).ok();
+        fs::write(&path, r#"{"language":"de","iconSize":56}"#).ok();
+        let config = load(&path).ok().flatten();
+        assert_eq!(
+            config.map(|config| (config.language, config.icon_size)),
+            Some((Language::Auto, 56))
+        );
     }
 
     #[test]

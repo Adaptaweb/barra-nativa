@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Language = "auto" | "es" | "en";
+export type Language = "auto" | "es" | "en" | "fr";
 
 /** Mirrors `muelle_config::Config`. */
 export interface Config {

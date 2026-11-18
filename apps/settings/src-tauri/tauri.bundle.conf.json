@@ -19,7 +19,8 @@
         "installMode": "currentUser",
         "languages": [
           "English",
-          "Spanish"
+          "Spanish",
+          "French"
         ],
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico"

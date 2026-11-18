@@ -1,11 +1,11 @@
-//! User-facing dock text in Spanish and English. The language follows the
-//! Windows display language; Settings will be able to override it (phase 7).
+//! User-facing dock text in Spanish, English and French. The language follows
+//! the Windows display language unless Settings chooses one.
 //! `&` marks the menu access key.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use muelle_config::Language;
-use muelle_shell::system::ui_language_is_spanish;
+use muelle_shell::system::{UiLanguage, ui_language};
 
 pub struct Strings {
     pub open: &'static str,
@@ -106,16 +106,55 @@ const EN: Strings = Strings {
     media_title: "Now playing",
 };
 
-/// 0 = not chosen yet (follow Windows), 1 = Spanish, 2 = English.
+const FR: Strings = Strings {
+    shell_operation_failed: "L'opération n'a pas pu démarrer. Réessayez dans un instant.",
+    open: "&Ouvrir",
+    new_window: "&Nouvelle fenêtre",
+    keep_in_dock: "&Garder dans le Dock",
+    show_in_explorer: "Afficher dans l'&Explorateur",
+    quit_app: "&Quitter",
+    empty_bin: "&Vider la Corbeille",
+    turn_hiding_on: "Activer le &masquage automatique",
+    turn_hiding_off: "Désactiver le &masquage automatique",
+    quit_dock: "&Quitter Muelle",
+    start: "Démarrer",
+    remove: "Retirer",
+    close_window: "&Fermer",
+    ungroup: "&Dégrouper",
+    settings: "&Réglages de Muelle…",
+    run_as_admin: "Exécuter en tant qu'&administrateur",
+    show_desktop: "Afficher le &Bureau",
+    task_manager: "&Gestionnaire des tâches",
+    taskbar_settings: "Paramètres de la barre des &tâches",
+    usage_title: "Utilisation de l'IA",
+    usage_refresh: "Actualiser",
+    usage_refreshing: "Actualisation…",
+    usage_sign_in: "Se connecter",
+    usage_unavailable: "Indisponible",
+    usage_loading: "Chargement…",
+    usage_stale: "Non actualisé",
+    usage_resets: "Remise à zéro le",
+    usage_updated: "Actualisé il y a",
+    usage_used: "utilisé",
+    media_title: "En cours de lecture",
+};
+
+/// 0 = not chosen yet (follow Windows), 1 = Spanish, 2 = English, 3 = French.
 static LANGUAGE: AtomicU8 = AtomicU8::new(0);
 
 pub fn set_language(language: Language) {
-    let spanish = match language {
-        Language::Auto => ui_language_is_spanish(),
-        Language::Es => true,
-        Language::En => false,
+    let chosen = match language {
+        Language::Auto => ui_language(),
+        Language::Es => UiLanguage::Spanish,
+        Language::En => UiLanguage::English,
+        Language::Fr => UiLanguage::French,
     };
-    LANGUAGE.store(if spanish { 1 } else { 2 }, Ordering::Relaxed);
+    let stored = match chosen {
+        UiLanguage::Spanish => 1,
+        UiLanguage::English => 2,
+        UiLanguage::French => 3,
+    };
+    LANGUAGE.store(stored, Ordering::Relaxed);
 }
 
 pub fn text() -> &'static Strings {
@@ -125,6 +164,7 @@ pub fn text() -> &'static Strings {
             text()
         }
         1 => &ES,
+        3 => &FR,
         _ => &EN,
     }
 }

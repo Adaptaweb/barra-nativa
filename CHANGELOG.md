@@ -17,6 +17,10 @@ copia la sección de la versión que se publica a la release de GitHub.
   its apps out above it (a grid when there are many); drag one out of the
   fan to take it out of the group, into the dock where it is dropped.
   Right-click a group to ungroup it.
+- French: the dock, Settings and the installer are now also in French. Choose
+  it in Settings → System, or leave Automatic to follow Windows. A language
+  Muelle does not know in the settings file now reads as Automatic instead of
+  making the file invalid.
 
 ### Español
 
@@ -27,6 +31,10 @@ copia la sección de la versión que se publica a la release de GitHub.
   puntero. Al hacer clic se despliegan en abanico encima (en cuadrícula si son
   muchas); arrastra una fuera del abanico para sacarla del grupo, al lugar del
   dock donde la sueltes. Clic derecho en un grupo para desagruparlo.
+- Francés: el dock, Ajustes y el instalador también están en francés.
+  Elígelo en Ajustes → Sistema, o deja Automático para seguir a Windows. Un
+  idioma que Muelle no conoce en el archivo de ajustes ahora se lee como
+  Automático en lugar de invalidar el archivo.
 
 ## [0.1.12]
 
