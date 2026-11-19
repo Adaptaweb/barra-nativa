@@ -238,6 +238,7 @@ const SLIDE_OMEGA: f32 = 24.0;
 const REVEAL_STRIP: i32 = 2;
 /// An icon released this far above the magnified dock, in icon heights, leaves it.
 const REMOVE_DISTANCE: f32 = 0.8;
+const REORDER_DURATION: std::time::Duration = std::time::Duration::from_millis(140);
 /// A dragged app joins the icon under it (in a group) when released over
 /// its middle, past this fraction of its width from either side; over its
 /// sides, it moves between icons as usual.
@@ -593,6 +594,7 @@ struct Stage {
     key: StageKey,
     window_zone: RECT,
     scene: Scene,
+    reorder: Option<ReorderMotion>,
     layout: Layout,
     magnifier: Magnifier,
     icon: f32,
@@ -607,6 +609,11 @@ struct Stage {
     edge_zone: RECT,
     /// How far the dock slides down to hide completely.
     slide_distance: f32,
+}
+
+struct ReorderMotion {
+    started: Instant,
+    offsets: Vec<f32>,
 }
 
 struct App {
@@ -1224,6 +1231,61 @@ impl App {
                 remove_label: self.remove_label.as_ref(),
             },
         )?;
+        let reorder = self.stage.as_ref().and_then(|previous| {
+            // Do not interpolate between monitors or on a theme-only rebuild.
+            if self.fullscreen
+                || previous.key.screen != key.screen
+                || previous.scale != scale
+                || previous
+                    .key
+                    .entries
+                    .iter()
+                    .map(|entry| &entry.id)
+                    .eq(key.entries.iter().map(|entry| &entry.id))
+                || !animations_enabled()
+            {
+                return None;
+            }
+            let state = magnify(&dock, self.cursor, self.amount.value, &magnifier);
+            let offsets: Vec<f32> = key
+                .entries
+                .iter()
+                .zip(&state.rects)
+                .map(|(entry, rect)| {
+                    let Some(id) = entry.id.as_deref() else {
+                        return 0.0;
+                    };
+                    if self
+                        .drag
+                        .as_ref()
+                        .is_some_and(|drag| drag.id == id && !drag.from_group)
+                    {
+                        return 0.0;
+                    }
+                    let Some(index) = previous
+                        .key
+                        .entries
+                        .iter()
+                        .position(|entry| entry.id.as_deref() == Some(id))
+                    else {
+                        return 0.0;
+                    };
+                    // Start from the currently drawn icon, including any earlier
+                    // move still in progress when the user crosses another slot.
+                    previous
+                        .scene
+                        .slot_x(index)
+                        .map_or(0.0, |x| previous.dock_origin.x as f32 + x - dock_x - rect.x)
+                })
+                .collect();
+            offsets
+                .iter()
+                .any(|offset| offset.abs() >= 0.5)
+                .then(|| ReorderMotion {
+                    started: Instant::now(),
+                    offsets,
+                })
+        });
         self.target.SetRoot(&scene.root)?;
 
         let (enter, leave) = (px(ENTER_HALO), px(LEAVE_HALO));
@@ -1231,6 +1293,7 @@ impl App {
             key,
             window_zone: zone(room_x, room_top, room_x, room),
             scene,
+            reorder,
             magnifier,
             icon: metrics.icon,
             gap: metrics.gap,
@@ -1305,20 +1368,32 @@ impl App {
     }
 
     fn render(&mut self) -> Result<()> {
-        let Some(stage) = &self.stage else {
+        let Some(stage) = &mut self.stage else {
             return Ok(());
         };
-        let state = magnify(
+        let mut state = magnify(
             &stage.layout,
             self.cursor,
             self.amount.value,
             &stage.magnifier,
         );
+        let now = Instant::now();
+        if let Some(motion) = &stage.reorder {
+            let elapsed = now.saturating_duration_since(motion.started);
+            if elapsed >= REORDER_DURATION {
+                stage.reorder = None;
+            } else {
+                let remaining = 1.0 - elapsed.as_secs_f32() / REORDER_DURATION.as_secs_f32();
+                let ease = remaining * remaining;
+                for (rect, offset) in state.rects.iter_mut().zip(&motion.offsets) {
+                    rect.x += offset * ease;
+                }
+            }
+        }
         self.hovered = (self.hovering || self.pointed)
             .then(|| state.icon_at(&stage.layout, self.cursor, stage.gap))
             .flatten();
 
-        let now = Instant::now();
         let lift_of = |id: &str| {
             self.bounces.get(id).map_or(0.0, |bounce| {
                 let elapsed = now.duration_since(bounce.start).as_secs_f32();
@@ -1374,6 +1449,7 @@ impl App {
         let at_rest = self.amount.value == 0.0
             && self.bounces.is_empty()
             && self.slide.is_settled()
+            && stage.reorder.is_none()
             && drag.is_none();
         let slide = self.slide.value * stage.slide_distance;
         stage.scene.apply(&Frame {
@@ -2346,7 +2422,7 @@ impl App {
         self.drag.is_some()
     }
 
-    /// Moves the dragged icon and reorders the pinned apps live, as in macOS.
+    /// Moves the dragged icon and reorders apps live.
     /// Held over the middle of another pinned app or a group, the dragged
     /// app would join it in a group instead (see `MERGE_SIDE`).
     fn drag_to(&mut self, point: POINT) -> Result<()> {
@@ -2403,38 +2479,57 @@ impl App {
             }
         }
 
-        let mut before: Option<String> = None;
+        let mut before = None;
         let mut pinned_end = f32::MIN;
+        let mut running_before = None;
+        let mut running_end = f32::MIN;
         for (entry, rect) in self.entries.iter().zip(&state.rects) {
-            let Some(other) = entry.id.as_ref() else {
+            let Some(other) = entry.id.as_deref() else {
                 continue;
             };
-            if !matches!(entry.role, Role::App | Role::Group)
-                || *other == id
-                || *other == explorer
-                || !self.roster.is_pinned(other)
-            {
+            if !matches!(entry.role, Role::App | Role::Group) {
                 continue;
             }
-            pinned_end = rect.x + rect.width;
-            if before.is_none() && rect.x + rect.width / 2.0 > self.cursor {
-                before = Some(other.clone());
+            let ahead = rect.x + rect.width / 2.0 > self.cursor;
+            if self.roster.is_pinned(other) {
+                if other != id {
+                    pinned_end = rect.x + rect.width;
+                    if other != explorer && ahead && before.is_none() {
+                        before = Some(other);
+                    }
+                }
+            } else if entry.running {
+                running_end = rect.x + rect.width;
+                if other != id && ahead && running_before.is_none() {
+                    running_before = Some(other);
+                }
             }
         }
-        // An unpinned app is pinned only when dropped among the pinned ones.
-        if !pinned && before.is_none() && self.cursor > pinned_end + stage.gap {
-            return self.render();
+        if !pinned {
+            if !in_dock {
+                return self.render();
+            }
+            // Moving among open apps keeps the icon unpinned. Explorer still
+            // marks the end of the pinned section when it is the only pin.
+            if before.is_none() && self.cursor > pinned_end + stage.gap {
+                if self.cursor <= running_end + stage.gap
+                    && self.roster.move_running_before(&id, running_before)
+                {
+                    return self.refresh();
+                }
+                return self.render();
+            }
         }
 
         let list = self.roster.pinned();
         let current = list
             .iter()
             .position(|pinned| *pinned == id)
-            .map(|index| list.get(index + 1).cloned());
-        if current == Some(before.clone()) {
+            .map(|index| list.get(index + 1).map(String::as_str));
+        if current == Some(before) {
             return self.render();
         }
-        self.roster.pin_before(&id, before.as_deref());
+        self.roster.pin_before(&id, before);
         self.refresh()
     }
 
@@ -2681,6 +2776,9 @@ impl App {
         self.refresh()?;
         self.leave_if_outside(drag.point)?;
         self.after_group_drag(&drag)?;
+        // The order may already match the live drag. Repaint anyway so the
+        // icon settles into its slot even if the pointer stops moving.
+        self.render()?;
         Ok(None)
     }
 
@@ -2723,9 +2821,11 @@ impl App {
                 GetAsyncKeyState(i32::from(VK_ESCAPE.0)) < 0,
             )
         };
-        if escape || (!down && self.drag.is_none()) {
+        if escape {
             self.cancel_drag()?;
         } else if !down {
+            // Button-up may still be queued. Resolve the release once here;
+            // on_release consumes the press, so a late message is harmless.
             return self.on_release();
         } else {
             let mut point = POINT::default();
@@ -3969,6 +4069,10 @@ impl App {
     fn is_animating(&self) -> bool {
         !self.amount.is_settled()
             || !self.slide.is_settled()
+            || self
+                .stage
+                .as_ref()
+                .is_some_and(|stage| stage.reorder.is_some())
             || !self.bounces.is_empty()
             || !self.flights.is_empty()
     }
