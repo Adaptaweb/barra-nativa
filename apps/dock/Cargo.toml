@@ -7,6 +7,9 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+recover-browser-z-order = []
+
 [build-dependencies]
 winresource = "0.1"
 

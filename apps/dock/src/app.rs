@@ -3945,6 +3945,8 @@ impl App {
         // Refresh their order so the next dock activation selects the actual
         // most recently used window rather than a stale group leader.
         self.read_windows();
+        #[cfg(feature = "recover-browser-z-order")]
+        tracker::recover_browser_z_order(&self.windows, foreground);
         self.update_fullscreen()
     }
 
