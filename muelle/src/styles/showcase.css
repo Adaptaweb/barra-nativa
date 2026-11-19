@@ -1063,3 +1063,17 @@
     transition: none;
   }
 }
+
+/* The crab sits on the app icon of the download card. */
+.get-perch {
+  position: relative;
+  display: inline-block;
+}
+
+.get-crab {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% - 11px);
+  z-index: 1;
+  translate: -50% 0;
+}

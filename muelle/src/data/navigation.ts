@@ -3,6 +3,7 @@ import { site } from "@/data/site";
 export const navigation = [
   { label: "Dock", href: "/#dock" },
   { label: "AI usage", href: "/#ai-usage" },
+  { label: "Mascot", href: "/#crab" },
   { label: "Settings", href: "/#customize" },
   { label: "Reversible", href: "/#safety" },
 ] as const;
@@ -13,6 +14,7 @@ export const footerGroups = [
     links: [
       { label: "The Dock", href: "/#dock", external: false },
       { label: "AI usage", href: "/#ai-usage", external: false },
+      { label: "Mascot", href: "/#crab", external: false },
       { label: "Settings", href: "/#customize", external: false },
       { label: "Reversible", href: "/#safety", external: false },
       { label: "Download", href: "/#download", external: false },

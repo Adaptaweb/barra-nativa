@@ -6,6 +6,7 @@ import SectionIntro from "@/components/showcase/SectionIntro.astro";
 import MenuBarStatus from "@/components/dock/MenuBarStatus.astro";
 import SettingsIcon from "@/components/showcase/SettingsIcon.astro";
 import ToggleRow from "@/components/showcase/ToggleRow.astro";
+import Crab from "@/components/crab/Crab.astro";
 import {
   customizeIntro,
   previewIcons,
@@ -123,6 +124,7 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
 
           <div class="settings-card">
             <ToggleRow name="autoHide" hint="autoHideHint" on={d.autoHide} />
+            <ToggleRow name="mascot" hint="mascotHint" on={d.mascot} />
           </div>
         </div>
 
@@ -195,6 +197,7 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
                 {t.updatesCheck}
               </button>
             </div>
+            <ToggleRow name="autoUpdate" hint="autoUpdateHint" on={d.autoUpdate} />
           </div>
         </div>
       </div>
@@ -229,6 +232,7 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
           <Image src={icon} alt="" class="w-32" />
         ))}
       </div>
+      <Crab cell={2} class="crab-free" data-preview-crab />
     </div>
 
     <script type="application/json" is:inline data-settings-text set:html={textJson} />
@@ -236,6 +240,7 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
 </Section>
 
 <script>
+  import { initPreviewCrab } from "@/scripts/crab-spots";
   import { initCustomize } from "@/scripts/customize";
   import { initReveal } from "@/scripts/reveal";
   import { initClock } from "@/scripts/clock";
@@ -244,6 +249,7 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
   if (section) {
     initReveal(section);
     initCustomize(section);
+    initPreviewCrab(section);
   }
   initClock();
 </script>

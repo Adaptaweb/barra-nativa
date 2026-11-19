@@ -108,6 +108,8 @@ export const settingsDefaults = {
   genie: true,
   showMinimized: false,
   autostart: true,
+  mascot: true,
+  autoUpdate: true,
 } as const;
 
 /** The Settings app's own strings (`apps/settings/src/i18n`), in both languages. */
@@ -137,6 +139,10 @@ export const settingsText = {
     showMinimized: "Show minimized windows",
     showMinimizedHint: "As thumbnails on the right side of the Dock, instead of inside their app's icon.",
     autostart: "Open Muelle at login",
+    mascot: "Crab on special moments",
+    mascotHint: "A pixel crab comes out when an AI plan resets or runs out, when you plug in the charger, or when energy saver starts. Hover over it.",
+    autoUpdate: "Install updates automatically",
+    autoUpdateHint: "Once a day, a couple of minutes after you turn on the computer (or every 24 hours if it stays on), Muelle installs new versions by itself.",
     language: "Language",
     languageAuto: "Automatic",
     updates: "Updates",
@@ -169,6 +175,10 @@ export const settingsText = {
     showMinimized: "Mostrar ventanas minimizadas",
     showMinimizedHint: "Como miniaturas a la derecha del Dock, en lugar de dentro del icono de su app.",
     autostart: "Abrir Muelle al iniciar sesión",
+    mascot: "Cangrejo en momentos especiales",
+    mascotHint: "Un cangrejo pixelado aparece cuando un plan de IA se reinicia o se agota, al enchufar el cargador o al activarse el ahorro de energía. Pasa el puntero por encima.",
+    autoUpdate: "Instalar actualizaciones automáticamente",
+    autoUpdateHint: "Una vez al día, un par de minutos después de encender el ordenador (o cada 24 horas si sigue encendido), Muelle instala las versiones nuevas por sí solo.",
     language: "Idioma",
     languageAuto: "Automático",
     updates: "Actualizaciones",

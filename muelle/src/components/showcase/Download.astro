@@ -1,6 +1,7 @@
 ---
 import { Image } from "astro:assets";
 import appIcon from "@/assets/brand/muelle-app.webp";
+import Crab from "@/components/crab/Crab.astro";
 import Section from "@/components/layout/Section.astro";
 import Button from "@/components/ui/Button.astro";
 import Icon from "@/components/ui/Icon.astro";
@@ -12,7 +13,10 @@ import "@/styles/showcase.css";
 
 <Section id="download" class="pb-10">
   <div class="get" data-r>
-    <Image src={appIcon} alt="" class="get-icon" width={160} height={160} />
+    <span class="get-perch">
+      <Image src={appIcon} alt="" class="get-icon" width={160} height={160} />
+      <Crab cell={2.5} class="get-crab" interactive label="The crab, waiting for you. Click it." data-download-crab />
+    </span>
     <h2 class="get-name">{download.name}</h2>
     <p class="get-tagline">{download.tagline}</p>
 
@@ -55,8 +59,12 @@ import "@/styles/showcase.css";
 </Section>
 
 <script>
+  import { initDownloadCrab } from "@/scripts/crab-spots";
   import { initReveal } from "@/scripts/reveal";
 
   const section = document.querySelector<HTMLElement>("#download");
-  if (section) initReveal(section);
+  if (section) {
+    initReveal(section);
+    initDownloadCrab(section);
+  }
 </script>

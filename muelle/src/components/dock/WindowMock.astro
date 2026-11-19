@@ -1,4 +1,5 @@
 ---
+import Crab from "@/components/crab/Crab.astro";
 import CursorOverlay from "@/components/dock/CursorOverlay.astro";
 import DesktopWallpaper from "@/components/dock/DesktopWallpaper.astro";
 import DockDemo from "@/components/dock/DockDemo.astro";
@@ -31,13 +32,26 @@ import "@/styles/dock.css";
     <div class="absolute inset-x-0 bottom-3 z-5">
       <DockDemo />
     </div>
+
+    <Crab
+      cell={2.5}
+      class="crab-free"
+      interactive
+      label="Muelle's crab. Click it to see how it feels."
+      tip="Click me"
+      data-hero-crab
+    />
   </div>
 </div>
 
 <script>
   import { prefersReducedMotion } from "@/lib/motion";
   import { initGenie } from "@/scripts/genie";
+  import { initHeroCrab } from "@/scripts/hero-crab";
 
   const stage = document.querySelector<HTMLElement>(".desk");
-  if (stage) initGenie(stage, prefersReducedMotion());
+  if (stage) {
+    initGenie(stage, prefersReducedMotion());
+    initHeroCrab(stage);
+  }
 </script>

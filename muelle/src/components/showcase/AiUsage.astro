@@ -1,6 +1,7 @@
 ---
 import { Image } from "astro:assets";
 import wallpaper from "@/assets/wallpapers/desktop-02.jpg";
+import Crab from "@/components/crab/Crab.astro";
 import UsageIsland from "@/components/dock/UsageIsland.astro";
 import Section from "@/components/layout/Section.astro";
 import SectionIntro from "@/components/showcase/SectionIntro.astro";
@@ -20,6 +21,7 @@ import "@/styles/usage.css";
         <span class="tabular-nums">9:41</span>
       </div>
       <UsageIsland mode="open" class="usage-island" />
+      <Crab cell={2.5} class="crab-free" interactive label="The crab cheering a limit reset. Click it." data-usage-crab />
       <figcaption>Example values</figcaption>
     </figure>
 
@@ -37,10 +39,14 @@ import "@/styles/usage.css";
 </Section>
 
 <script>
+  import { initUsageCrab } from "@/scripts/crab-spots";
   import { initReveal } from "@/scripts/reveal";
 
   const section = document.querySelector<HTMLElement>("#ai-usage");
-  if (section) initReveal(section);
+  if (section) {
+    initReveal(section);
+    initUsageCrab(section);
+  }
 </script>
 
 <style>
