@@ -320,6 +320,21 @@ pub fn taskbar_buttons() -> TaskbarButtons {
     }
 }
 
+/// Windows Settings → System → Power & battery → Battery percentage.
+/// Missing or unreadable means off, matching the Windows default. Read-only:
+/// the user's preference remains owned by Windows, including on older builds.
+#[must_use]
+pub fn battery_percentage_enabled() -> bool {
+    dword(ADVANCED, "IsBatteryPercentageEnabled").is_some_and(|value| value != 0)
+}
+
+/// Reports changes to the user's taskbar preferences, including the battery
+/// percentage. Uses registry notifications rather than a polling timer.
+#[must_use]
+pub fn watch_taskbar_settings(hwnd: isize, message: u32) -> Option<crate::watch::RegistryWatch> {
+    crate::watch::RegistryWatch::new(ADVANCED, false, hwnd, message)
+}
+
 /* ---------------------------------------------------------------- Privacy */
 
 /// Where Windows records which apps use the microphone and camera, and

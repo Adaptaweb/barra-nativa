@@ -107,8 +107,8 @@ const STATUS_CHANGED: u32 = WM_APP + 21;
 const TICK: u32 = WM_APP + 22;
 const USAGE_CHANGED: u32 = WM_APP + 23;
 const DISMISS_ISLAND: u32 = WM_APP + 24;
-/// Posted when an app starts or stops using the microphone or camera.
-const PRIVACY_CHANGED: u32 = WM_APP + 25;
+/// Privacy activity or the user's taskbar preferences changed.
+const REGISTRY_CHANGED: u32 = WM_APP + 25;
 /// `wParam` of WM_SETTINGCHANGE when the work area changes, which every
 /// AppBar reservation (the dock's, this bar's) causes.
 const SPI_SETWORKAREA: usize = 0x002F;
@@ -161,6 +161,7 @@ struct Status {
     volume: Option<Volume>,
     buttons: TaskbarButtons,
     privacy: Privacy,
+    battery_percentage: bool,
 }
 
 /// What the bar was last drawn for.
@@ -280,6 +281,8 @@ pub struct MenuBar {
     _network: Option<NetworkWatch>,
     /// Hears when apps start or stop using the microphone or camera.
     privacy_watch: Option<RegistryWatch>,
+    /// Windows' taskbar preferences, including the battery percentage.
+    settings_watch: Option<RegistryWatch>,
     /// Energy saver on or off arrives as `WM_POWERBROADCAST`; glass follows.
     _saver_watch: muelle_shell::power::SaverWatch,
     audio: Option<AudioWatch>,
@@ -303,7 +306,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         WM_TIMER if w.0 == HIDE_ANIMATION_TIMER => app::menu_bar_finish_hide(None),
         HIDE_ANIMATION_DONE => app::menu_bar_finish_hide(Some(w.0)),
         DISMISS_ISLAND => app::menu_bar_dismiss_island(),
-        PRIVACY_CHANGED => app::menu_bar_privacy_changed(),
+        REGISTRY_CHANGED => app::menu_bar_registry_changed(),
         MEDIA_CHANGED => app::menu_bar_media_changed(),
         WM_SETCURSOR => {
             // SAFETY: Keep the standard arrow throughout the bar and popups.
@@ -862,6 +865,7 @@ impl MenuBar {
                 volume: None,
                 buttons: TaskbarButtons::default(),
                 privacy: Privacy::default(),
+                battery_percentage: false,
             },
             usage: usage_enabled.then(|| UsageMonitor::new(hwnd.0 as isize, USAGE_CHANGED)),
             usage_anchors: Vec::new(),
@@ -874,7 +878,8 @@ impl MenuBar {
             island_hits: Vec::new(),
             outside_click_hook: None,
             _network: NetworkWatch::new(hwnd.0 as isize, STATUS_CHANGED),
-            privacy_watch: status::watch_privacy(hwnd.0 as isize, PRIVACY_CHANGED),
+            privacy_watch: status::watch_privacy(hwnd.0 as isize, REGISTRY_CHANGED),
+            settings_watch: status::watch_taskbar_settings(hwnd.0 as isize, REGISTRY_CHANGED),
             _saver_watch: muelle_shell::power::SaverWatch::new(hwnd.0 as isize),
             audio: AudioWatch::new(hwnd.0 as isize, STATUS_CHANGED),
         };
@@ -1233,9 +1238,12 @@ impl MenuBar {
     }
 
     /// The minute changed, or something the bar shows did: redraw what differs.
-    /// An app started or stopped using the microphone or camera.
-    pub fn privacy_changed(&mut self, gfx: &Gfx) -> Result<()> {
+    /// Privacy activity or the user's taskbar preferences changed.
+    pub fn registry_changed(&mut self, gfx: &Gfx) -> Result<()> {
         if let Some(watch) = &mut self.privacy_watch {
+            watch.arm();
+        }
+        if let Some(watch) = &mut self.settings_watch {
             watch.arm();
         }
         self.tick(gfx)
@@ -1253,6 +1261,7 @@ impl MenuBar {
             volume: self.audio.as_mut().and_then(AudioWatch::volume),
             buttons: status::taskbar_buttons(),
             privacy: status::privacy(),
+            battery_percentage: status::battery_percentage_enabled(),
         };
     }
 
@@ -1567,7 +1576,14 @@ impl MenuBar {
             };
             items.push((symbol(&[(speaker, 1.0)])?, Action::Sound));
         }
+        let mut battery_label = None;
         if let Some(battery) = look.battery {
+            if status.battery_percentage {
+                battery_label = Some((
+                    items.len(),
+                    gfx.text_brush(&format!("{}%", battery.percent), scale, false, ink)?,
+                ));
+            }
             items.push((
                 gfx.battery_brush(battery.percent, battery.charging, scale, ink)?,
                 Action::QuickSettings,
@@ -1588,10 +1604,19 @@ impl MenuBar {
         if status.buttons.widgets {
             items.push((symbol(&[(glyph::WIDGETS, 1.0)])?, Action::Widgets));
         }
-        for (item, action) in &items {
+        for (index, (item, action)) in items.iter().enumerate() {
+            let zone_right = right;
+            if let Some((battery_index, label)) = &battery_label
+                && index == *battery_index
+            {
+                right -= label.width;
+                place(&layers, label, right)?;
+                right -= px(6.0);
+            }
             let left = right - item.width;
             place(&layers, item, left)?;
-            self.zones.push((left - slop, right + slop, *action));
+            // The battery icon and its percentage form one control.
+            self.zones.push((left - slop, zone_right + slop, *action));
             right = left - px(ITEM_GAP);
         }
 

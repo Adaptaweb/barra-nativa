@@ -4219,9 +4219,9 @@ pub fn menu_bar_refresh() {
     });
 }
 
-pub fn menu_bar_privacy_changed() {
+pub fn menu_bar_registry_changed() {
     with_app("barra superior", |app| match &mut app.menubar {
-        Some(bar) => bar.privacy_changed(&app.gfx),
+        Some(bar) => bar.registry_changed(&app.gfx),
         None => Ok(()),
     });
 }

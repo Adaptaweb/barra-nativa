@@ -10,6 +10,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- The menu bar now follows Windows' Battery percentage setting, showing the
+  charge next to the battery icon when enabled. Preference changes apply
+  without restarting Muelle, through registry notifications rather than polling.
 - Fixed icons remaining over the desktop after dragging an app out of a dock
   group. Drag tracking now recovers missed pointer messages without taking
   focus, stops on release or Escape, and rejects late clicks after cancellation.
@@ -19,6 +22,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- La barra superior respeta la opción Porcentaje de batería de Windows y
+  muestra la carga junto al icono cuando está activada. Los cambios se aplican
+  sin reiniciar Muelle, mediante notificaciones del registro, sin sondeo.
 - Corregido el icono que quedaba flotando sobre el escritorio al sacar una app
   de un grupo del dock. El arrastre recupera mensajes del puntero perdidos sin
   tomar el foco, termina al soltar o pulsar Escape y descarta clics tardíos tras
