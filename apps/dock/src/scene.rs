@@ -296,6 +296,10 @@ pub struct Scene {
 }
 
 impl Scene {
+    pub fn slot_x(&self, index: usize) -> Option<f32> {
+        Some(self.slots.get(index)?.Offset().ok()?.X)
+    }
+
     pub fn build(gfx: &Gfx, input: &SceneInput<'_>) -> Result<Self> {
         let c = &gfx.compositor;
         let SceneInput {
