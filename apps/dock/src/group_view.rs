@@ -21,8 +21,8 @@ use windows::{
         System::{LibraryLoader::GetModuleHandleW, WinRT::Composition::ICompositorDesktopInterop},
         UI::{
             Input::KeyboardAndMouse::{
-                GetAsyncKeyState, ReleaseCapture, SetCapture, VK_ESCAPE, VK_LBUTTON, VK_MBUTTON,
-                VK_RBUTTON,
+                GetAsyncKeyState, GetCapture, ReleaseCapture, SetCapture, VK_ESCAPE, VK_LBUTTON,
+                VK_MBUTTON, VK_RBUTTON,
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, GetSystemMetrics,
@@ -545,7 +545,18 @@ impl GroupView {
         }
         // Quick while unfolding; then just often enough to follow the pointer.
         // SAFETY: Our own timer; setting it again replaces it.
-        unsafe { SetTimer(Some(self.hwnd), TIMER, if moving { 16 } else { 50 }, None) };
+        unsafe {
+            SetTimer(
+                Some(self.hwnd),
+                TIMER,
+                if moving || self.pressed.is_some() {
+                    16
+                } else {
+                    50
+                },
+                None,
+            )
+        };
         Ok(())
     }
 
@@ -577,6 +588,11 @@ impl GroupView {
             return Ok(false);
         }
         self.mouse_was_down = mouse_down;
+        // A non-activating popup can miss button-up outside its bounds.
+        // Do not leave a stale press that could detach an app on re-entry.
+        if self.pressed.is_some() && !app::primary_button_down() {
+            self.cancel_press();
+        }
         self.update()?;
         Ok(true)
     }
@@ -603,6 +619,9 @@ impl GroupView {
         let Some((index, at)) = self.pressed else {
             return Ok(None);
         };
+        if !app::primary_button_down() {
+            return Ok(None);
+        }
         let mut point = POINT::default();
         // SAFETY: Read-only queries.
         let threshold = unsafe {
@@ -641,6 +660,12 @@ impl GroupView {
     /// The mouse was taken away mid-press (Alt+Tab, a system dialog).
     pub fn cancel_press(&mut self) {
         self.pressed = None;
+        // SAFETY: Release only this popup's capture, never a newer owner's.
+        unsafe {
+            if GetCapture() == self.hwnd {
+                let _ = ReleaseCapture();
+            }
+        }
     }
 
     /// The app under the pointer, and its icon on screen.
@@ -705,7 +730,7 @@ unsafe extern "system" fn group_view_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LP
         WM_CAPTURECHANGED => unsafe {
             let _ = PostMessageW(Some(hwnd), PRESS_LOST, WPARAM(0), LPARAM(0));
         },
-        PRESS_LOST => app::group_view_press_lost(),
+        PRESS_LOST if unsafe { GetCapture() } != hwnd => app::group_view_press_lost(),
         _ => return unsafe { DefWindowProcW(hwnd, msg, w, l) },
     }
     LRESULT(0)

@@ -25,7 +25,7 @@ use anyhow::{Context, Result};
 use muelle_config::{Config, DockGroup};
 use muelle_core::{
     bounce,
-    layout::{ItemKind, Layout, Metrics, layout},
+    layout::{ItemKind, Layout, Metrics, Rect, layout},
     magnify::{Magnifier, magnify},
     roster::{Group, Roster},
     spring::Spring,
@@ -64,10 +64,10 @@ use windows::{
         UI::{
             Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent},
             Input::KeyboardAndMouse::{
-                GetAsyncKeyState, GetKeyState, ReleaseCapture, SetCapture, TME_LEAVE,
+                GetAsyncKeyState, GetCapture, GetKeyState, ReleaseCapture, SetCapture, TME_LEAVE,
                 TRACKMOUSEEVENT, TrackMouseEvent, VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_END,
-                VK_HOME, VK_LBUTTON, VK_LEFT, VK_LWIN, VK_MBUTTON, VK_MENU, VK_RBUTTON, VK_RIGHT,
-                VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
+                VK_ESCAPE, VK_HOME, VK_LBUTTON, VK_LEFT, VK_LWIN, VK_MBUTTON, VK_MENU, VK_RBUTTON,
+                VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DispatchMessageW, EVENT_OBJECT_CLOAKED,
@@ -76,8 +76,8 @@ use windows::{
                 GetSystemMetrics, HMENU, HWND_TOPMOST, IDC_ARROW, KillTimer, LoadCursorW,
                 MA_ACTIVATE, MA_NOACTIVATE, MSG, OBJID_WINDOW, PM_REMOVE, PeekMessageW,
                 PostMessageW, PostQuitMessage, RegisterClassW, RegisterShellHookWindow,
-                RegisterWindowMessageW, SM_CXDRAG, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-                SetTimer, SetWindowPos, WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT,
+                RegisterWindowMessageW, SM_CXDRAG, SM_SWAPBUTTON, SWP_HIDEWINDOW, SWP_NOACTIVATE,
+                SWP_SHOWWINDOW, SetTimer, SetWindowPos, WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT,
                 WINEVENT_SKIPOWNPROCESS, WM_APP, WM_CAPTURECHANGED, WM_CLOSE, WM_DESTROY,
                 WM_DISPLAYCHANGE, WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
                 WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_QUIT,
@@ -227,6 +227,10 @@ const FULLSCREEN_RECHECK_MS: u32 = 3_000;
 /// Shell results arriving together cause one scene rebuild.
 const ASSETS_TIMER: usize = 11;
 const ASSETS_DELAY_MS: u32 = 16;
+/// Non-activating windows cannot rely on capture outside their bounds.
+/// Armed only while dragging or holding a draggable icon.
+const DRAG_TIMER: usize = 16;
+const DRAG_POLL_MS: u32 = 16;
 
 /// Auto-hide slide speed (about 250 ms).
 const SLIDE_OMEGA: f32 = 24.0;
@@ -238,6 +242,7 @@ const REMOVE_DISTANCE: f32 = 0.8;
 /// its middle, past this fraction of its width from either side; over its
 /// sides, it moves between icons as usual.
 const MERGE_SIDE: f32 = 0.25;
+
 /// Longest hover label of a group, which lists its apps.
 const GROUP_LABEL_CHARS: usize = 48;
 
@@ -447,6 +452,7 @@ struct Asset {
 struct Press {
     id: String,
     at: POINT,
+    draggable: bool,
 }
 
 struct Dragging {
@@ -521,6 +527,25 @@ fn selection_after_closing(index: usize, alive: &[bool]) -> Option<usize> {
         .filter(|&&on| !on)
         .count();
     Some((index - closed_before).min(left - 1))
+}
+
+fn group_drop_contains(rect: &Rect, x: f32, y: f32) -> bool {
+    let side = rect.width * MERGE_SIDE;
+    x >= rect.x + side && x <= rect.x + rect.width - side && y >= rect.y && y < rect.y + rect.height
+}
+
+pub(crate) fn primary_button_down() -> bool {
+    // GetAsyncKeyState reports physical buttons; WM_LBUTTON* is logical.
+    // Respect Windows' left-handed mouse configuration.
+    // SAFETY: Read-only system metrics and button state.
+    unsafe {
+        let key = if GetSystemMetrics(SM_SWAPBUTTON) != 0 {
+            VK_RBUTTON
+        } else {
+            VK_LBUTTON
+        };
+        GetAsyncKeyState(i32::from(key.0)) < 0
+    }
 }
 
 fn group_is_foreground(windows: &[isize], foreground: isize) -> bool {
@@ -2256,14 +2281,17 @@ impl App {
         let Some(entry) = self.hovered.and_then(|index| self.entries.get(index)) else {
             return Ok(());
         };
-        if !self.is_draggable(entry) {
-            return Ok(());
+        let draggable = self.is_draggable(entry);
+        self.press = entry.id.clone().map(|id| Press { id, at, draggable });
+        if draggable {
+            // Capture is best effort: this non-activating window also polls
+            // until release, including when the pointer leaves the dock.
+            // SAFETY: Both calls target our window on its owning thread.
+            unsafe {
+                SetCapture(self.input);
+                SetTimer(Some(self.input), DRAG_TIMER, DRAG_POLL_MS, None);
+            }
         }
-        // SAFETY: Capture keeps mouse input while dragging outside the dock.
-        unsafe {
-            SetCapture(self.input);
-        }
-        self.press = entry.id.clone().map(|id| Press { id, at });
         Ok(())
     }
 
@@ -2299,7 +2327,8 @@ impl App {
     /// Returns `true` while a drag is in progress.
     fn update_drag(&mut self, point: POINT) -> bool {
         if self.drag.is_none()
-            && let Some(press) = &self.press
+            && let Some(press) = self.press.as_ref().filter(|press| press.draggable)
+            && primary_button_down()
         {
             // SAFETY: Read-only query.
             let threshold = unsafe { GetSystemMetrics(SM_CXDRAG) }.max(1);
@@ -2358,13 +2387,15 @@ impl App {
                 .iter()
                 .zip(&state.rects)
                 .find(|(entry, rect)| {
-                    let side = rect.width * MERGE_SIDE;
                     matches!(entry.role, Role::App | Role::Group)
                         && entry.id.as_ref().is_some_and(|other| {
                             *other != id && *other != explorer && self.roster.is_pinned(other)
                         })
-                        && self.cursor >= rect.x + side
-                        && self.cursor <= rect.x + rect.width - side
+                        && group_drop_contains(
+                            rect,
+                            self.cursor,
+                            (point.y - stage.dock_origin.y) as f32,
+                        )
                 })
                 .and_then(|(entry, _)| entry.id.clone());
             if drag.merge.is_some() {
@@ -2621,19 +2652,26 @@ impl App {
     }
 
     fn on_release(&mut self) -> Result<Option<Outside>> {
-        self.press = None;
-        let Some(drag) = self.drag.take() else {
-            // SAFETY: Releasing capture we may not hold is harmless.
-            unsafe {
-                let _ = ReleaseCapture();
-            }
-            return self.on_click();
+        let press = self.press.take();
+        // Sample the release position too: the final WM_MOUSEMOVE can be
+        // coalesced or delivered to another window outside this dock.
+        let positioned = if self.drag.is_some() {
+            self.on_mouse_move()
+        } else {
+            Ok(())
         };
-        // SAFETY: Same as above.
-        unsafe {
-            let _ = ReleaseCapture();
-        }
+        let drag = self.drag.take();
         self.ghost = None;
+        self.stop_drag_input();
+        positioned?;
+        let Some(drag) = drag else {
+            // A late button-up after polling/cancellation must never launch
+            // an app, nor should releasing over a different icon.
+            if let Some(press) = press {
+                return self.on_click(&press.id);
+            }
+            return Ok(None);
+        };
         if let Some(target) = &drag.merge {
             self.roster.group_with(&drag.id, target);
         } else if drag.removing {
@@ -2650,14 +2688,59 @@ impl App {
     /// reached so far.
     fn cancel_drag(&mut self) -> Result<()> {
         self.press = None;
+        self.group_was_open = None;
+        self.ghost = None;
+        self.stop_drag_input();
         let Some(drag) = self.drag.take() else {
             return Ok(());
         };
-        self.ghost = None;
         save_settings(&self.roster, &self.config);
         self.leave_if_outside(drag.point)?;
         self.after_group_drag(&drag)?;
         self.render()
+    }
+
+    fn stop_drag_input(&self) {
+        // Never release capture now held by a menu or a different popup.
+        // SAFETY: Our timer and the current thread's capture window.
+        unsafe {
+            let _ = KillTimer(Some(self.input), DRAG_TIMER);
+            if GetCapture() == self.input {
+                let _ = ReleaseCapture();
+            }
+        }
+    }
+
+    fn poll_drag(&mut self) -> Result<Option<Outside>> {
+        if self.press.is_none() && self.drag.is_none() {
+            self.stop_drag_input();
+            return Ok(None);
+        }
+        // SAFETY: Read-only physical button state, independent of capture.
+        let (down, escape) = unsafe {
+            (
+                primary_button_down(),
+                GetAsyncKeyState(i32::from(VK_ESCAPE.0)) < 0,
+            )
+        };
+        if escape || (!down && self.drag.is_none()) {
+            self.cancel_drag()?;
+        } else if !down {
+            return self.on_release();
+        } else {
+            let mut point = POINT::default();
+            // SAFETY: Valid output for this query.
+            unsafe { GetCursorPos(&mut point)? };
+            let previous = self
+                .drag
+                .as_ref()
+                .map(|drag| drag.point)
+                .or_else(|| self.press.as_ref().map(|press| press.at));
+            if previous != Some(point) {
+                self.on_mouse_move()?;
+            }
+        }
+        Ok(None)
     }
 
     /// A drag out of a group starts away from the dock, so no hover ends
@@ -2701,7 +2784,7 @@ impl App {
     /// On icon click, launches a closed app or brings its windows to the
     /// foreground. Clicking the app that is already in front minimizes it, as
     /// the Windows taskbar does; the next click brings it back.
-    fn on_click(&mut self) -> Result<Option<Outside>> {
+    fn on_click(&mut self, pressed_id: &str) -> Result<Option<Outside>> {
         let group_was_open = self.group_was_open.take();
         if self.pointer_at_click()?.is_none() {
             return Ok(None);
@@ -2712,6 +2795,9 @@ impl App {
         let (Some(id), role) = (entry.id.clone(), entry.role) else {
             return Ok(None);
         };
+        if id != pressed_id {
+            return Ok(None);
+        }
 
         Ok(match role {
             Role::App => self.click_app(id),
@@ -2941,6 +3027,7 @@ impl App {
         // SAFETY: Capture keeps mouse input while dragging outside the dock.
         unsafe {
             SetCapture(self.input);
+            SetTimer(Some(self.input), DRAG_TIMER, DRAG_POLL_MS, None);
         }
         self.drag_to(point)
     }
@@ -3829,6 +3916,7 @@ impl App {
                 self.press = None;
                 self.drag = None;
                 self.ghost = None;
+                self.stop_drag_input();
             }
             if let Err(error) = self.place_windows() {
                 self.fullscreen = previous;
@@ -4045,6 +4133,13 @@ pub fn group_view_tick() {
             && !view.tick()?
         {
             app.close_group_view();
+        }
+        // Capture from a background popup does not guarantee mouse-move
+        // delivery once the pointer leaves it. Poll only its active press.
+        if let Some(view) = &app.group_view
+            && let Some((id, point)) = view.drag_started()?
+        {
+            app.start_group_drag(id, point)?;
         }
         Ok(())
     });
@@ -4360,7 +4455,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                 let _ = PostMessageW(Some(hwnd), DRAG_CANCELLED, WPARAM(0), LPARAM(0));
             }
         }
-        DRAG_CANCELLED => with_app("arrastre", App::cancel_drag),
+        DRAG_CANCELLED => {
+            // ReleaseCapture posts this too. A newer press may already
+            // own capture by the time the deferred cancellation runs.
+            if unsafe { GetCapture() } != hwnd {
+                with_app("arrastre", App::cancel_drag);
+            }
+        }
+        WM_TIMER if w.0 == DRAG_TIMER => with_app_then("arrastre", App::poll_drag),
         DROP_RUN => with_app_then("soltar archivos", |app| Ok(app.pending_drop.take())),
         WM_RBUTTONUP => with_app_then("menú", App::on_right_click),
         BIN_STATE => with_app("papelera", |app| app.set_bin_full(w.0 != 0)),
@@ -5047,6 +5149,41 @@ mod activation_tests {
         }
         assert!(!group_is_foreground(&[target.raw()], target.raw()));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod group_drop_tests {
+    use super::{Rect, group_drop_contains};
+
+    #[test]
+    fn grouping_requires_the_pointer_over_the_icon_not_another_monitor_below_it() {
+        let icon = Rect {
+            x: 80.0,
+            y: -24.0,
+            width: 72.0,
+            height: 72.0,
+        };
+        assert!(group_drop_contains(&icon, 116.0, 12.0));
+        for y in [-25.0, 48.0, 200.0] {
+            assert!(
+                !group_drop_contains(&icon, 116.0, y),
+                "outside the icon at y={y}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_sides_of_an_icon_remain_available_for_reordering() {
+        let icon = Rect {
+            x: 80.0,
+            y: -24.0,
+            width: 72.0,
+            height: 72.0,
+        };
+        for x in [79.0, 81.0, 151.0, 153.0] {
+            assert!(!group_drop_contains(&icon, x, 12.0));
+        }
     }
 }
 

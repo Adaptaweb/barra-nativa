@@ -86,12 +86,10 @@ impl Roster {
             keep
         });
         self.tidy_groups();
-        let grouped: Vec<String> = self
-            .groups
-            .iter()
-            .flat_map(|group| group.apps.iter().cloned())
-            .collect();
-        self.recent.retain(|id| !grouped.contains(id));
+        // Recovery can move members back to the top level. They remain
+        // pinned even though their old group no longer exists.
+        let pinned = self.pinned_apps();
+        self.recent.retain(|id| !pinned.contains(id));
         self
     }
 
@@ -703,6 +701,31 @@ mod tests {
         ]);
         assert_eq!(roster.pinned(), ["a", "muelle:group:1", "w", "z"]);
         assert_eq!(members(&roster, "muelle:group:1"), ["x", "y"]);
+        assert!(roster.recent().is_empty());
+    }
+
+    #[test]
+    fn loading_a_collapsed_group_must_not_also_show_its_app_in_recent() {
+        let roster = Roster::new(
+            vec!["muelle:group:1".into()],
+            vec!["a".into(), "other".into()],
+        )
+        .with_groups(vec![Group {
+            id: "muelle:group:1".into(),
+            apps: vec!["a".into()],
+        }]);
+        assert_eq!(roster.pinned(), ["a"]);
+        assert_eq!(roster.recent(), ["other"]);
+    }
+
+    #[test]
+    fn recovering_an_orphaned_group_must_not_duplicate_its_apps_in_recent() {
+        let roster =
+            Roster::new(Vec::new(), vec!["a".into(), "b".into()]).with_groups(vec![Group {
+                id: "muelle:group:1".into(),
+                apps: vec!["a".into(), "b".into()],
+            }]);
+        assert_eq!(roster.pinned(), ["a", "b"]);
         assert!(roster.recent().is_empty());
     }
 }

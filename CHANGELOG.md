@@ -10,6 +10,29 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Fixed icons remaining over the desktop after dragging an app out of a dock
+  group. Drag tracking now recovers missed pointer messages without taking
+  focus, stops on release or Escape, and rejects late clicks after cancellation.
+- Grouping now requires dropping over the target icon vertically as well as
+  horizontally. Recovered or collapsed groups no longer duplicate pinned apps
+  in recent apps.
+
+### Español
+
+- Corregido el icono que quedaba flotando sobre el escritorio al sacar una app
+  de un grupo del dock. El arrastre recupera mensajes del puntero perdidos sin
+  tomar el foco, termina al soltar o pulsar Escape y descarta clics tardíos tras
+  una cancelación.
+- Agrupar requiere soltar sobre el icono también en vertical. Recuperar o
+  reducir un grupo ya no duplica apps fijadas en las apps recientes.
+
+## [0.1.15]
+
+### English
+
+- Dragging apps out of the dock or a group now completes or cancels reliably
+  even when a non-activating window misses mouse input outside its bounds.
+  Press Escape to cancel a drag.
 - Dock groups: drag a pinned app onto the middle of another one (a blue frame
   shows it) to put both in a group that takes a single place in the dock;
   drop more apps on the group to add them. A group shows its first apps'
@@ -26,6 +49,10 @@ copia la sección de la versión que se publica a la release de GitHub.
   it in Settings → System, or leave Automatic to follow Windows. A language
   Muelle does not know in the settings file now reads as Automatic instead of
   making the file invalid.
+- Mascot showcase: the website now previews the crab's reactions to AI limits,
+  charging and energy saver, and the hero crab moves between the Notes window
+  and dock. Choose a moment to play its scene or let the preview run; reduced
+  motion is respected.
 - Apps that showed a blank page instead of their icon now show it, as on the
   taskbar: LibreOffice (its windows belong to `soffice.bin`; the dock now
   shows LibreOffice Calc, Writer… with their names and icons), and programs
@@ -35,6 +62,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Arrastrar apps fuera del dock o de un grupo ahora termina o se cancela de
+  forma fiable aunque una ventana que no toma el foco pierda los eventos del
+  mouse fuera de sus límites. Pulsa Esc para cancelar el arrastre.
 - Grupos en el dock: arrastra una app fijada al centro de otra (un marco azul
   lo indica) para reunirlas en un grupo que ocupa un solo lugar en el dock;
   suelta más apps sobre el grupo para añadirlas. Un grupo muestra los iconos
@@ -52,6 +82,10 @@ copia la sección de la versión que se publica a la release de GitHub.
   Elígelo en Ajustes → Sistema, o deja Automático para seguir a Windows. Un
   idioma que Muelle no conoce en el archivo de ajustes ahora se lee como
   Automático en lugar de invalidar el archivo.
+- Vista previa de la mascota: la web muestra las reacciones del cangrejo ante
+  los límites de IA, la carga y el ahorro de energía; además, en la portada se
+  mueve entre la ventana de Notas y el dock. Elige un momento para ver su escena
+  o deja que la vista previa avance; se respeta la opción de reducir movimiento.
 - Las apps que mostraban una página en blanco en lugar de su icono ahora lo
   muestran, como en la barra de tareas: LibreOffice (sus ventanas pertenecen
   a `soffice.bin`; el dock ahora muestra LibreOffice Calc, Writer… con sus
