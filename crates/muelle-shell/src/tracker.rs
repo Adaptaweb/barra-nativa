@@ -23,8 +23,10 @@ use windows::{
                 EnumWindows, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow,
                 GetWindow, GetWindowLongW, GetWindowPlacement, GetWindowRect, GetWindowTextLengthW,
                 GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed,
-                SM_CXPADDEDBORDER, SM_CXSIZEFRAME, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED,
-                WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZE, WS_THICKFRAME,
+                SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE,
+                SWP_NOOWNERZORDER, SWP_NOSIZE, SetWindowPos, WINDOWPLACEMENT,
+                WPF_RESTORETOMAXIMIZED, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+                WS_EX_TOPMOST, WS_MAXIMIZE, WS_THICKFRAME,
             },
         },
     },
@@ -226,6 +228,78 @@ pub fn rect_before_minimize(hwnd: isize, last_seen: Option<RECT>) -> Option<(REC
 #[must_use]
 pub fn foreground_window() -> isize {
     unsafe { GetForegroundWindow().0 as isize }
+}
+
+/// Recovers from a maximized Edge or Brave window covering the selected app
+/// after focus has already moved away from the browser.
+pub fn recover_browser_z_order(windows: &[TrackedWindow], foreground: isize) {
+    recover_browser_z_order_with(windows, foreground, foreground_window);
+}
+
+fn recover_browser_z_order_with(
+    windows: &[TrackedWindow],
+    foreground: isize,
+    read_foreground: impl Fn() -> isize,
+) {
+    let Some(active) = windows.iter().find(|window| window.hwnd == foreground) else {
+        return;
+    };
+    let topmost = |hwnd: isize| {
+        // SAFETY: Read-only query. Closed windows fail the geometry check.
+        unsafe { GetWindowLongW(HWND(hwnd as *mut _), GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0 }
+    };
+    let Some((active_rect, _)) = screen_rect(foreground).filter(|_| !topmost(foreground)) else {
+        return;
+    };
+    for window in windows {
+        let browser = window.hwnd;
+        if window.app_id == active.app_id
+            || !matches!(
+                window.app_id.rsplit('\\').next(),
+                Some("msedge.exe" | "brave.exe")
+            )
+            || !topmost(browser)
+        {
+            continue;
+        }
+        let hwnd = HWND(browser as *mut _);
+        // SAFETY: These queries only inspect the tracked browser window.
+        let unowned = unsafe { GetWindow(hwnd, GW_OWNER).is_err() };
+        let Some((browser_rect, true)) = screen_rect(browser).filter(|_| unowned) else {
+            continue;
+        };
+        if !covers(browser_rect, active_rect) {
+            continue;
+        }
+
+        // Place it below the last covered peer too, so a split terminal
+        // group does not end up with just the focused half visible.
+        let after = windows
+            .iter()
+            .rev()
+            .filter(|peer| peer.app_id == active.app_id && !topmost(peer.hwnd))
+            .find(|peer| screen_rect(peer.hwnd).is_some_and(|(rect, _)| covers(browser_rect, rect)))
+            .map_or(foreground, |peer| peer.hwnd);
+        if read_foreground() != foreground {
+            return;
+        }
+        if topmost(after) || !topmost(browser) {
+            continue;
+        }
+        // A position after a normal window also clears the topmost flag.
+        // SAFETY: Queues position changes without moving, sizing or activating either window.
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND(after as *mut _)),
+                0,
+                0,
+                0,
+                0,
+                SWP_ASYNCWINDOWPOS | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER,
+            );
+        }
+    }
 }
 
 /// Returns `true` if the foreground window covers the entire `screen`
@@ -511,6 +585,86 @@ fn window_aumid(hwnd: HWND) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires an interactive Windows desktop; only moves test windows"]
+    fn blocking_browser_should_move_behind_both_windows_of_the_selected_app()
+    -> windows::core::Result<()> {
+        use windows::{
+            Win32::UI::WindowsAndMessaging::{
+                CreateWindowExW, DestroyWindow, GW_HWNDNEXT, HWND_TOP, SW_SHOWNOACTIVATE,
+                SetWindowLongW, ShowWindow, WS_EX_TOPMOST, WS_POPUP,
+            },
+            core::w,
+        };
+
+        struct Fixture(HWND);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                // SAFETY: The test owns this window for its entire lifetime.
+                unsafe {
+                    let _ = DestroyWindow(self.0);
+                }
+            }
+        }
+        let create = |x, width, browser: bool| unsafe {
+            let ex = if browser {
+                WS_EX_NOACTIVATE | WS_EX_TOPMOST
+            } else {
+                WS_EX_NOACTIVATE
+            };
+            let window = Fixture(CreateWindowExW(
+                ex,
+                w!("STATIC"),
+                w!("Muelle browser ordering test"),
+                WS_POPUP,
+                x,
+                100,
+                width,
+                160,
+                None,
+                None,
+                None,
+                None,
+            )?);
+            let _ = ShowWindow(window.0, SW_SHOWNOACTIVATE);
+            if browser {
+                // Mark the fixture maximized without activating it or moving
+                // it out of the test's controlled geometry.
+                SetWindowLongW(window.0, GWL_STYLE, (WS_POPUP | WS_MAXIMIZE).0 as i32);
+            }
+            windows::core::Result::Ok(window)
+        };
+        let left = create(100, 180, false)?;
+        let right = create(280, 180, false)?;
+        let browser = create(80, 400, true)?;
+        let flags = SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE;
+        unsafe {
+            SetWindowPos(right.0, Some(HWND_TOP), 0, 0, 0, 0, flags)?;
+            assert!(IsZoomed(browser.0).as_bool());
+            assert!(GetWindowLongW(browser.0, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0);
+        }
+        let windows = [
+            (&browser, "c:\\browser\\msedge.exe"),
+            (&right, "terminal"),
+            (&left, "terminal"),
+        ]
+        .map(|(window, id)| TrackedWindow {
+            hwnd: window.0.0 as isize,
+            app_id: id.into(),
+            minimized: false,
+        });
+        let foreground = right.0.0 as isize;
+        recover_browser_z_order_with(&windows, foreground, || left.0.0 as isize);
+        assert!(unsafe { GetWindowLongW(browser.0, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0 });
+        recover_browser_z_order_with(&windows, foreground, || foreground);
+        assert_eq!(unsafe { GetWindow(left.0, GW_HWNDNEXT)? }, browser.0);
+        assert_eq!(
+            unsafe { GetWindowLongW(browser.0, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 },
+            0
+        );
+        Ok(())
+    }
 
     const SCREEN: RECT = RECT {
         left: 0,

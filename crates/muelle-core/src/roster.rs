@@ -1,6 +1,6 @@
 //! Which apps appear in the dock and in what order:
 //! 1. pinned apps, some of them gathered in groups;
-//! 2. unpinned open apps, in opening order;
+//! 2. unpinned open apps, initially in opening order;
 //! 3. recently closed unpinned apps, as in macOS.
 
 pub const MAX_RECENT: usize = 3;
@@ -188,6 +188,30 @@ impl Roster {
             .unwrap_or(self.pinned.len());
         self.pinned.insert(at, id.to_owned());
         self.tidy_groups();
+    }
+
+    /// Moves an unpinned open app before another unpinned app, or to the end.
+    /// Returns whether the displayed order changed.
+    pub fn move_running_before(&mut self, id: &str, before: Option<&str>) -> bool {
+        let Some(from) = self.extra.iter().position(|app| app == id) else {
+            return false;
+        };
+        let to = match before {
+            Some(before) => {
+                let Some(index) = self.extra.iter().position(|app| app == before) else {
+                    return false;
+                };
+                index
+            }
+            None => self.extra.len(),
+        };
+        let to = to - usize::from(from < to);
+        if from == to {
+            return false;
+        }
+        let app = self.extra.remove(from);
+        self.extra.insert(to, app);
+        true
     }
 
     /// Unpins an app. If it is open, it remains in the dock as the first unpinned
@@ -414,6 +438,25 @@ mod tests {
         roster.sync(["editor"]);
         roster.sync(["terminal", "editor"]);
         assert_eq!(ids(&roster), ["explorer", "browser", "editor", "terminal"]);
+    }
+
+    #[test]
+    fn dragging_an_open_app_should_keep_its_new_order_after_window_sync() {
+        let mut roster = Roster::new(vec!["explorer".into()], Vec::new());
+        roster.sync(["editor", "browser", "terminal"]);
+        assert!(roster.move_running_before("terminal", Some("editor")));
+        roster.sync(["editor", "browser", "terminal"]);
+        assert_eq!(ids(&roster), ["explorer", "terminal", "editor", "browser"]);
+        assert_eq!(roster.pinned(), ["explorer"]);
+    }
+
+    #[test]
+    fn dragging_an_open_app_to_the_end_should_keep_it_unpinned() {
+        let mut roster = roster();
+        roster.sync(["editor", "terminal"]);
+        assert!(roster.move_running_before("editor", None));
+        assert_eq!(ids(&roster), ["explorer", "browser", "terminal", "editor"]);
+        assert!(!roster.move_running_before("editor", None));
     }
 
     #[test]
