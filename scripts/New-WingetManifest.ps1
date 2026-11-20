@@ -11,7 +11,7 @@ $repo = 'crafter-station/Muelle'
 $id = 'CrafterStation.Muelle'
 $versionPattern = '(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'
 if ($Tag -and $Tag -cnotmatch "\Av?$versionPattern\z") {
-    throw 'Tag must be a stable version such as v0.1.16.'
+    throw 'Tag must be a stable version in vX.Y.Z format.'
 }
 $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'Muelle-WinGet' }
 if ($env:GH_TOKEN) { $headers.Authorization = "Bearer $env:GH_TOKEN" }
