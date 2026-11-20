@@ -979,6 +979,99 @@ impl Gfx {
         })
     }
 
+    /// Wi-Fi icon filled to `bars` with faint fan background.
+    /// If `has_internet` is false, an exclamation mark is drawn beside the Wi-Fi icon.
+    pub fn wifi_brush(
+        &self,
+        bars: u8,
+        has_internet: bool,
+        scale: f32,
+        ink: Ink,
+    ) -> Result<LabelBrush> {
+        let icon_side = (18.0 * scale).round();
+        let width = if has_internet {
+            icon_side
+        } else {
+            (icon_side + 7.0 * scale).round()
+        };
+        let height = icon_side;
+        // SAFETY: The format lives for the drawing below.
+        let format = unsafe {
+            let format = self.dwrite.CreateTextFormat(
+                icon_font(),
+                None,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                15.0 * scale,
+                w!(""),
+            )?;
+            format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
+            format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+            format
+        };
+        let brush = self.draw(width as u32, height as u32, |dc| {
+            let icon_area = D2D_RECT_F {
+                left: 0.0,
+                top: 0.0,
+                right: icon_side,
+                bottom: height,
+            };
+            // SAFETY: The brush, format and text live for each drawing call.
+            unsafe {
+                let ink_brush = dc.CreateSolidColorBrush(&ink.color(), None)?;
+                let wifi_glyph = crate::menubar::glyph::WIFI[usize::from(bars.clamp(1, 4)) - 1];
+                for &(glyph, opacity) in &[
+                    (crate::menubar::glyph::WIFI_FULL, 0.3f32),
+                    (wifi_glyph, 1.0f32),
+                ] {
+                    let mut units = [0u16; 2];
+                    let text = glyph.encode_utf16(&mut units);
+                    ink_brush.SetOpacity(opacity);
+                    dc.DrawText(
+                        text,
+                        &format,
+                        &icon_area,
+                        &ink_brush,
+                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                        DWRITE_MEASURING_MODE_NATURAL,
+                    );
+                }
+                if !has_internet {
+                    let warn_color = rgb(0.98, 0.60, 0.0, 1.0);
+                    let warn_brush = dc.CreateSolidColorBrush(&warn_color, None)?;
+                    let ex_x = icon_side + 2.5 * scale;
+                    let stroke = (1.8 * scale).max(1.0);
+                    let bar_top = height * 0.22;
+                    let bar_bottom = height * 0.58;
+                    dc.DrawLine(
+                        Vector2 { X: ex_x, Y: bar_top },
+                        Vector2 { X: ex_x, Y: bar_bottom },
+                        &warn_brush,
+                        stroke,
+                        None,
+                    );
+                    let dot_radius = (stroke * 0.55).max(1.0);
+                    let dot_y = height * 0.74;
+                    dc.FillEllipse(
+                        &D2D1_ELLIPSE {
+                            point: Vector2 { X: ex_x, Y: dot_y },
+                            radiusX: dot_radius,
+                            radiusY: dot_radius,
+                        },
+                        &warn_brush,
+                    );
+                }
+            }
+            Ok(())
+        })?;
+        Ok(LabelBrush {
+            brush,
+            width,
+            height,
+        })
+    }
+
     /// Two switches, one on and one off: the control center glyph.
     pub fn control_center_brush(&self, scale: f32, ink: Ink) -> Result<LabelBrush> {
         let (width, height) = ((19.0 * scale).round(), (16.0 * scale).round());
@@ -1024,11 +1117,12 @@ impl Gfx {
         })
     }
 
-    /// Battery outline filled to `percent`, green while charging.
+    /// Battery outline filled to `percent`, green while charging, orange on saver.
     pub fn battery_brush(
         &self,
         percent: u8,
         charging: bool,
+        saver: bool,
         scale: f32,
         ink: Ink,
     ) -> Result<LabelBrush> {
@@ -1039,6 +1133,8 @@ impl Gfx {
             let body_right = width - cap - stroke;
             let level = if charging {
                 rgb(0.20, 0.78, 0.35, 1.0)
+            } else if saver {
+                rgb(0.98, 0.60, 0.0, 1.0)
             } else if percent <= 20 {
                 rgb(1.0, 0.27, 0.23, 1.0)
             } else {

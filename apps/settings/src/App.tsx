@@ -388,36 +388,77 @@ export function App() {
               </Card>
             </>
           ) : section === "menubar" ? (
-            <Card>
-              <Row label={t.menuBarShow} hint={t.menuBarHint}>
-                <Toggle
-                  label={t.menuBarShow}
-                  checked={config.menuBar}
-                  onChange={(menuBar) => update({ menuBar })}
-                />
-              </Row>
-              <SubRow label={t.menuBarAutoHide} hint={t.menuBarAutoHideHint} open={config.menuBar}>
-                <Toggle
-                  label={t.menuBarAutoHide}
-                  checked={config.menuBarAutoHide}
-                  onChange={(menuBarAutoHide) => update({ menuBarAutoHide })}
-                />
-              </SubRow>
-              <SubRow label={t.aiUsage} hint={t.aiUsageHint} open={config.menuBar}>
-                <Toggle
-                  label={t.aiUsage}
-                  checked={config.aiUsage}
-                  onChange={(aiUsage) => update({ aiUsage })}
-                />
-              </SubRow>
-              <SubRow label={t.accessoryBattery} hint={t.accessoryBatteryHint} open={config.menuBar}>
-                <Toggle
-                  label={t.accessoryBattery}
-                  checked={config.accessoryBattery}
-                  onChange={(accessoryBattery) => update({ accessoryBattery })}
-                />
-              </SubRow>
-            </Card>
+            <>
+              <Card>
+                <Row label={t.menuBarShow} hint={t.menuBarHint}>
+                  <Toggle
+                    label={t.menuBarShow}
+                    checked={config.menuBar}
+                    onChange={(menuBar) => update({ menuBar })}
+                  />
+                </Row>
+                <SubRow label={t.menuBarAutoHide} hint={t.menuBarAutoHideHint} open={config.menuBar}>
+                  <Toggle
+                    label={t.menuBarAutoHide}
+                    checked={config.menuBarAutoHide}
+                    onChange={(menuBarAutoHide) => update({ menuBarAutoHide })}
+                  />
+                </SubRow>
+                <SubRow label={t.aiUsage} hint={t.aiUsageHint} open={config.menuBar}>
+                  <Toggle
+                    label={t.aiUsage}
+                    checked={config.aiUsage}
+                    onChange={(aiUsage) => update({ aiUsage })}
+                  />
+                </SubRow>
+                <SubRow label={t.accessoryBattery} hint={t.accessoryBatteryHint} open={config.menuBar}>
+                  <Toggle
+                    label={t.accessoryBattery}
+                    checked={config.accessoryBattery}
+                    onChange={(accessoryBattery) => update({ accessoryBattery })}
+                  />
+                </SubRow>
+              </Card>
+              {config.menuBar && (
+                <Card title={t.menuBarItems}>
+                  <Row label={t.menuBarBluetooth} hint={t.menuBarBluetoothHint}>
+                    <Toggle
+                      label={t.menuBarBluetooth}
+                      checked={config.menuBarBluetooth}
+                      onChange={(menuBarBluetooth) => update({ menuBarBluetooth })}
+                    />
+                  </Row>
+                  <Row label={t.menuBarBatteryPercent} hint={t.menuBarBatteryPercentHint}>
+                    <Toggle
+                      label={t.menuBarBatteryPercent}
+                      checked={config.menuBarBatteryPercent ?? false}
+                      onChange={(menuBarBatteryPercent) => update({ menuBarBatteryPercent })}
+                    />
+                  </Row>
+                  <Row label={t.menuBarSearch} hint={t.menuBarSearchHint}>
+                    <Toggle
+                      label={t.menuBarSearch}
+                      checked={config.menuBarSearch ?? true}
+                      onChange={(menuBarSearch) => update({ menuBarSearch })}
+                    />
+                  </Row>
+                  <Row label={t.menuBarTaskView} hint={t.menuBarTaskViewHint}>
+                    <Toggle
+                      label={t.menuBarTaskView}
+                      checked={config.menuBarTaskView ?? true}
+                      onChange={(menuBarTaskView) => update({ menuBarTaskView })}
+                    />
+                  </Row>
+                  <Row label={t.menuBarWidgets} hint={t.menuBarWidgetsHint}>
+                    <Toggle
+                      label={t.menuBarWidgets}
+                      checked={config.menuBarWidgets ?? true}
+                      onChange={(menuBarWidgets) => update({ menuBarWidgets })}
+                    />
+                  </Row>
+                </Card>
+              )}
+            </>
           ) : (
             <>
               <Card>

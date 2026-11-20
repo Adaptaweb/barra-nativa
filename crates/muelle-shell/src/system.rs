@@ -308,6 +308,7 @@ pub struct Battery {
     /// 0..=100.
     pub percent: u8,
     pub charging: bool,
+    pub saver: bool,
 }
 
 /// Battery state, or `None` on a computer without a battery.
@@ -319,12 +320,14 @@ pub fn battery() -> Option<Battery> {
     let mut status = SYSTEM_POWER_STATUS::default();
     // SAFETY: `status` is a valid structure the call fills in.
     unsafe { GetSystemPowerStatus(&mut status) }.ok()?;
+    let saver = energy_saver_on();
     (status.BatteryFlag & NO_BATTERY == 0
         && status.BatteryFlag != UNKNOWN
         && status.BatteryLifePercent <= 100)
         .then_some(Battery {
             percent: status.BatteryLifePercent,
             charging: status.ACLineStatus == 1,
+            saver,
         })
 }
 

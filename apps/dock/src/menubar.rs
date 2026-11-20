@@ -126,7 +126,7 @@ static PANEL_BOTTOM: AtomicI32 = AtomicI32::new(0);
 /// The hook exists only while the island is expanded.
 static ISLAND_HOOK_WINDOW: AtomicIsize = AtomicIsize::new(0);
 /// Segoe Fluent Icons code points.
-mod glyph {
+pub(crate) mod glyph {
     pub const WIFI: [char; 4] = ['\u{E872}', '\u{E873}', '\u{E874}', '\u{E701}'];
     pub const WIFI_FULL: char = '\u{E701}';
     pub const ETHERNET: char = '\u{E839}';
@@ -142,6 +142,7 @@ mod glyph {
     pub const CAMERA: char = '\u{E722}';
     pub const MOUSE: char = '\u{E962}';
     pub const HEADSET: char = '\u{E95B}';
+    pub const BLUETOOTH: char = '\u{E702}';
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -157,6 +158,28 @@ enum Action {
     InputLanguage,
     Microphone,
     Camera,
+    Bluetooth,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MenuBarWidgets {
+    pub search: Option<bool>,
+    pub task_view: Option<bool>,
+    pub widgets: Option<bool>,
+    pub bluetooth: bool,
+    pub battery_percent: Option<bool>,
+}
+
+impl Default for MenuBarWidgets {
+    fn default() -> Self {
+        Self {
+            search: None,
+            task_view: None,
+            widgets: None,
+            bluetooth: true,
+            battery_percent: None,
+        }
+    }
 }
 
 /// Network, volume and taskbar buttons, read only when Windows reports a change.
@@ -185,6 +208,7 @@ struct Look {
     input: Option<String>,
     battery: Option<Battery>,
     status: Status,
+    widgets: MenuBarWidgets,
     usage: Snapshot,
     usage_enabled: bool,
     active_providers: ActiveProviders,
@@ -290,6 +314,7 @@ pub struct MenuBar {
     /// Where the full bar goes on screen.
     bounds: RECT,
     status: Status,
+    widgets: MenuBarWidgets,
     usage: Option<UsageMonitor>,
     /// Where each provider sits in the closed island, as screen x.
     usage_anchors: Vec<(Provider, i32)>,
@@ -825,7 +850,12 @@ fn add_text(
 }
 
 impl MenuBar {
-    pub fn create(gfx: &Gfx, usage_enabled: bool, auto_hide: bool) -> Result<Self> {
+    pub fn create(
+        gfx: &Gfx,
+        usage_enabled: bool,
+        auto_hide: bool,
+        widgets: MenuBarWidgets,
+    ) -> Result<Self> {
         let class = w!("MuelleMenuBar");
         // SAFETY: Standard class registration and window creation on the UI
         // thread; the window is destroyed in `Drop`.
@@ -899,6 +929,7 @@ impl MenuBar {
                 privacy: Privacy::default(),
                 battery_percentage: false,
             },
+            widgets,
             usage: usage_enabled.then(|| UsageMonitor::new(hwnd.0 as isize, USAGE_CHANGED)),
             usage_anchors: Vec::new(),
             cue: None,
@@ -995,6 +1026,15 @@ impl MenuBar {
         .inspect_err(|error| eprintln!("muelle: accesorios: {error:#}"))
         .ok();
         self.refresh(gfx)
+    }
+
+    pub fn set_widgets(&mut self, gfx: &Gfx, widgets: MenuBarWidgets) -> Result<()> {
+        if self.widgets == widgets {
+            return Ok(());
+        }
+        self.widgets = widgets;
+        self.refresh(gfx)
+    }
     }
 
     /// The pointer reached the top edge or left the bar.
@@ -1426,6 +1466,7 @@ impl MenuBar {
             Some(Action::Search) => launcher::open_search(),
             Some(Action::TaskView) => launcher::open_task_view(),
             Some(Action::Widgets) => launcher::open_widgets(),
+            Some(Action::Bluetooth) => launcher::open_bluetooth(),
             Some(Action::HiddenIcons) => launcher::toggle_hidden_icons(anchor),
             Some(Action::InputLanguage) => {} // Opened outside the app borrow.
             // Windows' own pages list which apps use each device.
@@ -1491,6 +1532,7 @@ impl MenuBar {
             input: system::input_language(),
             battery: system::battery(),
             status: self.status,
+            widgets: self.widgets,
             usage: self
                 .usage
                 .as_ref()
@@ -1649,19 +1691,35 @@ impl MenuBar {
                 items.push((symbol(&[(glyph, 1.0)])?, action));
             }
         }
-        if status.buttons.search {
+        let show_search = look.widgets.search.unwrap_or(status.buttons.search);
+        let show_task_view = look.widgets.task_view.unwrap_or(status.buttons.task_view);
+        let show_widgets = look.widgets.widgets.unwrap_or(status.buttons.widgets);
+        let show_battery_percentage = look
+            .widgets
+            .battery_percent
+            .unwrap_or(status.battery_percentage);
+        let show_bluetooth = look.widgets.bluetooth;
+
+        if show_search {
             items.push((symbol(&[(glyph::SEARCH, 1.0)])?, Action::Search));
         }
-        let network = match status.network {
-            // The full fan stays faint behind the bars received, as on a Mac.
-            Network::Wifi { bars } => vec![
-                (glyph::WIFI_FULL, 0.3),
-                (glyph::WIFI[usize::from(bars.clamp(1, 4)) - 1], 1.0),
-            ],
-            Network::Ethernet => vec![(glyph::ETHERNET, 1.0)],
-            Network::Offline => vec![(glyph::OFFLINE, 1.0)],
-        };
-        items.push((symbol(&network)?, Action::QuickSettings));
+        if show_bluetooth {
+            items.push((symbol(&[(glyph::BLUETOOTH, 1.0)])?, Action::Bluetooth));
+        }
+        match status.network {
+            Network::Wifi { bars, has_internet } => {
+                items.push((
+                    gfx.wifi_brush(bars, has_internet, scale, ink)?,
+                    Action::QuickSettings,
+                ));
+            }
+            Network::Ethernet => {
+                items.push((symbol(&[(glyph::ETHERNET, 1.0)])?, Action::QuickSettings));
+            }
+            Network::Offline => {
+                items.push((symbol(&[(glyph::OFFLINE, 1.0)])?, Action::QuickSettings));
+            }
+        }
         if let Some(volume) = status.volume {
             let speaker = if volume.muted {
                 glyph::MUTE
@@ -1672,14 +1730,14 @@ impl MenuBar {
         }
         let mut battery_label = None;
         if let Some(battery) = look.battery {
-            if status.battery_percentage {
+            if show_battery_percentage {
                 battery_label = Some((
                     items.len(),
                     gfx.text_brush(&format!("{}%", battery.percent), scale, false, ink)?,
                 ));
             }
             items.push((
-                gfx.battery_brush(battery.percent, battery.charging, scale, ink)?,
+                gfx.battery_brush(battery.percent, battery.charging, battery.saver, scale, ink)?,
                 Action::QuickSettings,
             ));
         }
@@ -1704,10 +1762,10 @@ impl MenuBar {
         // The notification area (antivirus, OneDrive, apps in the background)
         // lives only in the hidden taskbar; this arrow opens its flyout.
         items.push((symbol(&[(glyph::HIDDEN_ICONS, 1.0)])?, Action::HiddenIcons));
-        if status.buttons.task_view {
+        if show_task_view {
             items.push((symbol(&[(glyph::TASK_VIEW, 1.0)])?, Action::TaskView));
         }
-        if status.buttons.widgets {
+        if show_widgets {
             items.push((symbol(&[(glyph::WIDGETS, 1.0)])?, Action::Widgets));
         }
         for (index, (item, action)) in items.iter().enumerate() {
@@ -2807,7 +2865,7 @@ mod island_tests {
         };
         let gfx = Gfx::new()?;
         strings::set_language(Language::Es);
-        let mut bar = MenuBar::create(&gfx, false, true)?;
+        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
         assert!(
             bar.look
                 .as_ref()
@@ -2848,7 +2906,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true)?;
+        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
         assert!(
             !unsafe { IsWindowVisible(bar.hwnd) }.as_bool(),
             "auto-hide must apply before the first frame"
@@ -2950,7 +3008,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true)?;
+        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
         bar.set_app_name(&gfx, "Muelle animation test")?;
         bar.set_auto_hide(true)?;
         let inside = POINT {

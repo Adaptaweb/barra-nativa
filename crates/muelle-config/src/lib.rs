@@ -70,6 +70,16 @@ pub struct Config {
     pub ai_usage: bool,
     /// Opt-in peripheral monitoring. Off means no accessory reader or queries.
     pub accessory_battery: bool,
+    /// Show search button in the menu bar (`None` follows Windows taskbar setting).
+    pub menu_bar_search: Option<bool>,
+    /// Show Task View button in the menu bar (`None` follows Windows taskbar setting).
+    pub menu_bar_task_view: Option<bool>,
+    /// Show Widgets button in the menu bar (`None` follows Windows taskbar setting).
+    pub menu_bar_widgets: Option<bool>,
+    /// Show Bluetooth button in the menu bar.
+    pub menu_bar_bluetooth: bool,
+    /// Show battery percentage in the menu bar (`None` follows Windows setting).
+    pub menu_bar_battery_percent: Option<bool>,
     /// The dot under apps that have windows open.
     pub show_indicators: bool,
     /// The section of recently used apps that are not pinned.
@@ -163,6 +173,11 @@ impl Default for Config {
             menu_bar_auto_hide: false,
             ai_usage: true,
             accessory_battery: false,
+            menu_bar_search: None,
+            menu_bar_task_view: None,
+            menu_bar_widgets: None,
+            menu_bar_bluetooth: true,
+            menu_bar_battery_percent: None,
             show_indicators: true,
             show_recents: true,
             bounce_on_open: true,
