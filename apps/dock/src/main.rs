@@ -41,6 +41,7 @@ use windows::{
     Win32::{
         Foundation::{ERROR_ALREADY_EXISTS, GetLastError},
         System::{
+            Diagnostics::Debug::{SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, SetErrorMode},
             Threading::CreateMutexW,
             WinRT::{
                 CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
@@ -53,6 +54,11 @@ use windows::{
 };
 
 fn main() -> Result<()> {
+    // Suppress system modal error dialogs (missing DLLs, missing ordinals in 3rd-party shell extensions).
+    // SAFETY: Affects process-level error mode without side effects on memory or concurrency.
+    unsafe {
+        let _ = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+    }
     let args: Vec<String> = env::args().skip(1).collect();
     match args
         .iter()

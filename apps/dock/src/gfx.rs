@@ -1026,6 +1026,8 @@ impl Gfx {
             };
             // SAFETY: The brush, format and text live for each drawing call.
             unsafe {
+                const WIFI: [char; 4] = ['\u{E872}', '\u{E873}', '\u{E874}', '\u{E701}'];
+                const WIFI_FULL: char = '\u{E701}';
                 let ink_brush = dc.CreateSolidColorBrush(&ink.color(), None)?;
                 let wifi_glyph = network_glyph::WIFI[usize::from(bars.clamp(1, 4)) - 1];
                 for &(glyph, opacity) in &[(network_glyph::WIFI_FULL, 0.3f32), (wifi_glyph, 1.0f32)]
