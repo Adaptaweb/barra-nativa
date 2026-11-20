@@ -186,13 +186,20 @@ pub fn dispatch(action: Action) -> Result<()> {
 /// A rejected request must be visible to the user, without blocking the UI
 /// or creating a new dialog for every repeated click on a full queue.
 pub fn notify_not_started() {
+    notify_failure(crate::strings::text().shell_operation_failed);
+}
+
+pub fn notify_end_task_failed() {
+    notify_failure(crate::strings::text().end_task_failed);
+}
+
+fn notify_failure(message: &'static str) {
     use std::sync::atomic::{AtomicBool, Ordering};
     use windows::Win32::UI::WindowsAndMessaging::{MB_ICONWARNING, MB_OK, MessageBoxW};
     static SHOWING: AtomicBool = AtomicBool::new(false);
     if SHOWING.swap(true, Ordering::AcqRel) {
         return;
     }
-    let message = crate::strings::text().shell_operation_failed;
     let shown = thread::Builder::new()
         .name("muelle-shell-notice".into())
         .spawn(move || {

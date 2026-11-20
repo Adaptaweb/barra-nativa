@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type Language = "auto" | "es" | "en" | "fr";
 export type IslandStyle = "notch" | "bubble";
+export type GenieSpeed = "normal" | "fast" | "faster";
 
 /** Mirrors `muelle_config::Config`. */
 export interface Config {
@@ -13,10 +14,12 @@ export interface Config {
   magnification: boolean;
   magnifiedSize: number;
   genie: boolean;
+  genieSpeed: GenieSpeed;
   showMinimized: boolean;
   menuBar: boolean;
   menuBarAutoHide: boolean;
   aiUsage: boolean;
+  menuBarMusic: boolean;
   menuBarIslandStyle: IslandStyle;
   accessoryBattery: boolean;
   menuBarSearch: boolean | null;

@@ -33,6 +33,7 @@ use muelle_core::{
 };
 use muelle_shell::{
     appbar::{ABN_FULLSCREENAPP, AppBar, Edge},
+    end_task::PreparedEndTask,
     files,
     icons::IconImage,
     launcher,
@@ -275,6 +276,7 @@ const CMD_TASKBAR_SETTINGS: u32 = 14;
 const CMD_UNGROUP: u32 = 15;
 const CMD_REMOVE_FOLDER: u32 = 16;
 const CMD_FORGET_RECENT: u32 = 17;
+const CMD_END_TASK: u32 = 18;
 const CMD_WINDOW: u32 = 100;
 const MENU_WINDOWS: usize = 12;
 const MENU_TITLE_CHARS: usize = 60;
@@ -409,6 +411,7 @@ enum Outside {
     OpenStart,
     Activate(Vec<isize>),
     Minimize(Vec<isize>),
+    EndTask(PreparedEndTask),
     Reveal(String),
     EmptyBin,
     OpenWith(String, Vec<String>),
@@ -482,6 +485,7 @@ enum MenuTarget {
         id: String,
         role: Role,
         windows: Vec<isize>,
+        end_task: Option<PreparedEndTask>,
     },
     Dock,
 }
@@ -1686,7 +1690,14 @@ impl App {
         };
         let flight = self.snapshots.get(position).and_then(|(_, snapshot)| {
             let slot = self.minimized_slot(hwnd, snapshot.aspect())?;
-            Flight::restore(&self.gfx, hwnd, snapshot, slot, screen)
+            Flight::restore(
+                &self.gfx,
+                hwnd,
+                snapshot,
+                slot,
+                screen,
+                self.config.genie_speed.seconds(),
+            )
         });
         let Some(flight) = flight else {
             return false;
@@ -1739,7 +1750,14 @@ impl App {
             let Some((from, frame)) = tracker::rect_before_minimize(hwnd, last_seen) else {
                 continue;
             };
-            if let Some(flight) = Flight::start(&self.gfx, hwnd, from, frame, screen) {
+            if let Some(flight) = Flight::start(
+                &self.gfx,
+                hwnd,
+                from,
+                frame,
+                screen,
+                self.config.genie_speed.seconds(),
+            ) {
                 self.flights.push(flight);
                 self.last_frame = Instant::now();
                 break;
@@ -3225,7 +3243,7 @@ impl App {
             return Ok(None);
         };
         let windows = self.windows_of(&id);
-        let items = self.entry_menu(&id, Role::App, &windows);
+        let (items, end_task) = self.entry_menu(&id, Role::App, &windows);
         let gap = self
             .stage
             .as_ref()
@@ -3241,6 +3259,7 @@ impl App {
                 id,
                 role: Role::App,
                 windows,
+                end_task,
             },
             items,
             anchor,
@@ -3299,8 +3318,17 @@ impl App {
                     x: stage.dock_origin.x + (rect.x + rect.width / 2.0).round() as i32,
                     y: stage.dock_origin.y + rect.y.round() as i32 - gap,
                 };
-                let items = self.entry_menu(&id, role, &windows);
-                (MenuTarget::Entry { id, role, windows }, items, anchor)
+                let (items, end_task) = self.entry_menu(&id, role, &windows);
+                (
+                    MenuTarget::Entry {
+                        id,
+                        role,
+                        windows,
+                        end_task,
+                    },
+                    items,
+                    anchor,
+                )
             }
             None => {
                 let anchor = POINT {
@@ -3336,10 +3364,20 @@ impl App {
         })))
     }
 
-    fn entry_menu(&self, id: &str, role: Role, windows: &[isize]) -> Vec<MenuItem> {
+    fn entry_menu(
+        &self,
+        id: &str,
+        role: Role,
+        windows: &[isize],
+    ) -> (Vec<MenuItem>, Option<PreparedEndTask>) {
         let is_file = !id.starts_with("shell:") && !id.starts_with("::");
         let t = text();
         let mut items = Vec::new();
+        let end_task = if role == Role::App && id != explorer_id() {
+            PreparedEndTask::capture(id, windows, &self.windows)
+        } else {
+            None
+        };
         match role {
             Role::App => {
                 for (index, &hwnd) in windows.iter().take(MENU_WINDOWS).enumerate() {
@@ -3379,6 +3417,14 @@ impl App {
                 if !windows.is_empty() {
                     items.push(MenuItem::Separator);
                     items.push(MenuItem::action(CMD_QUIT_APP, t.quit_app));
+                    if id != explorer_id() {
+                        items.push(MenuItem::Action {
+                            command: CMD_END_TASK,
+                            label: t.end_task.into(),
+                            checked: false,
+                            enabled: end_task.is_some(),
+                        });
+                    }
                 }
             }
             Role::Group => {
@@ -3414,11 +3460,17 @@ impl App {
                 });
             }
         }
-        items
+        (items, end_task)
     }
 
     fn on_command(&mut self, target: MenuTarget, command: u32) -> Result<Option<Outside>> {
-        let MenuTarget::Entry { id, role, windows } = target else {
+        let MenuTarget::Entry {
+            id,
+            role,
+            windows,
+            end_task,
+        } = target
+        else {
             return match command {
                 CMD_QUIT_DOCK => Ok(Some(Outside::QuitDock)),
                 CMD_TOGGLE_HIDING => self.toggle_hiding().map(|()| None),
@@ -3497,6 +3549,7 @@ impl App {
                 launcher::close(&windows);
                 None
             }
+            CMD_END_TASK => end_task.map(Outside::EndTask),
             CMD_EMPTY_BIN => Some(Outside::EmptyBin),
             window => {
                 let index = window.checked_sub(CMD_WINDOW).map(|index| index as usize);
@@ -3930,6 +3983,7 @@ impl App {
             self.menubar = MenuBar::create(
                 &self.gfx,
                 self.config.ai_usage,
+                self.config.menu_bar_music,
                 self.config.menu_bar_auto_hide,
                 widgets,
             )
@@ -3940,6 +3994,7 @@ impl App {
             let applied = bar
                 .set_auto_hide(self.config.menu_bar_auto_hide)
                 .and_then(|()| bar.set_usage_enabled(&self.gfx, self.config.ai_usage))
+                .and_then(|()| bar.set_media_enabled(&self.gfx, self.config.menu_bar_music))
                 .and_then(|()| bar.set_widgets(&self.gfx, widgets))
                 .and_then(|()| {
                     let covered = primary_monitor()
@@ -4692,6 +4747,21 @@ fn run_outside(outside: Outside) {
                 shell_work::notify_not_started();
             }
             menu_bar_refresh();
+        }
+        Outside::EndTask(target) => {
+            // Captured kernel handles are Send; no HWND or PID is resolved
+            // again after the menu. Never wait on an unresponsive UI thread.
+            let started = thread::Builder::new()
+                .name("muelle-end-task".into())
+                .spawn(move || {
+                    if let Err(error) = target.terminate() {
+                        muelle_shell::log::line(&format!("finalizar tarea: {error}"));
+                        shell_work::notify_end_task_failed();
+                    }
+                });
+            if started.is_err() {
+                shell_work::notify_end_task_failed();
+            }
         }
         Outside::Menu(request) => {
             let owner = HWND(MAIN_WINDOW.load(Ordering::Relaxed) as *mut _);

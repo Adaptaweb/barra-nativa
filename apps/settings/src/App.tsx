@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Config,
+  type GenieSpeed,
   type IslandStyle,
   type Language,
   type UpdateInfo,
@@ -374,6 +375,18 @@ export function App() {
                     onChange={(genie) => update({ genie })}
                   />
                 </Row>
+                <SubRow label={t.genieSpeed} hint={t.genieSpeedHint} open={config.genie}>
+                  <Segmented<GenieSpeed>
+                    label={t.genieSpeed}
+                    value={config.genieSpeed}
+                    options={[
+                      { value: "normal", label: t.genieSpeedNormal },
+                      { value: "fast", label: t.genieSpeedFast },
+                      { value: "faster", label: t.genieSpeedFaster },
+                    ]}
+                    onChange={(genieSpeed) => update({ genieSpeed })}
+                  />
+                </SubRow>
                 <SubRow label={t.genieOff} hint={t.genieOffHint} open={config.genie && !animations}>
                   <button type="button" className="push" onClick={() => void openAnimationSettings()}>
                     {t.genieOffAction}
@@ -405,6 +418,13 @@ export function App() {
                     onChange={(menuBarAutoHide) => update({ menuBarAutoHide })}
                   />
                 </SubRow>
+                <SubRow label={t.menuBarMusic} hint={t.menuBarMusicHint} open={config.menuBar}>
+                  <Toggle
+                    label={t.menuBarMusic}
+                    checked={config.menuBarMusic}
+                    onChange={(menuBarMusic) => update({ menuBarMusic })}
+                  />
+                </SubRow>
                 <SubRow label={t.aiUsage} hint={t.aiUsageHint} open={config.menuBar}>
                   <Toggle
                     label={t.aiUsage}
@@ -412,7 +432,11 @@ export function App() {
                     onChange={(aiUsage) => update({ aiUsage })}
                   />
                 </SubRow>
-                <SubRow label={t.islandStyle} hint={t.islandStyleHint} open={config.menuBar}>
+                <SubRow
+                  label={t.islandStyle}
+                  hint={t.islandStyleHint}
+                  open={config.menuBar && (config.menuBarMusic || config.aiUsage)}
+                >
                   <Segmented<IslandStyle>
                     label={t.islandStyle}
                     value={config.menuBarIslandStyle}

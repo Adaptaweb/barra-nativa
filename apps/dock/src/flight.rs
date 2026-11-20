@@ -85,7 +85,6 @@ use windows_numerics::{Matrix3x2, Vector2};
 
 use crate::gfx::Gfx;
 
-const DURATION_SECONDS: f32 = 0.5;
 /// Screen rows per strip: the edge of the funnel steps by at most a few pixels.
 const STRIP_ROWS: u32 = 3;
 const MAX_STRIPS: u32 = 400;
@@ -180,6 +179,8 @@ pub struct Flight {
     /// The window being minimized or restored.
     pub hwnd: isize,
     created_at: Instant,
+    /// How long the flight lasts (Settings → Genie speed).
+    seconds: f32,
     foreground: isize,
     overlay: HWND,
     /// The window under the overlay that holds a minimize's stand-in.
@@ -354,8 +355,8 @@ fn cut(
         .collect()
 }
 
-/// Hands the flight to the compositor: every strip follows `genie` for
-/// `DURATION_SECONDS`, into the slot or (`reverse`) out of it.
+/// Hands the flight to the compositor: every strip follows `genie` for the
+/// flight's duration, into the slot or (`reverse`) out of it.
 ///
 /// The expressions are `Genie::frame` written for the compositor: a strip's
 /// top is its resting row plus `shift`, its bottom stops at the slot, and its
@@ -421,14 +422,20 @@ fn bind(
 }
 
 /// Starts the flight bound by [`bind`]: the compositor animates `bend` and
-/// `shift` for `DURATION_SECONDS` at the display's refresh rate.
-fn launch(gfx: &Gfx, genie: &Genie, drive: &CompositionPropertySet, reverse: bool) -> Result<()> {
+/// `shift` for `seconds` at the display's refresh rate.
+fn launch(
+    gfx: &Gfx,
+    genie: &Genie,
+    drive: &CompositionPropertySet,
+    reverse: bool,
+    seconds: f32,
+) -> Result<()> {
     let compositor = &gfx.compositor;
     let travel = (genie.slot.bottom - genie.window.top).max(0.0);
     let at = |progress: f32| if reverse { 1.0 - progress } else { progress };
     let linear = compositor.CreateLinearEasingFunction()?;
     let duration = TimeSpan {
-        Duration: (DURATION_SECONDS * 1e7) as i64,
+        Duration: (seconds * 1e7) as i64,
     };
     let animate = |name: &HSTRING, curve: fn(f32) -> f32, amount: f32| -> Result<()> {
         let animation = compositor.CreateScalarKeyFrameAnimation()?;
@@ -477,7 +484,14 @@ impl Flight {
     /// thumbnail goes; `frame` is the part that showed on screen, which the
     /// genie copies and flies (the work area for a maximized window, so no
     /// strip of the menu bar or desktop around it comes along).
-    pub fn start(gfx: &Gfx, hwnd: isize, from: RECT, frame: RECT, screen: RECT) -> Option<Self> {
+    pub fn start(
+        gfx: &Gfx,
+        hwnd: isize,
+        from: RECT,
+        frame: RECT,
+        screen: RECT,
+        seconds: f32,
+    ) -> Option<Self> {
         // A timed-out GDI call cannot be cancelled safely. Keep at most one
         // outstanding copy, including a worker whose overlay was abandoned.
         let capture_permit = CapturePermit::acquire()?;
@@ -562,6 +576,7 @@ impl Flight {
         Some(Self {
             hwnd,
             created_at: Instant::now(),
+            seconds,
             foreground: tracker::foreground_window(),
             overlay,
             stand: Some(stand),
@@ -595,6 +610,7 @@ impl Flight {
         snapshot: &Snapshot,
         slot: RECT,
         screen: RECT,
+        seconds: f32,
     ) -> Option<Self> {
         let window = intersect(snapshot.window, screen);
         if is_empty(window) {
@@ -611,7 +627,7 @@ impl Flight {
         let drive = clip_at_slot(gfx, &root, &genie, screen)
             .and_then(|()| cut(gfx, &root, image, height))
             .and_then(|pieces| bind(gfx, &genie, &pieces, size, true))
-            .and_then(|drive| launch(gfx, &genie, &drive, true).map(|()| drive));
+            .and_then(|drive| launch(gfx, &genie, &drive, true, seconds).map(|()| drive));
         let Ok(drive) = drive else {
             // SAFETY: Our own window, destroyed once.
             unsafe {
@@ -622,6 +638,7 @@ impl Flight {
         let flight = Self {
             hwnd,
             created_at: Instant::now(),
+            seconds,
             foreground: tracker::foreground_window(),
             overlay,
             stand: None,
@@ -703,7 +720,7 @@ impl Flight {
                         *stand_in = None;
                     }
                 }
-                let t = now.saturating_duration_since(*start).as_secs_f32() / DURATION_SECONDS;
+                let t = now.saturating_duration_since(*start).as_secs_f32() / self.seconds;
                 if t < 1.0 {
                     return true;
                 }
@@ -781,7 +798,7 @@ impl Flight {
         let Phase::Flying { start, .. } = &self.phase else {
             return 0;
         };
-        let elapsed = now.saturating_duration_since(*start).as_secs_f32() / DURATION_SECONDS;
+        let elapsed = now.saturating_duration_since(*start).as_secs_f32() / self.seconds;
         let t = if self.restoring {
             1.0 - elapsed
         } else {
@@ -804,7 +821,7 @@ impl Flight {
         let pieces = cut(gfx, &self.root, &image, image.height)?;
         let size = (image.width as f32, image.height as f32);
         let drive = bind(gfx, &self.genie, &pieces, size, false)?;
-        launch(gfx, &self.genie, &drive, false)?;
+        launch(gfx, &self.genie, &drive, false, self.seconds)?;
         self.captured = Some((restore, window));
         Ok(drive)
     }
@@ -955,7 +972,7 @@ mod native_tests {
             right: 250,
             bottom: 170,
         };
-        let mut flight = Flight::start(&gfx, source.0.0 as isize, from, from, screen)
+        let mut flight = Flight::start(&gfx, source.0.0 as isize, from, from, screen, 0.5)
             .ok_or_else(|| anyhow::anyhow!("could not create the native animation"))?;
         let overlay = flight.overlay;
         let stand = flight.stand;

@@ -10,6 +10,18 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Settings → Menu bar → Show what's playing (issue #28). The music half of
+  the island could not be turned off; now it can, and with AI usage off too
+  the menu bar shows no island at all. Off, Muelle also stops following media
+  sessions. On by default, as before.
+- Added "End task" beside "Quit" in a running app's context menu, including apps
+  inside dock groups (issue #26). Force termination runs outside the UI thread
+  against process handles captured for that menu. Explorer, critical/shared hosts
+  and inaccessible processes are excluded; cancelling the menu changes nothing.
+- Settings → Windows → Genie speed (issue #27): Normal, Fast or Faster.
+  Normal is the speed the genie always had (0.5 s, close to the macOS Dock)
+  and stays the default; Fast takes 0.35 s and Faster 0.25 s, minimizing and
+  restoring alike. The change applies to the next window at once.
 - Added a persistent red attention badge for apps that request attention through
   Windows, including grouped apps and minimized-window thumbnails (issue #22,
   first stage). It clears on window activation/closure and follows Windows' badge
@@ -51,6 +63,20 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Ajustes → Barra superior → Mostrar lo que se reproduce (issue #28). La parte
+  de música de la isla no se podía apagar; ahora sí, y si también desactivas el
+  uso de IA la barra superior no muestra ninguna isla. Apagado, Muelle deja
+  además de seguir las sesiones multimedia. Activado por defecto, como antes.
+- Añadido «Finalizar tarea» junto a «Salir» en el menú de una app abierta, también
+  dentro de grupos del dock (issue #26). La finalización forzada se ejecuta fuera
+  del hilo de interfaz y usa los procesos capturados para ese menú. Se excluyen
+  Explorer, procesos críticos/hosts compartidos y procesos sin permisos; cancelar
+  el menú no realiza ninguna acción.
+- Ajustes → Ventanas → Velocidad del genio (issue #27): Normal, Rápida o Muy
+  rápida. Normal es la velocidad de siempre (0,5 s, cercana al Dock de macOS)
+  y sigue siendo la predeterminada; Rápida dura 0,35 s y Muy rápida 0,25 s,
+  tanto al minimizar como al restaurar. Se aplica al instante a la siguiente
+  ventana.
 - Añadido un badge rojo persistente para las apps que solicitan atención mediante
   Windows, también en grupos y miniaturas minimizadas (issue #22, primera etapa).
   Se quita al activar/cerrar la ventana y sigue en caliente la preferencia de

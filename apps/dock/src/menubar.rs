@@ -332,6 +332,8 @@ pub struct MenuBar {
     /// A moment for the crab, waiting for the dock (see `take_cue`).
     cue: Option<(mascot::Act, i32)>,
     media: Option<media::Watch>,
+    /// "Show what is playing": off, nothing listens to media sessions.
+    media_enabled: bool,
     panel: Option<Island>,
     visual_height: i32,
     triggers_span: Span,
@@ -919,6 +921,7 @@ impl MenuBar {
     pub fn create(
         gfx: &Gfx,
         usage_enabled: bool,
+        media_enabled: bool,
         auto_hide: bool,
         widgets: MenuBarWidgets,
     ) -> Result<Self> {
@@ -999,7 +1002,10 @@ impl MenuBar {
             usage: usage_enabled.then(|| UsageMonitor::new(hwnd.0 as isize, USAGE_CHANGED)),
             usage_anchors: Vec::new(),
             cue: None,
-            media: media::Watch::start(hwnd, MEDIA_CHANGED),
+            media: media_enabled
+                .then(|| media::Watch::start(hwnd, MEDIA_CHANGED))
+                .flatten(),
+            media_enabled,
             panel: None,
             visual_height: 0,
             triggers_span: Span::default(),
@@ -1053,6 +1059,19 @@ impl MenuBar {
             return Ok(());
         }
         self.usage = enabled.then(|| UsageMonitor::new(self.hwnd.0 as isize, USAGE_CHANGED));
+        self.refresh(gfx)
+    }
+
+    /// Shows or hides what is playing. Off, the media watch stops too, so
+    /// nothing follows playback changes.
+    pub fn set_media_enabled(&mut self, gfx: &Gfx, enabled: bool) -> Result<()> {
+        if self.media_enabled == enabled {
+            return Ok(());
+        }
+        self.media_enabled = enabled;
+        self.media = enabled
+            .then(|| media::Watch::start(self.hwnd, MEDIA_CHANGED))
+            .flatten();
         self.refresh(gfx)
     }
 
@@ -3198,7 +3217,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         let mut look = bar.look.clone().context("missing initial look")?;
         look.track = None;
@@ -3336,7 +3355,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         assert!(!bar.accessories_enabled && bar.accessories.is_none());
         bar.restart_accessories(&gfx)?;
@@ -3410,7 +3429,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         bar.accessories = None;
         let mut look = bar.look.clone().context("missing initial menu bar")?;
@@ -3474,7 +3493,7 @@ mod island_tests {
         };
         let gfx = Gfx::new()?;
         strings::set_language(Language::Es);
-        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
         assert!(
             bar.look
                 .as_ref()
@@ -3515,7 +3534,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
         assert!(
             !unsafe { IsWindowVisible(bar.hwnd) }.as_bool(),
             "auto-hide must apply before the first frame"
@@ -3617,7 +3636,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
         bar.set_app_name(&gfx, "Muelle animation test")?;
         bar.set_auto_hide(true)?;
         let inside = POINT {
