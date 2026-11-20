@@ -100,7 +100,7 @@ use crate::{
     group_view::{DragGhost, GroupItem, GroupView, Placement, Released},
     mascot,
     menu::{self, MenuItem},
-    menubar::MenuBar,
+    menubar::{self, MenuBar, MenuBarWidgets},
     multi_window_view::MultiWindowView,
     scene::{Drag, Frame, Scene, SceneInput, SlotContent, Theme},
     shell_work::{self, Action as ShellAction},
@@ -3773,6 +3773,13 @@ impl App {
     /// shows it again when it no longer does.
     /// Creates or removes the menu bar to match the settings.
     fn apply_menu_bar_setting(&mut self) {
+        let widgets = MenuBarWidgets {
+            search: self.config.menu_bar_search,
+            task_view: self.config.menu_bar_task_view,
+            widgets: self.config.menu_bar_widgets,
+            bluetooth: self.config.menu_bar_bluetooth,
+            battery_percent: self.config.menu_bar_battery_percent,
+        };
         if !self.config.menu_bar {
             self.menubar = None;
         } else if self.menubar.is_none() {
@@ -3780,6 +3787,7 @@ impl App {
                 &self.gfx,
                 self.config.ai_usage,
                 self.config.menu_bar_auto_hide,
+                widgets,
             )
             .inspect_err(|error| eprintln!("muelle: barra superior: {error:#}"))
             .ok();
@@ -3788,6 +3796,7 @@ impl App {
             let applied = bar
                 .set_auto_hide(self.config.menu_bar_auto_hide)
                 .and_then(|()| bar.set_usage_enabled(&self.gfx, self.config.ai_usage))
+                .and_then(|()| bar.set_widgets(&self.gfx, widgets))
                 .and_then(|()| {
                     let covered = primary_monitor()
                         .is_some_and(|monitor| tracker::foreground_is_fullscreen(monitor.screen));

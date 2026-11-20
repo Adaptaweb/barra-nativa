@@ -46,9 +46,10 @@ fn notify(window: isize, message: u32) {
 pub enum Network {
     Offline,
     Ethernet,
-    /// Signal strength from 1 to 4 bars.
+    /// Signal strength from 1 to 4 bars, and whether connected to internet.
     Wifi {
         bars: u8,
+        has_internet: bool,
     },
 }
 
@@ -58,12 +59,13 @@ pub fn network() -> Network {
     let Ok(profile) = NetworkInformation::GetInternetConnectionProfile() else {
         return Network::Offline;
     };
-    let connected = profile
+    let level = profile
         .GetNetworkConnectivityLevel()
-        .is_ok_and(|level| level != NetworkConnectivityLevel::None);
-    if !connected {
+        .unwrap_or(NetworkConnectivityLevel::None);
+    if level == NetworkConnectivityLevel::None {
         return Network::Offline;
     }
+    let has_internet = level == NetworkConnectivityLevel::InternetAccess;
     if profile.IsWlanConnectionProfile().unwrap_or(false) {
         // Windows reports 0 to 5 bars; the glyphs have 4 steps.
         let reported = profile
@@ -71,7 +73,7 @@ pub fn network() -> Network {
             .and_then(|bars| bars.Value())
             .unwrap_or(5);
         let bars = (u32::from(reported.min(5)) * 4).div_ceil(5).max(1) as u8;
-        Network::Wifi { bars }
+        Network::Wifi { bars, has_internet }
     } else {
         Network::Ethernet
     }
