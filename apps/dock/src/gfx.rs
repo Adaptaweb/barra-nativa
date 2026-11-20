@@ -1019,12 +1019,11 @@ impl Gfx {
             };
             // SAFETY: The brush, format and text live for each drawing call.
             unsafe {
+                const WIFI: [char; 4] = ['\u{E872}', '\u{E873}', '\u{E874}', '\u{E701}'];
+                const WIFI_FULL: char = '\u{E701}';
                 let ink_brush = dc.CreateSolidColorBrush(&ink.color(), None)?;
-                let wifi_glyph = crate::menubar::glyph::WIFI[usize::from(bars.clamp(1, 4)) - 1];
-                for &(glyph, opacity) in &[
-                    (crate::menubar::glyph::WIFI_FULL, 0.3f32),
-                    (wifi_glyph, 1.0f32),
-                ] {
+                let wifi_glyph = WIFI[usize::from(bars.clamp(1, 4)) - 1];
+                for &(glyph, opacity) in &[(WIFI_FULL, 0.3f32), (wifi_glyph, 1.0f32)] {
                     let mut units = [0u16; 2];
                     let text = glyph.encode_utf16(&mut units);
                     ink_brush.SetOpacity(opacity);
@@ -1045,8 +1044,14 @@ impl Gfx {
                     let bar_top = height * 0.22;
                     let bar_bottom = height * 0.58;
                     dc.DrawLine(
-                        Vector2 { X: ex_x, Y: bar_top },
-                        Vector2 { X: ex_x, Y: bar_bottom },
+                        Vector2 {
+                            X: ex_x,
+                            Y: bar_top,
+                        },
+                        Vector2 {
+                            X: ex_x,
+                            Y: bar_bottom,
+                        },
                         &warn_brush,
                         stroke,
                         None,

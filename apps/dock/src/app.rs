@@ -100,7 +100,7 @@ use crate::{
     group_view::{DragGhost, GroupItem, GroupView, Placement, Released},
     mascot,
     menu::{self, MenuItem},
-    menubar::{self, MenuBar, MenuBarWidgets},
+    menubar::{MenuBar, MenuBarWidgets},
     multi_window_view::MultiWindowView,
     scene::{Drag, Frame, Scene, SceneInput, SlotContent, Theme},
     shell_work::{self, Action as ShellAction},

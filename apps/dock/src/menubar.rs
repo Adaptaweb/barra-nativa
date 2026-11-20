@@ -126,9 +126,7 @@ static PANEL_BOTTOM: AtomicI32 = AtomicI32::new(0);
 /// The hook exists only while the island is expanded.
 static ISLAND_HOOK_WINDOW: AtomicIsize = AtomicIsize::new(0);
 /// Segoe Fluent Icons code points.
-pub(crate) mod glyph {
-    pub const WIFI: [char; 4] = ['\u{E872}', '\u{E873}', '\u{E874}', '\u{E701}'];
-    pub const WIFI_FULL: char = '\u{E701}';
+mod glyph {
     pub const ETHERNET: char = '\u{E839}';
     pub const OFFLINE: char = '\u{F384}';
     pub const VOLUME: [char; 4] = ['\u{E992}', '\u{E993}', '\u{E994}', '\u{E995}'];
@@ -1034,7 +1032,6 @@ impl MenuBar {
         }
         self.widgets = widgets;
         self.refresh(gfx)
-    }
     }
 
     /// The pointer reached the top edge or left the bar.
@@ -2727,7 +2724,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true)?;
+        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         assert!(!bar.accessories_enabled && bar.accessories.is_none());
         bar.restart_accessories(&gfx)?;
@@ -2801,7 +2798,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true)?;
+        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         bar.accessories = None;
         let mut look = bar.look.clone().context("missing initial menu bar")?;
