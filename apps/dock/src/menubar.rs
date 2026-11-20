@@ -1035,7 +1035,6 @@ impl MenuBar {
         self.widgets = widgets;
         self.refresh(gfx)
     }
-    }
 
     /// The pointer reached the top edge or left the bar.
     pub fn hover(&mut self, gfx: &Gfx, inside: bool) -> Result<()> {
