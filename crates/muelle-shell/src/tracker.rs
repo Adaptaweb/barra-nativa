@@ -1,8 +1,8 @@
 //! Open windows and the apps they belong to.
 //!
 //! An app identifier is a shell name that can be opened and resolved to an icon
-//! and display name: the lowercase executable path or, for packaged (Store) apps,
-//! `shell:AppsFolder\<AppUserModelID>`.
+//! and display name: the lowercase executable path or, for packaged (Store) apps
+//! and web apps that Windows lists on their own, `shell:AppsFolder\<AppUserModelID>`.
 
 use std::collections::HashMap;
 
@@ -36,7 +36,7 @@ use windows::{
     core::{BOOL, PWSTR},
 };
 
-const APPS_FOLDER: &str = "shell:AppsFolder\\";
+pub(crate) const APPS_FOLDER: &str = "shell:AppsFolder\\";
 const FRAME_HOST_CLASS: &str = "ApplicationFrameWindow";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -591,7 +591,15 @@ fn app_id(hwnd: HWND) -> Option<String> {
                 // there; its windows say which app they are (Calc, Writer),
                 // and the taskbar shows that app.
                 if is_program(&image) {
-                    normalize_id(&image)
+                    // A program's window may also belong to another app it
+                    // runs: a web app in a browser, which the taskbar shows
+                    // on its own.
+                    window_aumid(hwnd)
+                        .filter(|aumid| crate::pins::is_separate_app(aumid, &image))
+                        .map_or_else(
+                            || normalize_id(&image),
+                            |aumid| format!("{APPS_FOLDER}{aumid}"),
+                        )
                 } else {
                     window_aumid(hwnd).map_or_else(
                         || normalize_id(&image),
