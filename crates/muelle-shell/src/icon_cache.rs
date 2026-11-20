@@ -16,8 +16,9 @@ use std::{
 };
 
 use crate::{
-    icons::{IconError, IconImage, load_icon},
+    icons::{IconError, IconImage, load_icon, load_icon_at},
     names::display_name,
+    recycle_bin,
 };
 
 /// Changed when icons are read differently, so entries from before are read
@@ -71,14 +72,27 @@ impl IconCache {
         let kept = crate::pins::kept_shortcut_for(id);
         let source = kept.as_deref().unwrap_or(id);
         let path = self.entry_path(&format!("{source}|{variant}"), size);
-        let stamp = stamp_of(source);
+        // The recycle bin's two icons come from where Windows names them, not
+        // from the shell item, which shows whichever state Explorer has drawn
+        // last (issue #15).
+        let bin_icon = (source == recycle_bin::PARSING_NAME)
+            .then(|| recycle_bin::icon_location(variant == recycle_bin::FULL))
+            .flatten();
+        let stamp = bin_icon.as_ref().map_or_else(
+            || stamp_of(source),
+            |(file, index)| location_stamp(file, *index),
+        );
         if let Some(cached) = fs::read(&path).ok().and_then(|bytes| decode(&bytes, stamp)) {
             return Ok(cached);
         }
 
+        let icon = match &bin_icon {
+            Some((file, index)) => load_icon_at(file, *index, size)?,
+            None => load_icon(source, size)?,
+        };
         let visual = AppVisual {
             name: display_name(source),
-            icon: load_icon(source, size)?,
+            icon,
         };
         // An unwritable cache only makes the next startup slower.
         let _ = fs::create_dir_all(&self.folder);
@@ -103,6 +117,15 @@ fn stamp_of(id: &str) -> u64 {
         Ok(meta) if meta.is_file() => meta.modified().map_or(0, since_epoch),
         _ => since_epoch(SystemTime::now()) / SECONDS_PER_DAY,
     }
+}
+
+/// Validity of an icon read from `file,index`: changes when another icon is
+/// chosen or the file is updated. It never equals a day number, so entries
+/// cached the old way (issue #15) are read again.
+fn location_stamp(file: &str, index: i32) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    (file.to_lowercase(), index, stamp_of(file)).hash(&mut hasher);
+    hasher.finish() | (1 << 63)
 }
 
 fn encode(visual: &AppVisual, stamp: u64) -> Vec<u8> {

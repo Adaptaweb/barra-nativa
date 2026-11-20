@@ -95,10 +95,20 @@ pub fn load_icon(parsing_name: &str, size: u32) -> Result<IconImage, IconError> 
 /// The first icon in a program's resources at `size` pixels; `None` when the
 /// program has none, and the shell gives Windows' generic program icon.
 fn program_icon(path: &str, size: u32) -> Option<IconImage> {
+    icon_at(path, 0, size)
+}
+
+/// The icon at an icon location (`file,index`, as the registry writes them)
+/// at `size` pixels. A negative `index` is a resource id, as in `DefaultIcon`.
+pub fn load_icon_at(path: &str, index: i32, size: u32) -> Result<IconImage, IconError> {
+    icon_at(path, index, size).ok_or_else(|| IconError::Pixels(format!("{path},{index}")))
+}
+
+fn icon_at(path: &str, index: i32, size: u32) -> Option<IconImage> {
     let mut icon = HICON::default();
     // SAFETY: The path lives for the call, which writes one icon handle we own.
     let result =
-        unsafe { SHDefExtractIconW(&HSTRING::from(path), 0, 0, Some(&mut icon), None, size) };
+        unsafe { SHDefExtractIconW(&HSTRING::from(path), index, 0, Some(&mut icon), None, size) };
     // S_FALSE: the file has no icon.
     if result != S_OK || icon.is_invalid() {
         return None;
