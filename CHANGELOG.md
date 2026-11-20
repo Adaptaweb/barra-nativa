@@ -10,6 +10,13 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Added bounded graphics-device recovery and recovery of an existing dock when
+  Muelle is opened again. The watchdog closes the old instance before restarting;
+  a blocked recovery close has an eight-second deadline. Repeated device loss
+  within the first minute after recovery stops automatic restarts and restores
+  the Windows taskbar. Graphics health reuses the existing watchdog heartbeat.
+- An error updating the top bar no longer prevents the dock from refreshing or
+  returning after full-screen mode.
 - Added read-only USB adapters for SteelSeries Nova 5/5X and more Nova 7/7P
   variants, Logitech G PRO X 2 (Centurion), selected G PRO/G533 HID++ variants,
   HyperX Cloud Alpha Wireless and Kingston Cloud II Wireless. Voltage-only and
@@ -24,6 +31,14 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Añadida recuperación limitada ante pérdida del dispositivo gráfico y al abrir
+  Muelle de nuevo cuando ya existe una instancia. El guardián cierra la anterior
+  antes de reiniciarla; si el cierre de recuperación se bloquea, tiene un plazo de
+  ocho segundos. Un nuevo fallo gráfico durante el primer minuto tras recuperar
+  detiene los reinicios automáticos y devuelve la barra de Windows. La revisión
+  gráfica aprovecha la comprobación de salud que ya hacía el guardián.
+- Un error al actualizar la barra superior ya no impide actualizar el dock ni
+  hacerlo reaparecer al salir de pantalla completa.
 - Añadidos adaptadores USB de lectura para SteelSeries Nova 5/5X y más variantes
   Nova 7/7P, Logitech G PRO X 2 (Centurion), variantes G PRO/G533 HID++, HyperX
   Cloud Alpha Wireless y Cloud II Wireless Kingston. Voltajes y niveles discretos

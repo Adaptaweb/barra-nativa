@@ -34,7 +34,7 @@ use windows::{
             Direct3D::D3D_DRIVER_TYPE_WARP,
             Direct3D11::{
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_SINGLETHREADED,
-                D3D11_SDK_VERSION, D3D11CreateDevice,
+                D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
             },
             DirectWrite::{
                 DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -75,9 +75,11 @@ pub struct LabelBrush {
 pub struct Gfx {
     pub compositor: Compositor,
     graphics: CompositionGraphicsDevice,
+    d3d: ID3D11Device,
     // Surfaces depend on this device, so it must outlive them.
     _d2d: ID2D1Device,
     dwrite: IDWriteFactory,
+    on_error: Option<fn(&anyhow::Error)>,
 }
 
 impl Gfx {
@@ -85,7 +87,7 @@ impl Gfx {
         let compositor = Compositor::new()?;
         // SAFETY: D3D writes only to the initialized output slot; the returned
         // device is immediately wrapped in an owned COM interface.
-        let (d2d, graphics) = unsafe {
+        let (d3d, d2d, graphics) = unsafe {
             let mut d3d = None;
             D3D11CreateDevice(
                 None,
@@ -98,19 +100,35 @@ impl Gfx {
                 None,
                 None,
             )?;
-            let dxgi: IDXGIDevice = d3d.context("Direct3D no devolvió un dispositivo")?.cast()?;
+            let d3d = d3d.context("Direct3D no devolvió un dispositivo")?;
+            let dxgi: IDXGIDevice = d3d.cast()?;
             let d2d = D2D1CreateDevice(&dxgi, None)?;
             let graphics = compositor
                 .cast::<ICompositorInterop>()?
                 .CreateGraphicsDevice(&d2d)?;
-            (d2d, graphics)
+            (d3d, d2d, graphics)
         };
         Ok(Self {
             compositor,
             graphics,
+            d3d,
             _d2d: d2d,
             dwrite: unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? },
+            on_error: None,
         })
+    }
+
+    pub fn with_error_handler(mut self, handler: fn(&anyhow::Error)) -> Self {
+        self.on_error = Some(handler);
+        self
+    }
+
+    /// A read-only query on the UI thread, reusing the watchdog's existing
+    /// heartbeat. Detects lost devices even when the dock has nothing to redraw.
+    pub fn check_device(&self) -> Result<()> {
+        // SAFETY: The owned device is queried only on its creation thread.
+        unsafe { self.d3d.GetDeviceRemovedReason()? };
+        Ok(())
     }
 
     /// Creates a `width` × `height` pixel surface, draws on it, and returns it
@@ -126,6 +144,20 @@ impl Gfx {
     }
 
     fn draw_surface(
+        &self,
+        width: u32,
+        height: u32,
+        paint: impl FnOnce(&ID2D1DeviceContext) -> Result<()>,
+    ) -> Result<CompositionDrawingSurface> {
+        self.try_draw_surface(width, height, paint)
+            .inspect_err(|error| {
+                if let Some(handler) = self.on_error {
+                    handler(error);
+                }
+            })
+    }
+
+    fn try_draw_surface(
         &self,
         width: u32,
         height: u32,
@@ -1172,6 +1204,45 @@ fn icon_font() -> windows::core::PCWSTR {
 
 const fn rgb(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r, g, b, a }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use windows::Win32::{
+        Foundation::D2DERR_RECREATE_TARGET,
+        System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        },
+    };
+
+    #[test]
+    fn drawing_error_reaches_observer_and_balances_begin_end_draw() -> Result<()> {
+        static ERRORS: AtomicUsize = AtomicUsize::new(0);
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?.with_error_handler(|_| {
+            ERRORS.fetch_add(1, Ordering::Relaxed);
+        });
+        gfx.check_device()?;
+        // Synthetic loss at the drawing boundary; the real software device
+        // remains usable, allowing us to verify EndDraw ran despite the error.
+        let failed = gfx.draw_surface(2, 2, |_| {
+            Err(windows::core::Error::from_hresult(D2DERR_RECREATE_TARGET).into())
+        });
+        assert!(failed.is_err());
+        assert_eq!(ERRORS.load(Ordering::Relaxed), 1);
+        gfx.draw_surface(2, 2, |_| Ok(()))?;
+        gfx.check_device()?;
+        Ok(())
+    }
 }
 
 /// Foreground color of menu bar content, by theme.

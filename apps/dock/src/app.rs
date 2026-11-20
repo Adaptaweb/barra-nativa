@@ -142,6 +142,8 @@ const DROP_RUN: u32 = WM_APP + 6;
 /// Posted when apps are pinned to or unpinned from the Windows taskbar.
 const PINS_CHANGED: u32 = WM_APP + 7;
 const ASSETS_READY: u32 = WM_APP + 8;
+/// The guard also checks graphics health while the scene is otherwise idle.
+pub(crate) const HEALTH_CHECK: u32 = WM_APP + 9;
 
 /// Magnification range, in icons on either side of the cursor.
 const RANGE_IN_ICONS: f32 = 3.0;
@@ -1110,8 +1112,11 @@ impl App {
     /// nothing if the scene inputs are unchanged, since many Windows notifications
     /// do not affect the dock.
     fn refresh(&mut self) -> Result<()> {
-        if let Some(bar) = &mut self.menubar {
-            bar.refresh(&self.gfx)?;
+        if let Some(bar) = &mut self.menubar
+            && let Err(error) = bar.refresh(&self.gfx)
+        {
+            crate::recovery::graphics_error(&error);
+            muelle_shell::log::line(&format!("actualización de la barra superior: {error:#}"));
         }
         let monitor = self
             .dock_monitor()
@@ -3991,7 +3996,11 @@ impl App {
             }
         });
         if let Some(bar) = &mut self.menubar {
-            bar.set_visible(!bar_fullscreen)?;
+            // An auxiliary bar failure must not strand a hidden dock.
+            if let Err(error) = bar.set_visible(!bar_fullscreen) {
+                crate::recovery::graphics_error(&error);
+                muelle_shell::log::line(&format!("visibilidad de la barra superior: {error:#}"));
+            }
         }
         // Windows sometimes omits the shell event when a full-screen app
         // closes or switches desktops. Poll only while our UI is hidden.
@@ -4104,6 +4113,7 @@ fn with_app_then(what: &str, action: impl FnOnce(&mut App) -> Result<Option<Outs
         match app.as_mut().map(action) {
             Some(Ok(outside)) => outside,
             Some(Err(error)) => {
+                crate::recovery::graphics_error(&error);
                 muelle_shell::log::line(&format!("{what}: {error:#}"));
                 None
             }
@@ -4550,6 +4560,9 @@ fn run_outside(outside: Outside) {
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
+        HEALTH_CHECK => with_app("estado del dispositivo gráfico", |app| {
+            app.gfx.check_device()
+        }),
         WM_MOUSEACTIVATE => {
             let mouse = ((l.0 >> 16) & 0xFFFF) as u32;
             let activate = matches!(mouse, WM_LBUTTONDOWN | WM_MBUTTONDOWN)
@@ -4820,7 +4833,7 @@ fn message_loop() {
 pub fn run() -> Result<()> {
     let startup = Instant::now();
     muelle_shell::log::line(concat!("inicio, versión ", env!("CARGO_PKG_VERSION")));
-    let gfx = Gfx::new()?;
+    let gfx = Gfx::new()?.with_error_handler(crate::recovery::graphics_error);
     // SAFETY: The thread is already a single-threaded COM apartment (see
     // `main`); OLE adds drag and drop on top of it and is released at the end.
     unsafe { OleInitialize(None)? };
