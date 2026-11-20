@@ -8,14 +8,17 @@ use windows::{
     Win32::{
         Foundation::{CloseHandle, HANDLE, HWND, LPARAM, RECT, WPARAM},
         Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
-        System::Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION},
+        System::{
+            Diagnostics::Debug::{SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, SetErrorMode},
+            Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION},
+        },
         UI::{
             Input::KeyboardAndMouse::{
                 INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
                 SendInput, VIRTUAL_KEY, VK_A, VK_B, VK_D, VK_ESCAPE, VK_LCONTROL, VK_LWIN, VK_N,
                 VK_RETURN, VK_S, VK_TAB, VK_V, VK_W,
             },
-            Shell::{SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW},
+            Shell::{SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW},
             WindowsAndMessaging::{
                 ASFW_ANY, AllowSetForegroundWindow, FindWindowW, GWL_EXSTYLE, GetForegroundWindow,
                 GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow,
@@ -58,13 +61,18 @@ pub fn open_as_admin(id: &str) -> Result<(), LaunchError> {
 
 fn shell_execute(verb: PCWSTR, id: &str, arguments: Option<&str>) -> Result<(), LaunchError> {
     allow_foreground();
+    // SAFETY: Suppresses system modal error popups (e.g. broken shell extensions or missing ordinals).
+    unsafe {
+        let _ = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+    }
     let file = HSTRING::from(id);
     let arguments = arguments.map(HSTRING::from);
     let mut request = SHELLEXECUTEINFOW {
         cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
         // A disposable caller must finish activation (including DDE) before
         // its thread exits. This does not wait for the launched app to close.
-        fMask: SEE_MASK_NOASYNC,
+        // SEE_MASK_FLAG_NO_UI suppresses shell error dialogs without hiding UAC prompts.
+        fMask: SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI,
         lpVerb: verb,
         lpFile: PCWSTR(file.as_ptr()),
         lpParameters: arguments
