@@ -83,6 +83,17 @@ try {
         throw 'The valid release did not produce exactly four manifests with the computed hash.'
     }
     Write-Host 'PASS: stable published release generates four manifests'
+    $installerText = Get-Content -LiteralPath (Join-Path $manifest.Directory 'CrafterStation.Muelle.installer.yaml') -Raw
+    if ($installerText -notmatch '(?m)^  Silent: /S\s*$' -or
+        $installerText -notmatch '(?m)^  SilentWithProgress: /S\s*$' -or
+        $installerText -match '(?m)^  SilentWithProgress: /P\s*$') {
+        throw 'Both unattended installation modes must use /S; /P can open first-install Settings.'
+    }
+    if ($installerText -notmatch 'PackageIdentifier: Microsoft\.VCRedist\.2015\+\.x64' -or
+        $installerText -notmatch 'PackageIdentifier: Microsoft\.EdgeWebView2Runtime') {
+        throw 'The generated manifest must declare the dock CRT and settings WebView2 prerequisites.'
+    }
+    Write-Host 'PASS: unattended modes and clean-machine runtime dependencies are declared'
     Assert-Rejected 'tag injection' { & $prepare -Tag 'v0.1.16; whoami' -OutputRoot $root } 'Tag must be*'
     $state.fixture.prerelease = $true
     Assert-Rejected 'prerelease' { & $prepare -OutputRoot $root } 'Only published stable releases*'

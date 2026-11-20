@@ -10,7 +10,13 @@ InstallModes:
   - silentWithProgress
 InstallerSwitches:
   Silent: /S
-  SilentWithProgress: /P
+  # /P can open Settings after the first install; use NSIS silent mode for
+  # unattended package-manager installs in both modes.
+  SilentWithProgress: /S
+Dependencies:
+  PackageDependencies:
+    - PackageIdentifier: Microsoft.VCRedist.2015+.x64
+    - PackageIdentifier: Microsoft.EdgeWebView2Runtime
 UpgradeBehavior: install
 ProductCode: Muelle
 ReleaseDate: {{RELEASE_DATE}}
