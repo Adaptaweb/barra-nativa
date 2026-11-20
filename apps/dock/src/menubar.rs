@@ -17,7 +17,7 @@
 //! and volume changes arrive as `STATUS_CHANGED`; nothing polls.
 
 use anyhow::Result;
-use muelle_config::Language;
+use muelle_config::{IslandStyle, Language};
 use muelle_shell::{
     accessories::{Kind as AccessoryKind, Snapshot as AccessorySnapshot},
     appbar::{AppBar, Edge},
@@ -96,6 +96,10 @@ const HIDE_ANIMATION_DONE: u32 = WM_APP + 29;
 const ISLAND_SINGLE_WIDTH: f32 = 145.0;
 const ISLAND_EXPANDED_WIDTH: f32 = 440.0;
 const ISLAND_ROW_HEIGHT: f32 = 118.0;
+const BUBBLE_VERTICAL_INSET: f32 = 2.5;
+const BUBBLE_MUSIC_WIDTH: f32 = 164.0;
+const BUBBLE_PROVIDER_WIDTH: f32 = 62.0;
+const BUBBLE_USAGE_PADDING: f32 = 16.0;
 const PANEL_GAP: f32 = 5.0;
 const PANEL_RADIUS: f32 = 18.0;
 const PANEL_SHADOW_MARGIN: f32 = 20.0;
@@ -166,6 +170,7 @@ pub struct MenuBarWidgets {
     pub widgets: Option<bool>,
     pub bluetooth: bool,
     pub battery_percent: Option<bool>,
+    pub island_style: IslandStyle,
 }
 
 impl Default for MenuBarWidgets {
@@ -176,6 +181,7 @@ impl Default for MenuBarWidgets {
             widgets: None,
             bluetooth: true,
             battery_percent: None,
+            island_style: IslandStyle::Notch,
         }
     }
 }
@@ -1845,16 +1851,35 @@ impl MenuBar {
         right_start: f32,
     ) -> Result<()> {
         let px = |logical: f32| (logical * look.scale).round();
-        let triggers = trigger_layout(
-            Span {
-                left: left_end + px(8.0),
-                right: right_start - px(8.0),
-            },
-            width / 2.0,
-            look.scale,
-            look.track.is_some(),
-            look.active_providers.count(),
-        );
+        let style = look.widgets.island_style;
+        let prepared_music = if style == IslandStyle::Bubble
+            && let Some(track) = &look.track
+        {
+            Some(prepare_bubble_music(gfx, look, track)?)
+        } else {
+            None
+        };
+        let triggers = match style {
+            IslandStyle::Notch => trigger_layout(
+                Span {
+                    left: left_end + px(8.0),
+                    right: right_start - px(8.0),
+                },
+                width / 2.0,
+                look.scale,
+                look.track.is_some(),
+                look.active_providers.count(),
+            ),
+            IslandStyle::Bubble => bubble_trigger_layout(
+                Span {
+                    left: left_end + px(8.0),
+                    right: right_start,
+                },
+                look.scale,
+                prepared_music.as_ref().map(|music| music.width),
+                look.active_providers.count(),
+            ),
+        };
         let [(_, music), (_, usage)] = triggers;
         let (Some(first), Some(last)) = (music.or(usage), usage.or(music)) else {
             return Ok(());
@@ -1864,7 +1889,18 @@ impl MenuBar {
             right: last.right,
         };
         let geometry = IslandGeometry::new(self.triggers_span, 0.0, look);
-        let compact = island_surface(gfx, look, layers, geometry, bar_height)?;
+        let (compact, compact_height, divider_inset) = match style {
+            IslandStyle::Notch => (
+                island_surface(gfx, look, layers, geometry, bar_height)?,
+                bar_height,
+                px(7.0),
+            ),
+            IslandStyle::Bubble => {
+                let (surface, pill_height) =
+                    bubble_surface(gfx, look, layers, geometry, bar_height)?;
+                (surface, pill_height, px(5.0))
+            }
+        };
         let divider = music
             .zip(usage)
             .map(|(music, usage)| ((music.right + usage.left) / 2.0).round());
@@ -1875,9 +1911,9 @@ impl MenuBar {
                 &compact,
                 &c.CreateColorBrushWithColor(geometry.border())?.cast()?,
                 x - self.triggers_span.left,
-                px(7.0),
+                divider_inset,
                 px(1.0).max(1.0),
-                bar_height - 2.0 * px(7.0),
+                (compact_height - 2.0 * divider_inset).max(1.0),
             )?;
         }
         let providers = island_providers(look);
@@ -1887,26 +1923,47 @@ impl MenuBar {
             };
             let geometry = IslandGeometry::new(span, 0.0, look);
             let segment = c.CreateContainerVisual()?;
-            segment.SetSize(Vector2::new(geometry.width, bar_height))?;
+            segment.SetSize(Vector2::new(geometry.width, compact_height))?;
             segment.SetOffset(Vector3::new(span.left - self.triggers_span.left, 0.0, 0.0))?;
             let content = segment.Children()?;
             compact.InsertAtTop(&segment)?;
             match kind {
                 Island::Music => {
                     if let Some(track) = &look.track {
-                        draw_compact_player(
-                            gfx,
-                            &content,
-                            geometry,
-                            geometry.width,
-                            bar_height,
-                            track,
-                        )?;
+                        match style {
+                            IslandStyle::Notch => draw_compact_player(
+                                gfx,
+                                &content,
+                                geometry,
+                                geometry.width,
+                                compact_height,
+                                track,
+                            )?,
+                            IslandStyle::Bubble => {
+                                if let Some(prepared) = &prepared_music {
+                                    draw_bubble_player(
+                                        gfx,
+                                        &content,
+                                        geometry,
+                                        geometry.width,
+                                        compact_height,
+                                        track,
+                                        prepared,
+                                    )?;
+                                }
+                            }
+                        }
                     }
                 }
                 Island::Usage => {
-                    let anchors =
-                        draw_compact_usage(gfx, &content, geometry, bar_height, &providers)?;
+                    let anchors = match style {
+                        IslandStyle::Notch => {
+                            draw_compact_usage(gfx, &content, geometry, compact_height, &providers)?
+                        }
+                        IslandStyle::Bubble => {
+                            draw_bubble_usage(gfx, &content, geometry, compact_height, &providers)?
+                        }
+                    };
                     self.usage_anchors = anchors
                         .into_iter()
                         .map(|(provider, x)| (provider, look.screen.left + (span.left + x) as i32))
@@ -1924,14 +1981,14 @@ impl MenuBar {
             if look.panel != Some(kind) {
                 continue;
             }
-            self.panel_span = panel_span(
-                span,
-                width,
-                px(match kind {
-                    Island::Music => 360.0,
-                    Island::Usage => ISLAND_EXPANDED_WIDTH,
-                }),
-            );
+            let desired = px(match kind {
+                Island::Music => 360.0,
+                Island::Usage => ISLAND_EXPANDED_WIDTH,
+            });
+            self.panel_span = match style {
+                IslandStyle::Notch => panel_span(span, width, desired),
+                IslandStyle::Bubble => bubble_panel_span(self.triggers_span, width, desired),
+            };
             let geometry = IslandGeometry::new(self.panel_span, bar_height + px(PANEL_GAP), look);
             let height = px(look.panel_height());
             let theme = Theme::for_popup(look.light, look.glass);
@@ -2323,9 +2380,68 @@ fn trigger_layout(
     result
 }
 
+fn bubble_trigger_layout(
+    bounds: Span,
+    scale: f32,
+    music_width: Option<f32>,
+    providers: usize,
+) -> [(Island, Option<Span>); 2] {
+    let px = |v: f32| (v * scale).round();
+    let mut result = [(Island::Music, None), (Island::Usage, None)];
+    let music = music_width.is_some();
+    let gap = if music && providers > 0 { px(8.0) } else { 0.0 };
+    let music_width = music_width
+        .map(|width| width.clamp(px(36.0), px(BUBBLE_MUSIC_WIDTH)))
+        .unwrap_or(0.0);
+    let usage_width = if providers > 0 {
+        px(BUBBLE_USAGE_PADDING + BUBBLE_PROVIDER_WIDTH * providers as f32)
+    } else {
+        0.0
+    };
+    let total = music_width + usage_width;
+    let available = (bounds.width() - gap).min(total);
+    if total == 0.0 || available < px(if gap > 0.0 { 72.0 } else { 36.0 }) {
+        return result;
+    }
+    let music_width = if gap > 0.0 {
+        (available * music_width / total)
+            .round()
+            .clamp(px(36.0), available - px(36.0))
+    } else if music {
+        available
+    } else {
+        0.0
+    };
+    let left = (bounds.right - available - gap).max(bounds.left).round();
+    if music {
+        result[0].1 = Some(Span {
+            left,
+            right: left + music_width,
+        });
+    }
+    if providers > 0 {
+        result[1].1 = Some(Span {
+            left: left + music_width + gap,
+            right: left + available + gap,
+        });
+    }
+    result
+}
+
 fn panel_span(trigger: Span, screen_width: f32, desired: f32) -> Span {
     let width = desired.max(trigger.width()).min(screen_width);
     let left = ((trigger.left + trigger.right - width) / 2.0)
+        .clamp(0.0, screen_width - width)
+        .round();
+    Span {
+        left,
+        right: left + width,
+    }
+}
+
+fn bubble_panel_span(anchor: Span, screen_width: f32, desired: f32) -> Span {
+    let width = desired.max(anchor.width()).min(screen_width);
+    let left = (anchor.right - width)
         .clamp(0.0, screen_width - width)
         .round();
     Span {
@@ -2471,6 +2587,66 @@ fn island_surface(
 
     layers.InsertAtTop(&island)?;
     Ok(content)
+}
+
+fn bubble_surface(
+    gfx: &Gfx,
+    look: &Look,
+    layers: &VisualCollection,
+    geometry: IslandGeometry,
+    bar_height: f32,
+) -> Result<(VisualCollection, f32)> {
+    let c = &gfx.compositor;
+    let inset_y = geometry.px(BUBBLE_VERTICAL_INSET);
+    let pill_height = (bar_height - 2.0 * inset_y).max(1.0);
+    let radius = pill_height / 2.0;
+    let size = Vector2::new(geometry.width, pill_height);
+    let bubble = c.CreateContainerVisual()?;
+    bubble.SetSize(size)?;
+    bubble.SetOffset(Vector3::new(geometry.left.round(), inset_y, 0.0))?;
+    let content = bubble.Children()?;
+
+    let tint = match (look.light, look.glass) {
+        (true, true) => rgba(247, 249, 252, 243),
+        (false, true) => rgba(7, 9, 13, 242),
+        (true, false) => rgba(247, 249, 252, 255),
+        (false, false) => rgba(10, 12, 17, 255),
+    };
+    if look.glass {
+        let glass = c.CreateContainerVisual()?;
+        glass.SetSize(size)?;
+        let outline = c.CreateRoundedRectangleGeometry()?;
+        outline.SetSize(size)?;
+        outline.SetCornerRadius(Vector2 {
+            X: radius,
+            Y: radius,
+        })?;
+        glass.SetClip(&c.CreateGeometricClipWithGeometry(&outline)?)?;
+        add_visual(
+            c,
+            &glass.Children()?,
+            &c.CreateHostBackdropBrush()?.cast()?,
+            0.0,
+            0.0,
+            geometry.width,
+            pill_height,
+        )?;
+        content.InsertAtTop(&glass)?;
+    }
+    add_rounded_box(
+        c,
+        &content,
+        0.0,
+        0.0,
+        geometry.width,
+        pill_height,
+        radius,
+        tint,
+        None,
+    )?;
+
+    layers.InsertAtTop(&bubble)?;
+    Ok((content, pill_height))
 }
 
 /// Draws the providers in the closed island and returns where each one's
@@ -2621,6 +2797,88 @@ fn draw_compact_usage(
     Ok(anchors)
 }
 
+fn draw_bubble_usage(
+    gfx: &Gfx,
+    content: &VisualCollection,
+    geometry: IslandGeometry,
+    pill_height: f32,
+    providers: &[IslandProvider<'_>],
+) -> Result<Vec<(Provider, f32)>> {
+    let c = &gfx.compositor;
+    let px = |v| geometry.px(v);
+    let ink = geometry.ink();
+    let scale = geometry.scale;
+    let inset = px(8.0);
+    let slot = (geometry.width - 2.0 * inset) / providers.len().max(1) as f32;
+    if slot < px(20.0) {
+        let icon = gfx.glyph_brush(&[('\u{E9D9}', 1.0)], scale, ink)?;
+        add_visual(
+            c,
+            content,
+            &icon.brush.cast()?,
+            (geometry.width - icon.width) / 2.0,
+            (pill_height - icon.height) / 2.0,
+            icon.width,
+            icon.height,
+        )?;
+        let centre = geometry.width / 2.0;
+        return Ok(providers
+            .iter()
+            .map(|(provider, ..)| (*provider, centre))
+            .collect());
+    }
+    let icon_size = px(15.0) as u32;
+    let gap = px(4.0);
+    let mut anchors = Vec::with_capacity(providers.len());
+    for (index, (provider, usage, _accent)) in providers.iter().enumerate() {
+        let slot_left = inset + index as f32 * slot;
+        anchors.push((*provider, slot_left + slot / 2.0));
+        let percent = usage.main_window().map_or("—".to_owned(), |window| {
+            format!("{}%", window.used_percent)
+        });
+        let label = if slot >= px(44.0) {
+            Some(gfx.text_brush_sized(&percent, scale, 11.5, true, ink)?)
+        } else {
+            None
+        };
+        let group_width = icon_size as f32 + label.as_ref().map_or(0.0, |text| gap + text.width);
+        let start = slot_left + ((slot - group_width) / 2.0).max(0.0);
+        if let Some(image) = usage::logo(*provider) {
+            let image_brush = gfx.icon_brush(image, icon_size)?;
+            let brush: CompositionBrush =
+                if !matches!(provider, Provider::Claude | Provider::Gemini) && geometry.light {
+                    let tinted = c.CreateMaskBrush()?;
+                    tinted.SetMask(&image_brush)?;
+                    tinted.SetSource(&c.CreateColorBrushWithColor(rgba(27, 34, 45, 255))?)?;
+                    tinted.cast()?
+                } else {
+                    image_brush.cast()?
+                };
+            add_visual(
+                c,
+                content,
+                &brush,
+                start,
+                (pill_height - icon_size as f32) / 2.0,
+                icon_size as f32,
+                icon_size as f32,
+            )?;
+        }
+        if let Some(label) = label {
+            add_visual(
+                c,
+                content,
+                &label.brush.cast()?,
+                start + icon_size as f32 + gap,
+                (pill_height - label.height) / 2.0,
+                label.width,
+                label.height,
+            )?;
+        }
+    }
+    Ok(anchors)
+}
+
 fn track_title(track: &Track) -> &str {
     if track.title.trim().is_empty() {
         strings::text().media_title
@@ -2675,6 +2933,92 @@ fn draw_compact_player(
             layers,
             &label.brush.cast()?,
             x,
+            (height - label.height) / 2.0,
+            label.width,
+            label.height,
+        )?;
+    }
+    Ok(())
+}
+
+struct BubbleMusic {
+    note: LabelBrush,
+    label: LabelBrush,
+    width: f32,
+}
+
+fn prepare_bubble_music(gfx: &Gfx, look: &Look, track: &Track) -> Result<BubbleMusic> {
+    let px = |v: f32| (v * look.scale).round();
+    let ink = if look.light { Ink::Dark } else { Ink::Light };
+    let note = gfx.glyph_brush(
+        &[('\u{E8D6}', if track.playing { 1.0 } else { 0.66 })],
+        look.scale,
+        ink,
+    )?;
+    let left_pad = px(10.0);
+    let gap = px(6.0);
+    let right_pad = px(8.0);
+    let max_text = (px(BUBBLE_MUSIC_WIDTH) - left_pad - note.width - gap - right_pad).max(px(18.0));
+    let label = gfx.text_brush_fitted(track_title(track), look.scale, 11.5, true, ink, max_text)?;
+    let width = (left_pad + note.width + gap + label.width + right_pad)
+        .min(px(BUBBLE_MUSIC_WIDTH))
+        .ceil();
+    Ok(BubbleMusic { note, label, width })
+}
+
+fn draw_bubble_player(
+    gfx: &Gfx,
+    layers: &VisualCollection,
+    geometry: IslandGeometry,
+    width: f32,
+    height: f32,
+    track: &Track,
+    prepared: &BubbleMusic,
+) -> Result<()> {
+    let c = &gfx.compositor;
+    let px = |v| geometry.px(v);
+    let ink = geometry.ink();
+    let note = &prepared.note;
+    let left_pad = px(10.0);
+    let gap = px(6.0);
+    let right_pad = px(8.0);
+    let text_x = left_pad + note.width + gap;
+    let max_label_width = width - text_x - right_pad;
+    let show_title = max_label_width >= px(18.0);
+    let note_x = if show_title {
+        left_pad
+    } else {
+        (width - note.width) / 2.0
+    };
+    add_visual(
+        c,
+        layers,
+        &note.brush.cast()?,
+        note_x,
+        (height - note.height) / 2.0,
+        note.width,
+        note.height,
+    )?;
+    if show_title {
+        let fitted;
+        let label = if prepared.label.width <= max_label_width {
+            &prepared.label
+        } else {
+            fitted = gfx.text_brush_fitted(
+                track_title(track),
+                geometry.scale,
+                11.5,
+                true,
+                ink,
+                max_label_width,
+            )?;
+            &fitted
+        };
+        add_visual(
+            c,
+            layers,
+            &label.brush.cast()?,
+            text_x,
             (height - label.height) / 2.0,
             label.width,
             label.height,
@@ -3099,6 +3443,42 @@ mod island_tests {
         assert!(
             music.left >= bounds.left && music.right < usage.left && usage.right <= bounds.right
         );
+    }
+
+    #[test]
+    fn bubble_layout_aligns_to_right_status_edge_and_stays_compact() {
+        let bounds = Span {
+            left: 210.0,
+            right: 1420.0,
+        };
+        let [(_, Some(short_music)), (_, Some(short_usage))] =
+            bubble_trigger_layout(bounds, 1.0, Some(92.0), 2)
+        else {
+            panic!("Both bubble segments should fit");
+        };
+        let [(_, Some(long_music)), (_, Some(long_usage))] =
+            bubble_trigger_layout(bounds, 1.0, Some(240.0), 2)
+        else {
+            panic!("Both bubble segments should fit");
+        };
+        assert_eq!(short_usage.right, bounds.right);
+        assert_eq!(long_usage.right, bounds.right);
+        assert!(short_music.width() < long_music.width());
+        assert_eq!(long_music.width(), BUBBLE_MUSIC_WIDTH);
+        assert!(short_music.left >= bounds.left && short_music.right < short_usage.left);
+
+        let short_bubble = Span {
+            left: short_music.left,
+            right: short_usage.right,
+        };
+        let long_bubble = Span {
+            left: long_music.left,
+            right: long_usage.right,
+        };
+        let short_panel = bubble_panel_span(short_bubble, 1920.0, 360.0);
+        let long_panel = bubble_panel_span(long_bubble, 1920.0, 360.0);
+        assert_eq!(short_panel.left, long_panel.left);
+        assert_eq!(short_panel.right, long_panel.right);
     }
 
     #[test]

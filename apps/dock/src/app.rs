@@ -3779,6 +3779,7 @@ impl App {
             widgets: self.config.menu_bar_widgets,
             bluetooth: self.config.menu_bar_bluetooth,
             battery_percent: self.config.menu_bar_battery_percent,
+            island_style: self.config.menu_bar_island_style,
         };
         if !self.config.menu_bar {
             self.menubar = None;

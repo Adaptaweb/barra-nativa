@@ -68,6 +68,8 @@ pub struct Config {
     pub menu_bar_auto_hide: bool,
     /// Show supported AI providers' plan usage in the menu bar.
     pub ai_usage: bool,
+    /// Visual style and placement of the music and AI usage island in the menu bar.
+    pub menu_bar_island_style: IslandStyle,
     /// Opt-in peripheral monitoring. Off means no accessory reader or queries.
     pub accessory_battery: bool,
     /// Show search button in the menu bar (`None` follows Windows taskbar setting).
@@ -110,6 +112,17 @@ pub struct Config {
 pub struct DockGroup {
     pub id: String,
     pub apps: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IslandStyle {
+    /// Compact rounded bubble placed next to the right-side status indicators.
+    Bubble,
+    /// Centered curved notch hanging from the top of the menu bar.
+    #[default]
+    #[serde(other)]
+    Notch,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +185,7 @@ impl Default for Config {
             menu_bar: true,
             menu_bar_auto_hide: false,
             ai_usage: true,
+            menu_bar_island_style: IslandStyle::Notch,
             accessory_battery: false,
             menu_bar_search: None,
             menu_bar_task_view: None,

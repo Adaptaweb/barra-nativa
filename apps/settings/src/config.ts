@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type Language = "auto" | "es" | "en" | "fr";
+export type IslandStyle = "notch" | "bubble";
 
 /** Mirrors `muelle_config::Config`. */
 export interface Config {
@@ -16,6 +17,7 @@ export interface Config {
   menuBar: boolean;
   menuBarAutoHide: boolean;
   aiUsage: boolean;
+  menuBarIslandStyle: IslandStyle;
   accessoryBattery: boolean;
   menuBarSearch: boolean | null;
   menuBarTaskView: boolean | null;

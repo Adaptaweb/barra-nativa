@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Config,
+  type IslandStyle,
   type Language,
   type UpdateInfo,
   ICON_SIZE,
@@ -409,6 +410,17 @@ export function App() {
                     label={t.aiUsage}
                     checked={config.aiUsage}
                     onChange={(aiUsage) => update({ aiUsage })}
+                  />
+                </SubRow>
+                <SubRow label={t.islandStyle} hint={t.islandStyleHint} open={config.menuBar}>
+                  <Segmented<IslandStyle>
+                    label={t.islandStyle}
+                    value={config.menuBarIslandStyle}
+                    options={[
+                      { value: "notch", label: t.islandStyleNotch },
+                      { value: "bubble", label: t.islandStyleBubble },
+                    ]}
+                    onChange={(menuBarIslandStyle) => update({ menuBarIslandStyle })}
                   />
                 </SubRow>
                 <SubRow label={t.accessoryBattery} hint={t.accessoryBatteryHint} open={config.menuBar}>
