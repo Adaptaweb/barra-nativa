@@ -8,6 +8,34 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+### English
+
+- Fixed a blocking "Ordinal 381 Not Found" system dialog when launching applications
+  with Uninstall Tool (`utshellext.dll`) or other third-party shell extensions installed
+  (issue #23). `muelle.exe` now embeds an application manifest declaring a dependency on
+  `Microsoft.Windows.Common-Controls` 6.0.0.0 (along with PerMonitorV2 DPI awareness and
+  Windows 10/11 compatibility), enabling shell extensions to resolve modern ComCtl32 exports
+  such as `LoadIconWithScaleDown`.
+- Process-level error mode now suppresses critical-error and file-not-found system message
+  boxes (`SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX`) across the dock, the one-shot
+  shell worker, and application launch, and `ShellExecuteExW` requests `SEE_MASK_FLAG_NO_UI`.
+  Faulty or incompatible shell extensions no longer block or delay application opening;
+  mandatory UAC elevation prompts remain visible.
+
+### Español
+
+- Corregido un diálogo de error bloqueante ("No se encuentra el ordinal 381") al abrir
+  aplicaciones con Uninstall Tool (`utshellext.dll`) u otras extensiones del shell de
+  terceros instaladas (issue #23). `muelle.exe` ahora incrusta un manifiesto de aplicación
+  que declara la dependencia de `Microsoft.Windows.Common-Controls` 6.0.0.0 (junto con
+  reconocimiento DPI PerMonitorV2 y compatibilidad con Windows 10/11), permitiendo a las
+  extensiones resolver funciones modernas de ComCtl32 como `LoadIconWithScaleDown`.
+- El modo de error del proceso ahora suprime los cuadros de diálogo de errores críticos
+  del sistema (`SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX`) en el dock, el proceso
+  auxiliar del shell y el lanzador, y `ShellExecuteExW` usa `SEE_MASK_FLAG_NO_UI`. Las
+  extensiones del shell defectuosas o incompatibles ya no bloquean ni retrasan la apertura
+  de aplicaciones; las solicitudes de elevación UAC se mantienen visibles.
+
 ## [0.1.17]
 
 ### English
