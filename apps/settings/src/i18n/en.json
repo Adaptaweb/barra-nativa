@@ -86,6 +86,8 @@
   "showIndicators": "Show indicators for open apps",
   "showRecents": "Show recent apps",
   "showRecentsHint": "The last three you opened that are not pinned.",
+  "jumpLists": "Show jump lists",
+  "jumpListsHint": "Right-clicking an app lists its recent files, pinned items and tasks, as on the Windows taskbar.",
   "bounceOnOpen": "Animate opening apps",
   "mascot": "Crab on special moments",
   "mascotHint": "A crab marks AI plan changes, charging and energy saver. Hover over it.",

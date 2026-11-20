@@ -3697,7 +3697,12 @@ impl App {
         match role {
             Role::App => {
                 // The app's jump list first, as on the taskbar.
-                for group in jumplist::for_dock_item(id, windows) {
+                let groups = if self.config.jump_lists {
+                    jumplist::for_dock_item(id, windows)
+                } else {
+                    Vec::new()
+                };
+                for group in groups {
                     items.push(MenuItem::Header(match group.section {
                         jumplist::Section::Pinned => t.jump_pinned.to_owned(),
                         jumplist::Section::Frequent => t.jump_frequent.to_owned(),
