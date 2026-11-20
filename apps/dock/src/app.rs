@@ -24,6 +24,7 @@ use std::{
 use anyhow::{Context, Result};
 use muelle_config::{Config, DockGroup};
 use muelle_core::{
+    attention::Attention,
     bounce,
     layout::{ItemKind, Layout, Metrics, Rect, layout},
     magnify::{Magnifier, magnify},
@@ -113,6 +114,7 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 const HSHELL_WINDOWACTIVATED: usize = 4;
 const HSHELL_RUDEAPPACTIVATED: usize = 0x8004;
 const HSHELL_FLASH: usize = 0x8006;
+const HSHELL_WINDOWDESTROYED: usize = 2;
 /// A window's title or icon changed.
 const HSHELL_REDRAW: usize = 6;
 /// The keyboard language changed.
@@ -144,6 +146,7 @@ const PINS_CHANGED: u32 = WM_APP + 7;
 const ASSETS_READY: u32 = WM_APP + 8;
 /// The guard also checks graphics health while the scene is otherwise idle.
 pub(crate) const HEALTH_CHECK: u32 = WM_APP + 9;
+const TASKBAR_PREFS_CHANGED: u32 = WM_APP + 10;
 
 /// Magnification range, in icons on either side of the cursor.
 const RANGE_IN_ICONS: f32 = 3.0;
@@ -271,6 +274,7 @@ const CMD_TASK_MANAGER: u32 = 13;
 const CMD_TASKBAR_SETTINGS: u32 = 14;
 const CMD_UNGROUP: u32 = 15;
 const CMD_REMOVE_FOLDER: u32 = 16;
+const CMD_FORGET_RECENT: u32 = 17;
 const CMD_WINDOW: u32 = 100;
 const MENU_WINDOWS: usize = 12;
 const MENU_TITLE_CHARS: usize = 60;
@@ -336,6 +340,43 @@ struct Entry {
     /// A group's apps, in order; empty for anything else. Part of the
     /// scene's key: the group's tile shows them.
     members: Vec<String>,
+}
+
+fn app_has_attention(attention: &Attention, windows: &[TrackedWindow], id: &str) -> bool {
+    windows
+        .iter()
+        .any(|window| window.app_id == id && attention.contains(window.hwnd))
+}
+
+fn entry_has_attention(attention: &Attention, windows: &[TrackedWindow], entry: &Entry) -> bool {
+    match entry.role {
+        Role::App => entry
+            .id
+            .as_deref()
+            .is_some_and(|id| app_has_attention(attention, windows, id)),
+        Role::Group => entry
+            .members
+            .iter()
+            .any(|id| app_has_attention(attention, windows, id)),
+        Role::Window => entry
+            .id
+            .as_deref()
+            .and_then(window_of)
+            .is_some_and(|hwnd| attention.contains(hwnd)),
+        _ => false,
+    }
+}
+
+fn active_attention_window(windows: &[TrackedWindow], foreground: isize) -> isize {
+    // Windows may briefly report its last minimized window as foreground.
+    if windows
+        .iter()
+        .any(|window| window.hwnd == foreground && !window.minimized)
+    {
+        foreground
+    } else {
+        0
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -644,6 +685,9 @@ struct App {
     _saver_watch: power::SaverWatch,
     /// Hears pins and unpins on the Windows taskbar.
     pin_watch: Option<muelle_shell::watch::RegistryWatch>,
+    badge_watch: Option<muelle_shell::watch::RegistryWatch>,
+    attention: Attention,
+    attention_enabled: bool,
     assets: HashMap<String, Asset>,
     /// Scale, theme and icon pixel size the cached assets were drawn for.
     assets_for: (f32, bool, u32),
@@ -1329,6 +1373,7 @@ impl App {
             layout: dock,
         };
         self.stage = Some(stage);
+        self.sync_attention_visuals()?;
         self.place_windows()?;
         self.schedule_trim();
         self.render()?;
@@ -2981,7 +3026,17 @@ impl App {
                 Outside::Open(id)
             });
         }
-        if windows.is_empty() {
+        if windows.is_empty() && !app_exists(&id) {
+            // Uninstalled while the dock was running: it leaves the dock
+            // instead of failing to open.
+            if self.prune_missing_apps() {
+                save_settings(&self.roster, &self.config);
+                if let Err(error) = self.refresh() {
+                    muelle_shell::log::line(&format!("app desinstalada: {error:#}"));
+                }
+            }
+            None
+        } else if windows.is_empty() {
             self.start_bounce(id.clone(), None);
             Some(Outside::Open(id))
         } else if group_is_foreground(&windows, tracker::foreground_window()) {
@@ -3039,6 +3094,7 @@ impl App {
                 dock: self.input,
             },
         )?);
+        self.sync_attention_visuals()?;
         self.render()
     }
 
@@ -3312,6 +3368,10 @@ impl App {
                         enabled: true,
                     });
                 }
+                // A recent app can be dismissed while recent apps stay on.
+                if windows.is_empty() && self.roster.recent().iter().any(|recent| recent == id) {
+                    items.push(MenuItem::action(CMD_FORGET_RECENT, t.remove_from_dock));
+                }
                 if is_file {
                     items.push(MenuItem::action(CMD_RUN_AS_ADMIN, t.run_as_admin));
                     items.push(MenuItem::action(CMD_REVEAL, t.show_in_explorer));
@@ -3391,6 +3451,13 @@ impl App {
                 None
             }
             CMD_SETTINGS => Some(Outside::OpenSettings),
+            CMD_FORGET_RECENT => {
+                if self.roster.forget_recent(&id) {
+                    save_settings(&self.roster, &self.config);
+                    self.refresh()?;
+                }
+                None
+            }
             CMD_REMOVE_FOLDER => {
                 if let Err(error) = forget_shortcuts_folder(&self.config) {
                     eprintln!("muelle: {error}");
@@ -3493,7 +3560,7 @@ impl App {
     /// unpinned there is unpinned here. Apps pinned only in the dock stay.
     /// Windows offers no way to do the reverse (pin to the taskbar).
     fn sync_taskbar_pins(&mut self) -> Result<()> {
-        let pruned = self.prune_missing_pins();
+        let pruned = self.prune_missing_apps();
         let Some(current) = taskbar_pins_if_readable() else {
             if pruned {
                 save_settings(&self.roster, &self.config);
@@ -3532,10 +3599,10 @@ impl App {
         self.refresh()
     }
 
-    /// Unpins apps that were uninstalled, so no broken icon stays behind, as
-    /// the Windows taskbar drops them; apps in groups too. Returns whether
-    /// anything changed.
-    fn prune_missing_pins(&mut self) -> bool {
+    /// Removes apps that were uninstalled, so no broken icon stays behind, as
+    /// the Windows taskbar drops them: pinned apps (in groups too) and recent
+    /// apps (issue #25). Returns whether anything changed.
+    fn prune_missing_apps(&mut self) -> bool {
         let missing: Vec<String> = self
             .roster
             .pinned_apps()
@@ -3545,7 +3612,17 @@ impl App {
         for id in &missing {
             self.roster.unpin(id);
         }
-        !missing.is_empty()
+        let gone: Vec<String> = self
+            .roster
+            .recent()
+            .iter()
+            .filter(|id| !app_exists(id))
+            .cloned()
+            .collect();
+        for id in &gone {
+            self.roster.forget_recent(id);
+        }
+        !missing.is_empty() || !gone.is_empty()
     }
 
     fn toggle_hiding(&mut self) -> Result<()> {
@@ -3579,21 +3656,83 @@ impl App {
         self.last_frame = Instant::now();
     }
 
-    fn on_attention(&mut self, hwnd: isize) {
-        if hwnd == tracker::foreground_window() {
-            return;
+    fn on_attention(&mut self, hwnd: isize) -> Result<()> {
+        if !self.windows.iter().any(|window| window.hwnd == hwnd) && self.read_windows() {
+            self.sync_attention_visuals()?;
+            self.render()?;
+        }
+        // A minimize/flash can arrive before the debounced tracker refresh.
+        // SAFETY: Read-only query; a stale or destroyed HWND returns false.
+        let minimized =
+            unsafe { windows::Win32::UI::WindowsAndMessaging::IsIconic(HWND(hwnd as *mut _)) }
+                .as_bool();
+        let foreground = if minimized {
+            0
+        } else {
+            active_attention_window(&self.windows, tracker::foreground_window())
+        };
+        if hwnd == foreground {
+            return Ok(());
         }
         if let Some(window) = self.windows.iter().find(|window| window.hwnd == hwnd) {
-            self.start_bounce(
-                window.app_id.clone(),
-                Some(ATTENTION_HOPS * bounce::HOP_SECONDS),
-            );
+            let changed = self.attention_enabled && self.attention.request(hwnd, foreground);
+            if changed || !self.attention_enabled {
+                self.start_bounce(
+                    window.app_id.clone(),
+                    Some(ATTENTION_HOPS * bounce::HOP_SECONDS),
+                );
+            }
+            if changed {
+                self.sync_attention_visuals()?;
+                self.render()?;
+            }
         }
+        Ok(())
+    }
+
+    fn sync_attention_visuals(&mut self) -> Result<()> {
+        if let Some(stage) = &mut self.stage {
+            stage.scene.set_attention(
+                &self.gfx,
+                self.entries.iter().map(|entry| {
+                    self.attention_enabled
+                        && entry_has_attention(&self.attention, &self.windows, entry)
+                }),
+            )?;
+        }
+        if let Some(view) = &mut self.group_view {
+            view.set_attention(&self.gfx, |id| {
+                self.attention_enabled && app_has_attention(&self.attention, &self.windows, id)
+            })?;
+        }
+        Ok(())
+    }
+
+    fn taskbar_preferences_changed(&mut self) -> Result<()> {
+        if let Some(watch) = &mut self.badge_watch {
+            watch.arm();
+        }
+        let enabled = status::taskbar_badges_enabled();
+        if self.attention_enabled != enabled {
+            self.attention_enabled = enabled;
+            self.attention.clear();
+            self.sync_attention_visuals()?;
+            self.render()?;
+        }
+        Ok(())
+    }
+
+    fn forget_attention(&mut self, hwnd: isize) -> Result<()> {
+        if self.attention.acknowledge(hwnd) {
+            self.sync_attention_visuals()?;
+            self.render()?;
+        }
+        Ok(())
     }
 
     /// Refreshes open windows and recomposes the dock if anything changed.
     fn sync(&mut self) -> Result<()> {
-        self.read_windows();
+        let attention_changed = self.read_windows();
         if self
             .preview
             .as_ref()
@@ -3661,6 +3800,10 @@ impl App {
             self.start_flights(&newly_minimized);
         }
         self.started = true;
+        if attention_changed {
+            self.sync_attention_visuals()?;
+            self.render()?;
+        }
         // A foreground-window change may mean an app entered or exited full-screen mode.
         self.update_fullscreen()
     }
@@ -4078,15 +4221,27 @@ impl App {
         // The app roster can stay identical while its windows change z-order.
         // Refresh their order so the next dock activation selects the actual
         // most recently used window rather than a stale group leader.
-        self.read_windows();
+        let attention_changed = self.read_windows();
         #[cfg(feature = "recover-browser-z-order")]
         tracker::recover_browser_z_order(&self.windows, foreground);
-        self.update_fullscreen()
+        self.update_fullscreen()?;
+        if attention_changed {
+            self.sync_attention_visuals()?;
+            self.render()?;
+        }
+        Ok(())
     }
 
-    fn read_windows(&mut self) {
+    fn read_windows(&mut self) -> bool {
         self.windows = self.tracker.list();
         self.preview_order.update(&self.windows);
+        let pruned = self
+            .attention
+            .retain(|hwnd| self.windows.iter().any(|window| window.hwnd == hwnd));
+        self.attention.acknowledge(active_attention_window(
+            &self.windows,
+            tracker::foreground_window(),
+        )) || pruned
     }
 
     fn on_appbar_notice(&mut self, notice: usize) -> Result<()> {
@@ -4624,6 +4779,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         DROP_RUN => with_app_then("soltar archivos", |app| Ok(app.pending_drop.take())),
         WM_RBUTTONUP => with_app_then("menú", App::on_right_click),
         BIN_STATE => with_app("papelera", |app| app.set_bin_full(w.0 != 0)),
+        TASKBAR_PREFS_CHANGED => {
+            with_app("preferencias de badges", App::taskbar_preferences_changed)
+        }
         BIN_CHANGED => {
             // SAFETY: `hwnd` is this live window on its owning UI thread.
             unsafe { SetTimer(Some(hwnd), BIN_TIMER, BIN_DELAY_MS, None) };
@@ -4781,10 +4939,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             HSHELL_LANGUAGE => menu_bar_refresh(),
             code => {
                 if code == HSHELL_FLASH {
-                    with_app("aviso de atención", |app| {
-                        app.on_attention(l.0);
-                        Ok(())
-                    });
+                    with_app("aviso de atención", |app| app.on_attention(l.0));
+                } else if code == HSHELL_WINDOWDESTROYED {
+                    with_app("ventana cerrada", |app| app.forget_attention(l.0));
                 }
                 // SAFETY: `hwnd` is this live window on its owning UI thread.
                 unsafe { SetTimer(Some(hwnd), SYNC_TIMER, SYNC_DELAY_MS, None) };
@@ -4936,6 +5093,9 @@ pub fn run() -> Result<()> {
             _bin_watch: BinWatch::register(input, BIN_CHANGED),
             _saver_watch: power::SaverWatch::new(input.0 as isize),
             pin_watch: muelle_shell::pins::watch(visual.0 as isize, PINS_CHANGED),
+            badge_watch: status::watch_taskbar_settings(visual.0 as isize, TASKBAR_PREFS_CHANGED),
+            attention: Attention::default(),
+            attention_enabled: status::taskbar_badges_enabled(),
             assets: HashMap::new(),
             assets_for: (0.0, false, 0),
             placeholder: None,
@@ -4996,7 +5156,7 @@ pub fn run() -> Result<()> {
         let _ = SetConsoleCtrlHandler(Some(on_console_ctrl), true);
 
         // Apps uninstalled while Muelle was closed leave the dock.
-        if app.prune_missing_pins() {
+        if app.prune_missing_apps() {
             save_settings(&app.roster, &app.config);
         }
         // Pins and unpins made on the Windows taskbar while Muelle was closed.
@@ -5097,6 +5257,150 @@ pub fn run() -> Result<()> {
         let _ = worker.join();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod attention_tests {
+    use super::*;
+
+    #[test]
+    fn attention_reaches_apps_groups_and_minimized_thumbnails_without_clearing_other_windows() {
+        let windows = [
+            TrackedWindow {
+                hwnd: 7,
+                app_id: "chat".into(),
+                minimized: true,
+            },
+            TrackedWindow {
+                hwnd: 8,
+                app_id: "chat".into(),
+                minimized: false,
+            },
+        ];
+        let mut attention = Attention::default();
+        attention.request(7, 2);
+        let app = Entry {
+            kind: ItemKind::Icon,
+            id: Some("chat".into()),
+            role: Role::App,
+            running: true,
+            members: Vec::new(),
+        };
+        let group = Entry {
+            id: Some("group:chat".into()),
+            role: Role::Group,
+            members: vec!["chat".into()],
+            ..app.clone()
+        };
+        let thumbnail = Entry {
+            id: Some(window_id(7)),
+            role: Role::Window,
+            ..app.clone()
+        };
+        assert!(entry_has_attention(&attention, &windows, &app));
+        assert!(entry_has_attention(&attention, &windows, &group));
+        assert!(entry_has_attention(&attention, &windows, &thumbnail));
+        assert_eq!(active_attention_window(&windows, 7), 0);
+        attention.acknowledge(active_attention_window(&windows, 8));
+        assert!(entry_has_attention(&attention, &windows, &app));
+        attention.acknowledge(7);
+        assert!(!entry_has_attention(&attention, &windows, &group));
+    }
+
+    #[test]
+    #[ignore = "Requires Explorer's shell hooks; uses only off-screen test-owned windows"]
+    fn native_flash_request_produces_the_shell_event_used_by_dock_badges() -> Result<()> {
+        use std::time::Duration;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            DeregisterShellHookWindow, DestroyWindow, FLASHW_STOP, FLASHW_TRAY, FLASHWINFO,
+            FlashWindowEx, SW_SHOWNOACTIVATE, ShowWindow, WS_EX_APPWINDOW, WS_OVERLAPPEDWINDOW,
+        };
+        struct Window(HWND);
+        impl Drop for Window {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = DeregisterShellHookWindow(self.0);
+                    let _ = DestroyWindow(self.0);
+                }
+            }
+        }
+        let receiver = Window(unsafe {
+            CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                w!("STATIC"),
+                w!("Muelle badge receiver test"),
+                WS_POPUP,
+                -32000,
+                -32000,
+                80,
+                40,
+                None,
+                None,
+                None,
+                None,
+            )?
+        });
+        let source = Window(unsafe {
+            CreateWindowExW(
+                WS_EX_APPWINDOW | WS_EX_NOACTIVATE,
+                w!("STATIC"),
+                w!("Muelle native attention test"),
+                WS_OVERLAPPEDWINDOW,
+                -32000,
+                -32000,
+                160,
+                120,
+                None,
+                None,
+                None,
+                None,
+            )?
+        });
+        let message = unsafe {
+            RegisterShellHookWindow(receiver.0).ok()?;
+            let _ = ShowWindow(source.0, SW_SHOWNOACTIVATE);
+            RegisterWindowMessageW(w!("SHELLHOOK"))
+        };
+        let pump = |duration: Duration| {
+            let until = Instant::now() + duration;
+            let mut found = false;
+            while Instant::now() < until {
+                let mut event = MSG::default();
+                while unsafe { PeekMessageW(&mut event, None, 0, 0, PM_REMOVE) }.as_bool() {
+                    found |= event.hwnd == receiver.0
+                        && event.message == message
+                        && event.wParam.0 == HSHELL_FLASH
+                        && event.lParam.0 == source.0.0 as isize;
+                    unsafe {
+                        DispatchMessageW(&event);
+                    }
+                }
+                if found {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            found
+        };
+        pump(Duration::from_millis(350));
+        let mut info = FLASHWINFO {
+            cbSize: size_of::<FLASHWINFO>() as u32,
+            hwnd: source.0,
+            dwFlags: FLASHW_TRAY,
+            uCount: 2,
+            dwTimeout: 100,
+        };
+        unsafe {
+            let _ = FlashWindowEx(&info);
+        }
+        let found = pump(Duration::from_secs(2));
+        info.dwFlags = FLASHW_STOP;
+        unsafe {
+            let _ = FlashWindowEx(&info);
+        }
+        assert!(found, "Explorer did not publish the native attention event");
+        Ok(())
+    }
 }
 
 #[cfg(test)]

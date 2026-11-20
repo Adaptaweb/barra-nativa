@@ -241,7 +241,12 @@ impl Look {
     fn panel_height(&self) -> f32 {
         match self.panel {
             Some(Island::Music) => 136.0,
-            Some(Island::Usage) => 74.0 + self.active_providers.count() as f32 * ISLAND_ROW_HEIGHT,
+            Some(Island::Usage) => {
+                74.0 + island_providers(self)
+                    .iter()
+                    .map(|(_, usage, _)| usage_row_height(usage))
+                    .sum::<f32>()
+            }
             None => 0.0,
         }
     }
@@ -271,6 +276,7 @@ enum IslandAction {
     Media(MediaControl),
     Refresh,
     OpenCodeConnectionHelp,
+    OpenCodeConsole,
 }
 
 struct IslandHit {
@@ -655,7 +661,7 @@ fn draw_usage_row(
     add_panel_text(
         gfx,
         layers,
-        provider.name(),
+        usage.name(provider),
         left + px(53.0),
         y + px(10.0),
         scale,
@@ -668,7 +674,11 @@ fn draw_usage_row(
         add_panel_text(
             gfx,
             layers,
-            &main.title(),
+            &if provider == Provider::OpenCode {
+                format!("Go · {}", main.title())
+            } else {
+                main.title()
+            },
             left + px(53.0),
             y + px(30.0),
             scale,
@@ -763,7 +773,7 @@ fn draw_usage_row(
                 0.7,
             )?;
         }
-        if let Some(secondary) = usage.windows.get(1) {
+        for (index, secondary) in usage.windows.iter().skip(1).enumerate() {
             add_visual(
                 c,
                 layers,
@@ -774,7 +784,7 @@ fn draw_usage_row(
                 })?
                 .cast()?,
                 left + px(14.0),
-                y + px(83.0),
+                y + px(83.0 + index as f32 * 26.0),
                 width - px(28.0),
                 px(1.0),
             )?;
@@ -783,7 +793,7 @@ fn draw_usage_row(
                 layers,
                 &format!("{} · {}%", secondary.title(), secondary.used_percent),
                 left + px(14.0),
-                y + px(87.0),
+                y + px(87.0 + index as f32 * 26.0),
                 scale,
                 11.5,
                 true,
@@ -796,7 +806,7 @@ fn draw_usage_row(
                     layers,
                     &format!("{} {reset}", text.usage_resets),
                     right - px(14.0),
-                    y + px(87.0),
+                    y + px(87.0 + index as f32 * 26.0),
                     scale,
                     11.5,
                     false,
@@ -805,7 +815,10 @@ fn draw_usage_row(
                 )?;
             }
         }
-    } else {
+    } else if !usage
+        .opencode
+        .is_some_and(|details| !details.go && details.zen)
+    {
         let message = match usage.state {
             State::Loading => text.usage_loading,
             State::SignIn if provider == Provider::OpenCode => text.usage_opencode_connect,
@@ -825,34 +838,81 @@ fn draw_usage_row(
             0.72,
         )?;
     }
+    if let Some(details) = usage.opencode.filter(|details| details.zen) {
+        let offset = zen_row_offset(usage);
+        add_panel_text(
+            gfx,
+            layers,
+            text.usage_zen_local,
+            left + px(14.0),
+            y + px(offset),
+            scale,
+            11.0,
+            false,
+            ink,
+            0.78,
+        )?;
+        if let Some(spend) = details.spend {
+            add_panel_text_right(
+                gfx,
+                layers,
+                &spend.amount(),
+                right - px(14.0),
+                y + px(offset + 19.0),
+                scale,
+                16.0,
+                true,
+                ink,
+                1.0,
+            )?;
+        } else {
+            add_panel_text_right(
+                gfx,
+                layers,
+                text.usage_no_local,
+                right - px(14.0),
+                y + px(offset + 21.0),
+                scale,
+                11.0,
+                false,
+                ink,
+                0.7,
+            )?;
+        }
+        add_panel_text(
+            gfx,
+            layers,
+            text.usage_device_scope,
+            left + px(14.0),
+            y + px(offset + 43.0),
+            scale,
+            10.5,
+            false,
+            ink,
+            0.65,
+        )?;
+    }
     Ok(())
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Text placement needs its coordinates and typography at the call site"
-)]
-fn add_text(
-    gfx: &Gfx,
-    layers: &VisualCollection,
-    value: &str,
-    x: f32,
-    y: f32,
-    scale: f32,
-    bold: bool,
-    ink: Ink,
-) -> Result<LabelBrush> {
-    let label = gfx.text_brush(value, scale, bold, ink)?;
-    add_visual(
-        &gfx.compositor,
-        layers,
-        &label.brush.cast()?,
-        x,
-        y,
-        label.width,
-        label.height,
-    )?;
-    Ok(label)
+fn quota_row_height(usage: &ProviderUsage) -> f32 {
+    ISLAND_ROW_HEIGHT + usage.windows.len().saturating_sub(2) as f32 * 26.0
+}
+
+fn zen_row_offset(usage: &ProviderUsage) -> f32 {
+    if usage.opencode.is_some_and(|details| details.go) {
+        quota_row_height(usage) - 5.0
+    } else {
+        50.0
+    }
+}
+
+fn usage_row_height(usage: &ProviderUsage) -> f32 {
+    if usage.opencode.is_some_and(|details| details.zen) {
+        zen_row_offset(usage) + 102.0
+    } else {
+        quota_row_height(usage)
+    }
 }
 
 impl MenuBar {
@@ -1441,7 +1501,13 @@ impl MenuBar {
                     // Shell extensions and browser activation run in the
                     // existing disposable worker, never on the bar's UI thread.
                     crate::shell_work::dispatch(crate::shell_work::Action::Open {
-                        id: "https://opencode.ai/docs/console/go/".to_owned(),
+                        id: "https://opencode.ai/docs/providers/".to_owned(),
+                    })
+                    .inspect_err(|_| crate::shell_work::notify_not_started())?;
+                }
+                IslandAction::OpenCodeConsole => {
+                    crate::shell_work::dispatch(crate::shell_work::Action::Open {
+                        id: "https://opencode.ai/console".to_owned(),
                     })
                     .inspect_err(|_| crate::shell_work::notify_not_started())?;
                 }
@@ -2081,8 +2147,10 @@ impl MenuBar {
             button_height,
             IslandAction::Refresh,
         ));
-        for (index, (provider, usage, accent)) in providers.iter().enumerate() {
-            let y = px(48.0 + index as f32 * ISLAND_ROW_HEIGHT);
+        let mut row_top = 48.0;
+        for (provider, usage, accent) in providers {
+            let y = px(row_top);
+            row_top += usage_row_height(usage);
             let inset = px(23.0);
             add_visual(
                 c,
@@ -2104,10 +2172,22 @@ impl MenuBar {
                 island_width,
                 y,
             )?;
-            if *provider == Provider::OpenCode && usage.state == State::SignIn {
-                let label =
-                    gfx.text_brush_sized(title.usage_connection_help, scale, 11.0, true, ink)?;
-                let (left, top) = (px(76.0), y + px(65.0));
+            let connection = (*provider == Provider::OpenCode && usage.state == State::SignIn)
+                .then_some((
+                    title.usage_connection_help,
+                    65.0,
+                    IslandAction::OpenCodeConnectionHelp,
+                ));
+            let console = usage.opencode.filter(|details| details.zen).map(|_| {
+                (
+                    title.usage_open_console,
+                    zen_row_offset(usage) + 67.0,
+                    IslandAction::OpenCodeConsole,
+                )
+            });
+            for (text, offset, action) in connection.into_iter().chain(console) {
+                let label = gfx.text_brush_sized(text, scale, 11.0, true, ink)?;
+                let (left, top) = (px(37.0), y + px(offset));
                 let (width, height) = (label.width + px(20.0), px(25.0));
                 add_rounded_box(
                     c,
@@ -2129,13 +2209,8 @@ impl MenuBar {
                     label.width,
                     label.height,
                 )?;
-                self.island_hits.push(geometry.hit(
-                    left,
-                    top,
-                    width,
-                    height,
-                    IslandAction::OpenCodeConnectionHelp,
-                ));
+                self.island_hits
+                    .push(geometry.hit(left, top, width, height, action));
             }
         }
         let newest_age = providers
@@ -2805,22 +2880,34 @@ fn draw_compact_usage(
                 icon_size as f32,
             )?;
         }
-        let percent = usage.main_window().map_or("—".to_owned(), |window| {
-            format!("{}%", window.used_percent)
-        });
+        let percent = usage.compact_text();
         if half > px(106.0) {
-            add_text(
-                gfx,
-                content,
-                &percent,
-                start + px(25.0),
-                px(6.0),
-                scale,
-                true,
-                ink,
-            )?;
+            let font = if usage.main_window().is_some() {
+                14.0
+            } else {
+                12.0
+            };
+            let label = gfx.text_brush_sized(&percent, scale, font, true, ink)?;
+            let reserve = if usage.main_window().is_some() {
+                74.0
+            } else {
+                50.0
+            };
+            if label.width <= half - px(reserve) {
+                add_visual(
+                    c,
+                    content,
+                    &label.brush.cast()?,
+                    start + px(25.0),
+                    (bar_height - label.height) / 2.0,
+                    label.width,
+                    label.height,
+                )?;
+            }
         }
-        if half >= px(84.0) {
+        if half >= px(84.0)
+            && (usage.main_window().is_some() || usage.opencode.is_none_or(|details| !details.zen))
+        {
             let ring = gfx.usage_ring(
                 usage.main_window().map(|window| window.used_percent),
                 scale,
@@ -2876,11 +2963,10 @@ fn draw_bubble_usage(
     for (index, (provider, usage, _accent)) in providers.iter().enumerate() {
         let slot_left = inset + index as f32 * slot;
         anchors.push((*provider, slot_left + slot / 2.0));
-        let percent = usage.main_window().map_or("—".to_owned(), |window| {
-            format!("{}%", window.used_percent)
-        });
+        let percent = usage.compact_text();
         let label = if slot >= px(44.0) {
-            Some(gfx.text_brush_sized(&percent, scale, 11.5, true, ink)?)
+            let label = gfx.text_brush_sized(&percent, scale, 11.5, true, ink)?;
+            (label.width + icon_size as f32 + gap <= slot).then_some(label)
         } else {
             None
         };
@@ -3124,6 +3210,7 @@ mod island_tests {
             state: State::SignIn,
             windows: Vec::new(),
             fetched_at: None,
+            opencode: None,
         };
         // Yesterday's saved reading is not evidence that Codex is running now.
         look.usage.providers[Provider::Codex as usize] = ProviderUsage {
@@ -3135,6 +3222,7 @@ mod island_tests {
                 resets_at: None,
             }],
             fetched_at: Some(std::time::SystemTime::now() - Duration::from_secs(24 * 60 * 60)),
+            opencode: None,
         };
         assert!(
             island_providers(&look)
@@ -3167,6 +3255,69 @@ mod island_tests {
                 .iter()
                 .any(|hit| matches!(hit.action, IslandAction::OpenCodeConnectionHelp))
         );
+        // Real compositor coverage for Zen-only and combined cards, including
+        // a large currency label and all three Go windows.
+        for (go, spend) in [
+            (false, None),
+            (
+                false,
+                Some(usage::LocalSpend {
+                    micro_usd: 9_999_990_000,
+                    requests: 40,
+                }),
+            ),
+            (
+                true,
+                Some(usage::LocalSpend {
+                    micro_usd: 1_250_000,
+                    requests: 3,
+                }),
+            ),
+        ] {
+            let reading = &mut look.usage.providers[Provider::OpenCode as usize];
+            reading.opencode = Some(usage::OpenCodeDetails {
+                go,
+                zen: true,
+                spend,
+            });
+            reading.windows = if go {
+                [300, 10_080, 43_200]
+                    .into_iter()
+                    .map(|minutes| usage::Window {
+                        label: None,
+                        minutes,
+                        used_percent: 15,
+                        resets_at: Some(chrono::Utc::now() + chrono::Duration::hours(2)),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            for style in [IslandStyle::Notch, IslandStyle::Bubble] {
+                look.widgets.island_style = style;
+                for scale in [1.0, 1.25, 1.5, 2.0] {
+                    look.scale = scale;
+                    for (light, glass) in [(true, true), (false, true), (false, false)] {
+                        look.light = light;
+                        look.glass = glass;
+                        bar.build(&gfx, &look)?;
+                        let hit = bar
+                            .island_hits
+                            .iter()
+                            .find(|hit| matches!(hit.action, IslandAction::OpenCodeConsole))
+                            .context("Zen console has no click target")?;
+                        let (left, top, right, bottom) = hit.bounds;
+                        assert!(left >= bar.panel_span.left && right <= bar.panel_span.right);
+                        let first = bar
+                            .island_hits
+                            .iter()
+                            .find(|hit| hit.at((left + right) / 2.0, (top + bottom) / 2.0))
+                            .context("Zen console cannot be clicked")?;
+                        assert!(matches!(first.action, IslandAction::OpenCodeConsole));
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -3654,6 +3805,7 @@ mod mascot_tests {
                     resets_at: None,
                 }],
                 fetched_at: None,
+                opencode: None,
             };
         }
         snapshot

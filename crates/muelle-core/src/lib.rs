@@ -1,5 +1,6 @@
 //! Platform-independent dock logic that can be tested without Windows.
 
+pub mod attention;
 pub mod bounce;
 pub mod genie;
 pub mod layout;

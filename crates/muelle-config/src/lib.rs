@@ -190,7 +190,7 @@ impl Default for Config {
             menu_bar_search: None,
             menu_bar_task_view: None,
             menu_bar_widgets: None,
-            menu_bar_bluetooth: true,
+            menu_bar_bluetooth: false,
             menu_bar_battery_percent: None,
             show_indicators: true,
             show_recents: true,

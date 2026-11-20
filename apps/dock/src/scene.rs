@@ -221,6 +221,185 @@ pub struct SceneInput<'a> {
 pub const BADGE_SIZE: f32 = 0.42;
 pub const BADGE_INSIDE: f32 = 0.85;
 
+/// A native attention request, deliberately without a fabricated unread count.
+/// Its vector is allocated on first use and only transformed during animation.
+pub(crate) struct AttentionBadge {
+    pub(crate) visual: ShapeVisual,
+    visible: bool,
+}
+
+impl AttentionBadge {
+    pub(crate) fn new(gfx: &Gfx, theme: Theme) -> Result<Self> {
+        let c = &gfx.compositor;
+        let circle = c.CreateEllipseGeometry()?;
+        circle.SetCenter(v2(0.5, 0.5))?;
+        circle.SetRadius(v2(0.43, 0.43))?;
+        let shape = c.CreateSpriteShapeWithGeometry(&circle)?;
+        shape.SetFillBrush(&c.CreateColorBrushWithColor(if theme.light {
+            rgba(255, 59, 48, 255)
+        } else {
+            rgba(255, 69, 58, 255)
+        })?)?;
+        shape.SetStrokeBrush(&c.CreateColorBrushWithColor(if theme.light {
+            rgba(255, 255, 255, 245)
+        } else {
+            rgba(38, 38, 40, 245)
+        })?)?;
+        shape.SetStrokeThickness(0.12)?;
+        let visual = c.CreateShapeVisual()?;
+        visual.SetSize(v2(1.0, 1.0))?;
+        visual.Shapes()?.Append(&shape)?;
+        visual.SetIsVisible(false)?;
+        Ok(Self {
+            visual,
+            visible: false,
+        })
+    }
+
+    pub(crate) fn set_visible(&mut self, visible: bool) -> Result<()> {
+        if self.visible != visible {
+            self.visual.SetIsVisible(visible)?;
+            self.visible = visible;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn place(&self, icon: Rect, scale: f32, opacity: f32, snap: bool) -> Result<()> {
+        if !self.visible {
+            return Ok(());
+        }
+        let rect = attention_rect(icon, scale);
+        let fit = |value: f32| if snap { value.round() } else { value };
+        self.visual
+            .SetScale(Vector3::new(fit(rect.width), fit(rect.height), 1.0))?;
+        self.visual.SetOffset(v3(fit(rect.x), fit(rect.y)))?;
+        self.visual.SetOpacity(opacity)?;
+        Ok(())
+    }
+}
+
+fn attention_rect(icon: Rect, scale: f32) -> Rect {
+    let side = (icon.width * 0.25)
+        .clamp(8.0 * scale, 14.0 * scale)
+        .min(icon.width.min(icon.height) * 0.45);
+    let inset = scale.min((icon.width - side) / 2.0).max(0.0);
+    Rect {
+        x: icon.x + icon.width - side - inset,
+        y: icon.y + inset,
+        width: side,
+        height: side,
+    }
+}
+
+#[cfg(test)]
+mod attention_tests {
+    use super::*;
+    use muelle_core::{
+        layout::{Metrics, layout},
+        magnify::{Magnifier, magnify},
+    };
+
+    #[test]
+    fn attention_stays_inside_small_magnified_and_high_dpi_icons() {
+        for scale in [1.0, 1.25, 1.5, 2.0, 3.0] {
+            for width in [16.0, 32.0, 48.0, 96.0] {
+                let icon = Rect {
+                    x: 17.0,
+                    y: -32.0,
+                    width: width * scale,
+                    height: width * scale,
+                };
+                let badge = attention_rect(icon, scale);
+                assert!(badge.x >= icon.x && badge.y >= icon.y);
+                assert!(badge.x + badge.width <= icon.x + icon.width);
+                assert!(badge.y + badge.height <= icon.y + icon.height);
+                assert!(badge.width > 0.0);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires Windows desktop composition; creates no visible window"]
+    fn native_attention_badges_reuse_visuals_follow_drag_and_hide_without_rebuilding() -> Result<()>
+    {
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for light in [false, true] {
+                let layout = layout(
+                    &[ItemKind::Icon, ItemKind::Icon],
+                    &Metrics::DEFAULT.scaled(scale),
+                );
+                let contents = [SlotContent::default(); 2];
+                let mut scene = Scene::build(
+                    &gfx,
+                    &SceneInput {
+                        layout: &layout,
+                        contents: &contents,
+                        theme: Theme::for_system(light, true),
+                        scale,
+                        origin: (0.0, 0.0),
+                        remove_label: None,
+                    },
+                )?;
+                let root = scene.root.clone();
+                scene.set_attention(&gfx, [true, false].into_iter())?;
+                let visual = scene.attention[0]
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("missing badge"))?
+                    .visual
+                    .clone();
+                scene.set_attention(&gfx, [true, false].into_iter())?;
+                assert!(
+                    scene.attention[0]
+                        .as_ref()
+                        .is_some_and(|badge| badge.visual == visual)
+                );
+                assert!(scene.attention[1].is_none());
+                let state = magnify(
+                    &layout,
+                    24.0 * scale,
+                    1.0,
+                    &Magnifier {
+                        range: 144.0 * scale,
+                        max_scale: 1.6,
+                    },
+                );
+                scene.apply(&Frame {
+                    state: &state,
+                    hovered: None,
+                    lifts: &[8.0 * scale, 0.0],
+                    drag: Some(Drag {
+                        index: 0,
+                        center: (80.0 * scale, 20.0 * scale),
+                        removing: false,
+                        ghost: false,
+                    }),
+                    target: None,
+                    slide: 0.0,
+                    snap: false,
+                })?;
+                assert!(visual.IsVisible()?);
+                assert!(visual.Scale()?.X > 0.0);
+                scene.set_attention(&gfx, [false, false].into_iter())?;
+                assert!(!visual.IsVisible()?);
+                assert!(scene.root == root);
+            }
+        }
+        Ok(())
+    }
+}
+
 /// An icon following the cursor while it is dragged.
 #[derive(Clone, Copy)]
 pub struct Drag {
@@ -290,6 +469,9 @@ pub struct Scene {
     raised: Cell<Option<usize>>,
     slots: Vec<SpriteVisual>,
     badges: Vec<Option<SpriteVisual>>,
+    attention: Vec<Option<AttentionBadge>>,
+    attention_theme: Theme,
+    scale: f32,
     indicators: Vec<Option<ShapeVisual>>,
     labels: Vec<Option<Label>>,
     remove_label: Option<Label>,
@@ -426,10 +608,29 @@ impl Scene {
             raised: Cell::new(None),
             slots,
             badges,
+            attention: (0..layout.slots.len()).map(|_| None).collect(),
+            attention_theme: theme,
+            scale,
             indicators,
             labels,
             remove_label,
         })
+    }
+
+    /// Changes only badge visuals: notifications never rebuild the layout or
+    /// close an open window picker. Repeated events reuse the same visual.
+    pub fn set_attention(&mut self, gfx: &Gfx, pending: impl Iterator<Item = bool>) -> Result<()> {
+        for (notice, on) in self.attention.iter_mut().zip(pending) {
+            if on && notice.is_none() {
+                let badge = AttentionBadge::new(gfx, self.attention_theme)?;
+                self.content.Children()?.InsertAtTop(&badge.visual)?;
+                *notice = Some(badge);
+            }
+            if let Some(badge) = notice {
+                badge.set_visible(on)?;
+            }
+        }
+        Ok(())
     }
 
     /// - `lifts`: how far each slot rises above its resting position (bounce).
@@ -496,6 +697,25 @@ impl Scene {
                     fit(y + height - side * BADGE_INSIDE),
                 ))?;
             }
+            if let Some(Some(notice)) = self.attention.get(index) {
+                notice.place(
+                    Rect {
+                        x,
+                        y,
+                        width,
+                        height,
+                    },
+                    self.scale,
+                    if dragged.is_some_and(|drag| drag.ghost) {
+                        0.35
+                    } else if dragged.is_some_and(|drag| drag.removing) {
+                        0.55
+                    } else {
+                        1.0
+                    },
+                    snap,
+                )?;
+            }
             if let Some(Some(indicator)) = self.indicators.get(index) {
                 indicator.SetIsVisible(dragged.is_none())?;
                 indicator.SetOffset(v3(
@@ -535,6 +755,14 @@ impl Scene {
             let children = self.content.Children()?;
             children.Remove(visual)?;
             children.InsertAtTop(visual)?;
+            if let Some(Some(badge)) = index.and_then(|index| self.badges.get(index)) {
+                children.Remove(badge)?;
+                children.InsertAtTop(badge)?;
+            }
+            if let Some(Some(badge)) = index.and_then(|index| self.attention.get(index)) {
+                children.Remove(&badge.visual)?;
+                children.InsertAtTop(&badge.visual)?;
+            }
         }
         self.raised.set(index);
         Ok(())
