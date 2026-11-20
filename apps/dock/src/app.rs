@@ -37,7 +37,7 @@ use muelle_shell::{
     end_task::PreparedEndTask,
     files,
     icons::IconImage,
-    launcher,
+    jumplist, launcher,
     pins::{self, app_exists, taskbar_pins, taskbar_pins_if_readable},
     power,
     recycle_bin::{self, BinWatch},
@@ -282,6 +282,8 @@ const CMD_FORGET_RECENT: u32 = 17;
 const CMD_END_TASK: u32 = 18;
 const CMD_HIDE_FIXED: u32 = 19;
 const CMD_WINDOW: u32 = 100;
+/// Jump list entries start here, after any window command.
+const CMD_JUMP: u32 = 1000;
 const MENU_WINDOWS: usize = 12;
 const MENU_TITLE_CHARS: usize = 60;
 
@@ -444,6 +446,11 @@ pub(crate) enum Outside {
     OpenAsAdmin(String),
     /// Unpin from the Windows taskbar too (see `pins::unpin_from_taskbar`).
     UnpinFromTaskbar(String),
+    /// An entry of the jump list of the app `program`.
+    OpenJump {
+        target: jumplist::Target,
+        program: String,
+    },
     ShowDesktop,
 }
 
@@ -493,6 +500,8 @@ enum MenuTarget {
         role: Role,
         windows: Vec<isize>,
         end_task: Option<PreparedEndTask>,
+        /// What each jump list command opens, from `CMD_JUMP` on.
+        jump: Vec<jumplist::Target>,
     },
     Dock,
 }
@@ -3528,7 +3537,7 @@ impl App {
             return Ok(None);
         };
         let windows = self.windows_of(&id);
-        let (items, end_task) = self.entry_menu(&id, Role::App, &windows);
+        let (items, end_task, jump) = self.entry_menu(&id, Role::App, &windows);
         let gap = self
             .stage
             .as_ref()
@@ -3545,6 +3554,7 @@ impl App {
                 role: Role::App,
                 windows,
                 end_task,
+                jump,
             },
             items,
             anchor,
@@ -3610,13 +3620,14 @@ impl App {
             Some((id, role, rect)) => {
                 let windows = self.windows_of(&id);
                 let anchor = stage.beside(rect, gap);
-                let (items, end_task) = self.entry_menu(&id, role, &windows);
+                let (items, end_task, jump) = self.entry_menu(&id, role, &windows);
                 (
                     MenuTarget::Entry {
                         id,
                         role,
                         windows,
                         end_task,
+                        jump,
                     },
                     items,
                     anchor,
@@ -3662,15 +3673,22 @@ impl App {
         })))
     }
 
+    /// The menu of a dock item, the app's prepared End Task and what its jump
+    /// list entries open (see `CMD_JUMP`).
     fn entry_menu(
         &self,
         id: &str,
         role: Role,
         windows: &[isize],
-    ) -> (Vec<MenuItem>, Option<PreparedEndTask>) {
+    ) -> (
+        Vec<MenuItem>,
+        Option<PreparedEndTask>,
+        Vec<jumplist::Target>,
+    ) {
         let is_file = !id.starts_with("shell:") && !id.starts_with("::");
         let t = text();
         let mut items = Vec::new();
+        let mut jump = Vec::new();
         let end_task = if role == Role::App && id != explorer_id() {
             PreparedEndTask::capture(id, windows, &self.windows)
         } else {
@@ -3678,6 +3696,39 @@ impl App {
         };
         match role {
             Role::App => {
+                // The app's jump list first, as on the taskbar.
+                for group in jumplist::for_dock_item(id, windows) {
+                    items.push(MenuItem::Header(match group.section {
+                        jumplist::Section::Pinned => t.jump_pinned.to_owned(),
+                        jumplist::Section::Frequent => t.jump_frequent.to_owned(),
+                        jumplist::Section::Recent => t.jump_recent.to_owned(),
+                        jumplist::Section::Tasks => t.jump_tasks.to_owned(),
+                        jumplist::Section::Custom(name) => shorten(&name, MENU_TITLE_CHARS),
+                    }));
+                    for entry in group.entries {
+                        match entry {
+                            jumplist::Entry::Item {
+                                label,
+                                target,
+                                icon,
+                            } => {
+                                items.push(MenuItem::Action {
+                                    command: CMD_JUMP + jump.len() as u32,
+                                    label: shorten(&label, MENU_TITLE_CHARS).replace('&', "&&"),
+                                    checked: false,
+                                    enabled: true,
+                                    icon,
+                                });
+                                jump.push(target);
+                            }
+                            jumplist::Entry::Separator => items.push(MenuItem::Separator),
+                        }
+                    }
+                }
+                if !items.is_empty() {
+                    items.push(MenuItem::Separator);
+                }
+                let jump_rows = items.len();
                 for (index, &hwnd) in windows.iter().take(MENU_WINDOWS).enumerate() {
                     let title = tracker::title(hwnd);
                     if !title.is_empty() {
@@ -3687,7 +3738,7 @@ impl App {
                         ));
                     }
                 }
-                if !items.is_empty() {
+                if items.len() > jump_rows {
                     items.push(MenuItem::Separator);
                 }
                 let open = if windows.is_empty() {
@@ -3702,6 +3753,7 @@ impl App {
                         label: t.keep_in_dock.into(),
                         checked: self.roster.is_pinned(id),
                         enabled: true,
+                        icon: None,
                     });
                 }
                 // A recent app can be dismissed while recent apps stay on.
@@ -3721,6 +3773,7 @@ impl App {
                             label: t.end_task.into(),
                             checked: false,
                             enabled: end_task.is_some(),
+                            icon: None,
                         });
                     }
                 }
@@ -3755,6 +3808,7 @@ impl App {
                     label: t.empty_bin.into(),
                     checked: false,
                     enabled: self.bin_full,
+                    icon: None,
                 });
             }
         }
@@ -3762,7 +3816,7 @@ impl App {
             items.push(MenuItem::Separator);
             items.push(MenuItem::action(CMD_HIDE_FIXED, t.remove_from_dock));
         }
-        (items, end_task)
+        (items, end_task, jump)
     }
 
     fn on_command(&mut self, target: MenuTarget, command: u32) -> Result<Option<Outside>> {
@@ -3771,6 +3825,7 @@ impl App {
             role,
             windows,
             end_task,
+            jump,
         } = target
         else {
             return match command {
@@ -3861,6 +3916,16 @@ impl App {
             }
             CMD_END_TASK => end_task.map(Outside::EndTask),
             CMD_EMPTY_BIN => Some(Outside::EmptyBin),
+            command if command >= CMD_JUMP => {
+                let target = jump.into_iter().nth((command - CMD_JUMP) as usize);
+                target.map(|target| {
+                    self.start_bounce(id.clone(), None);
+                    Outside::OpenJump {
+                        target,
+                        program: id,
+                    }
+                })
+            }
             window => {
                 let index = window.checked_sub(CMD_WINDOW).map(|index| index as usize);
                 index
@@ -5239,6 +5304,7 @@ fn run_outside(outside: Outside) {
         Outside::OpenAsAdmin(id) => submit(ShellAction::OpenAsAdmin { id }),
         Outside::ShowDesktop => launcher::show_desktop(),
         Outside::UnpinFromTaskbar(id) => submit(ShellAction::Unpin { id }),
+        Outside::OpenJump { target, program } => submit(ShellAction::OpenJump { target, program }),
         Outside::OpenSettings => {
             // The settings app is installed next to the dock.
             let settings = env::current_exe()
@@ -5264,6 +5330,7 @@ fn run_outside(outside: Outside) {
                     label: layout.name.replace('&', "&&"),
                     checked: context.is_some_and(|context| context.layout == layout.handle),
                     enabled: context.is_some(),
+                    icon: None,
                 })
                 .collect();
             if !items.is_empty() {

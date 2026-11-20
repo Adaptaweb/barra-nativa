@@ -42,7 +42,7 @@ pub struct LaunchError {
 /// The dock never takes the focus, so Windows may refuse the foreground to the
 /// app it starts and open it behind other windows. The click that asked for it
 /// was the dock's, which lets the dock hand that right on.
-fn allow_foreground() {
+pub(crate) fn allow_foreground() {
     // SAFETY: No pointers; failure only means Windows keeps its default.
     unsafe {
         let _ = AllowSetForegroundWindow(ASFW_ANY);

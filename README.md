@@ -34,6 +34,8 @@
   Settings → Windows → *Show minimized windows* to keep them as live thumbnails
   on the right side of the dock instead.
 - Click the app already in front to minimize it, as on the Windows taskbar.
+- Right-click an app to see its jump list, with icons, as on the Windows
+  taskbar: pinned and recent items, the app's own categories and its tasks.
 - Drag and drop files onto apps, Downloads, or the Recycle Bin.
 - A shortcuts folder at the right of the dock: its contents open as a menu,
   with a submenu for each folder inside, like a Windows 10 taskbar toolbar.

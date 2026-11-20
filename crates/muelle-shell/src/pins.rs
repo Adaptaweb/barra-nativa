@@ -373,6 +373,31 @@ pub fn launch_target(id: &str) -> Option<String> {
         .map(|link| link.to_string_lossy().into_owned())
 }
 
+/// Any shortcut, kept by Muelle or pinned to the Windows taskbar, that opens
+/// the program `id`, with or without arguments. It carries the identity
+/// Windows gives the program's jump list (`AppUserModelID`).
+///
+/// Requires COM to be initialized on the calling thread.
+#[must_use]
+pub fn shortcut_for_program(id: &str) -> Option<String> {
+    if crate::tracker::is_shortcut(id) || id.starts_with("shell:") {
+        return None;
+    }
+    [kept_folder(), taskbar_folder()]
+        .into_iter()
+        .flatten()
+        .filter_map(|folder| fs::read_dir(folder).ok())
+        .flatten()
+        .filter_map(|entry| Some(entry.ok()?.path()))
+        .filter(|link| crate::tracker::is_shortcut(&link.to_string_lossy()))
+        .find(|link| {
+            read_link(link)
+                .and_then(|(target, _)| target)
+                .is_some_and(|target| normalize_id(&target) == id)
+        })
+        .map(|link| link.to_string_lossy().into_owned())
+}
+
 /// The shortcut Muelle keeps for the program `id` (see [`keep_shortcut`]),
 /// which gives its pin its name and icon. Only Muelle's own folder, which
 /// is usually empty: cheap enough for every icon lookup.
