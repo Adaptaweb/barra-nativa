@@ -28,11 +28,19 @@ import { site } from "@/data/site";
     matters. Free, open source and light.
   </p>
 
-  <div data-h class="flex flex-wrap justify-center gap-3">
-    <Button href={site.download}>
-      Download for Windows
-      <Icon name="arrow-right" size={18} />
-    </Button>
+  <div data-h class="flex flex-wrap items-center justify-center gap-3">
+    <div class="inline-flex items-center gap-2">
+      <Button href={site.download}>
+        Download for Windows
+        <Icon name="arrow-right" size={18} />
+      </Button>
+      <span
+        data-installer-download-count
+        aria-label="Total installer downloads"
+        class="font-mono text-sm font-semibold text-mute"
+        hidden
+      ></span>
+    </div>
     <Button href="#dock" variant="secondary">Take a look</Button>
   </div>
 
@@ -47,4 +55,39 @@ import { site } from "@/data/site";
   import { initHeroMotion } from "@/scripts/hero";
 
   initHeroMotion();
+
+  const count = document.querySelector<HTMLElement>(
+    "[data-installer-download-count]",
+  );
+
+  if (count) {
+    try {
+      const response = await fetch("/api/downloads", {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(`Download count endpoint returned ${response.status}`);
+      }
+
+      const result: unknown = await response.json();
+      if (
+        !result ||
+        typeof result !== "object" ||
+        !("downloadCount" in result) ||
+        typeof result.downloadCount !== "number" ||
+        !Number.isSafeInteger(result.downloadCount) ||
+        result.downloadCount < 0
+      ) {
+        throw new Error("Download count endpoint returned an invalid response");
+      }
+
+      count.textContent = new Intl.NumberFormat("en-US", {
+        notation: "compact",
+        maximumFractionDigits: 1,
+      }).format(result.downloadCount);
+      count.hidden = false;
+    } catch (error) {
+      console.error("Could not load Muelle installer download count", error);
+    }
+  }
 </script>
