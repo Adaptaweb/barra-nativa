@@ -48,6 +48,7 @@ struct Edges {
     window: isize,
     top: Option<RECT>,
     bottoms: Vec<RECT>,
+    pointer_screen: Option<RECT>,
     target: Option<Target>,
     entered: Option<Instant>,
 }
@@ -56,31 +57,34 @@ static EDGES: Mutex<Edges> = Mutex::new(Edges {
     window: 0,
     top: None,
     bottoms: Vec::new(),
+    pointer_screen: None,
     target: None,
     entered: None,
 });
 
 impl Edges {
-    fn at(&self, point: POINT) -> Option<Target> {
-        let within_x = |rect: RECT| point.x >= rect.left && point.x < rect.right;
-        if self.top.is_some_and(|screen| {
-            within_x(screen) && (screen.top..screen.top + EDGE_DEPTH).contains(&point.y)
+    fn at(&self, point: POINT, screen: Option<RECT>) -> Option<Target> {
+        if self.top.is_some_and(|top| {
+            (top.left..top.right).contains(&point.x)
+                && (top.top..top.top + EDGE_DEPTH).contains(&point.y)
         }) {
             return Some(Target::MenuBar);
         }
-        self.bottoms
-            .iter()
-            .copied()
-            .find(|&screen| {
-                within_x(screen) && (screen.bottom - EDGE_DEPTH..screen.bottom).contains(&point.y)
-            })
+        screen
+            .filter(|screen| point.y >= screen.bottom - EDGE_DEPTH)
             .map(Target::Dock)
     }
 
     fn observe(&mut self, point: POINT, now: Instant) -> bool {
-        let target = self.at(point);
+        let screen = self.bottoms.iter().copied().find(|screen| {
+            (screen.left..screen.right).contains(&point.x)
+                && (screen.top..screen.bottom).contains(&point.y)
+        });
+        let changed_screen = self.pointer_screen != screen;
+        self.pointer_screen = screen;
+        let target = self.at(point, screen);
         if target == self.target {
-            return false;
+            return changed_screen;
         }
         self.target = target;
         self.entered = target.map(|_| now);
@@ -208,6 +212,7 @@ impl Drop for EdgeWatch {
         {
             let mut edges = lock();
             edges.window = 0;
+            edges.pointer_screen = None;
             edges.target = None;
             edges.entered = None;
         }
@@ -376,6 +381,28 @@ mod tests {
         );
         edges.set_bottoms(vec![primary]);
         assert!(matches!(edges.dwell(left, start + DWELL * 3), Reveal::Idle));
+    }
+
+    #[test]
+    fn monitor_entry_notifies_before_the_pointer_reaches_the_edge() {
+        let primary = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let secondary = RECT {
+            left: 1920,
+            right: 3840,
+            ..primary
+        };
+        let mut edges = Edges::default();
+        edges.set_bottoms(vec![primary, secondary]);
+        let now = Instant::now();
+        assert!(edges.observe(POINT { x: 700, y: 500 }, now));
+        assert!(edges.observe(POINT { x: 2500, y: 500 }, now));
+        assert_eq!(edges.target, None);
+        assert!(!edges.observe(POINT { x: 2600, y: 500 }, now));
     }
 
     #[test]

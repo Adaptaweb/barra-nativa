@@ -3850,6 +3850,14 @@ impl App {
     }
 
     fn edge_changed(&mut self) -> Result<()> {
+        // Explorer can recreate a secondary taskbar while the dock is running.
+        // Check on monitor entry so it is transparent before the edge dwell.
+        if self.config.auto_hide
+            && self.taskbar_worker.is_none()
+            && taskbar::needs_visibility_repair()
+        {
+            self.request_taskbar(false)?;
+        }
         let (target, wait) = edge_watch::pending();
         let on_dock_edge = matches!(target, Some(EdgeTarget::Dock(screen))
             if self.stage.as_ref().is_some_and(|stage| stage.key.screen == screen));
@@ -4628,7 +4636,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                 });
             }
             // SAFETY: `hwnd` is our window; scheduling the same timer resets it.
-            unsafe { SetTimer(Some(hwnd), REFRESH_TIMER, REFRESH_DELAY_MS, None) };
+            unsafe {
+                SetTimer(Some(hwnd), REFRESH_TIMER, REFRESH_DELAY_MS, None);
+                if msg == WM_DISPLAYCHANGE && hwnd == main_window() {
+                    // Let Explorer settle and create any new secondary taskbars.
+                    SetTimer(Some(hwnd), TASKBAR_TIMER, TASKBAR_DELAY_MS, None);
+                }
+            }
         }
         // On battery or charging, or energy saver turned on or off: glass may
         // have to become solid, or the other way round.
