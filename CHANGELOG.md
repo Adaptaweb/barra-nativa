@@ -10,6 +10,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Automated WinGet manifest generation and submission for the first package and
+  future stable releases, with manual retries, native validation, final installer
+  checksum checks, duplicate detection and explicit missing-token failures.
 - Added bounded graphics-device recovery and recovery of an existing dock when
   Muelle is opened again. The watchdog closes the old instance before restarting;
   a blocked recovery close has an eight-second deadline. Repeated device loss
@@ -31,6 +34,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Automatizada la generación y el envío de manifiestos de WinGet para la primera
+  publicación y las próximas releases estables, con reintentos manuales, validación
+  nativa, comprobación del hash final, detección de duplicados y error si falta el token.
 - Añadida recuperación limitada ante pérdida del dispositivo gráfico y al abrir
   Muelle de nuevo cuando ya existe una instancia. El guardián cierra la anterior
   antes de reiniciarla; si el cierre de recuperación se bloquea, tiene un plazo de
