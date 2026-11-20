@@ -4,7 +4,7 @@ use std::{
     env, fs,
     io::{Read, Seek, SeekFrom},
     os::windows::process::CommandExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     sync::{
         Arc, Mutex,
@@ -123,7 +123,7 @@ impl Provider {
         match self {
             Self::Claude => "Claude",
             Self::Codex => "Codex",
-            Self::OpenCode => "OpenCode",
+            Self::OpenCode => "OpenCode Go",
             Self::Gemini => "Gemini",
         }
     }
@@ -499,17 +499,11 @@ fn fetch_codex(client: &Client) -> ProviderUsage {
 }
 
 fn fetch_opencode(client: &Client) -> ProviderUsage {
-    let Some(path) = home().map(|path| path.join(".local/share/opencode/auth.json")) else {
-        return sign_in();
-    };
-    let token = env::var("OPENCODE_API_KEY").ok().or_else(|| {
-        let contents = fs::read(path).ok()?;
-        let auth: Value = serde_json::from_slice(&contents).ok()?;
-        auth.pointer("/opencode/key")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    });
-    let Some(token) = token.filter(|token| !token.is_empty()) else {
+    let api_key = env::var("OPENCODE_API_KEY").ok();
+    let data_home = env::var_os("XDG_DATA_HOME").map(PathBuf::from);
+    let home = home();
+    let Some(token) = opencode_token(api_key.as_deref(), data_home.as_deref(), home.as_deref())
+    else {
         return sign_in();
     };
     let Ok(response) = client
@@ -520,7 +514,7 @@ fn fetch_opencode(client: &Client) -> ProviderUsage {
     else {
         return unavailable();
     };
-    if response.status().as_u16() == 401 {
+    if matches!(response.status().as_u16(), 401 | 403) {
         return sign_in();
     }
     let Ok(body) = response
@@ -538,6 +532,57 @@ fn fetch_opencode(client: &Client) -> ProviderUsage {
     } else {
         ready(windows)
     }
+}
+
+fn opencode_auth_path(data_home: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
+    // OpenCode follows XDG on native Windows too. An explicit data directory
+    // is authoritative: never silently reuse a different account from HOME.
+    let data = match data_home.filter(|path| !path.as_os_str().is_empty()) {
+        Some(path) => {
+            if !path.is_absolute() {
+                return None;
+            }
+            path.to_path_buf()
+        }
+        None => home?.join(".local/share"),
+    };
+    Some(data.join("opencode/auth.json"))
+}
+
+fn opencode_key<'a>(api_key: Option<&'a str>, auth: Option<&'a Value>) -> Option<&'a str> {
+    let usable = |key: &'a str| {
+        let key = key.trim();
+        (!key.is_empty()
+            && key != "opencode-oauth-dummy-key"
+            && !key
+                .bytes()
+                .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control()))
+        .then_some(key)
+    };
+    api_key.and_then(usable).or_else(|| {
+        // Go has its own provider ID. Keep the legacy Zen API-key entry as a
+        // fallback, but never forward another provider's OAuth or API secrets.
+        ["opencode-go", "opencode"].into_iter().find_map(|id| {
+            let entry = auth?.get(id)?;
+            if entry.get("type")?.as_str()? != "api" {
+                return None;
+            }
+            entry.get("key")?.as_str().and_then(usable)
+        })
+    })
+}
+
+fn opencode_token(
+    api_key: Option<&str>,
+    data_home: Option<&Path>,
+    home: Option<&Path>,
+) -> Option<String> {
+    if let Some(key) = opencode_key(api_key, None) {
+        return Some(key.to_owned());
+    }
+    let path = opencode_auth_path(data_home, home)?;
+    let auth: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    opencode_key(None, Some(&auth)).map(str::to_owned)
 }
 
 fn parse_opencode(value: &Value) -> Vec<Window> {
@@ -1061,6 +1106,91 @@ mod tests {
         assert_eq!(windows[0].title(), "5 h");
         assert!(windows[0].resets_at.is_some());
         assert_eq!(windows[1].title(), "30 d");
+    }
+
+    #[test]
+    fn opencode_go_credentials_take_precedence_over_legacy_zen() {
+        let auth = json!({
+            "opencode-go": {"type": "api", "key": "go-fixture"},
+            "opencode": {"type": "api", "key": "zen-fixture"}
+        });
+        assert_eq!(opencode_key(None, Some(&auth)), Some("go-fixture"));
+        assert_eq!(
+            opencode_key(Some("explicit-fixture"), Some(&auth)),
+            Some("explicit-fixture")
+        );
+        assert_eq!(opencode_key(Some("  "), Some(&auth)), Some("go-fixture"));
+    }
+
+    #[test]
+    fn opencode_never_reuses_oauth_dummy_keys_or_another_providers_credentials() {
+        let auth = json!({
+            "opencode-go": {"type": "oauth", "key": "wrong-type", "access": "oauth-fixture"},
+            "opencode": {"type": "api", "key": "opencode-oauth-dummy-key"},
+            "openai": {"type": "api", "key": "unrelated-fixture"}
+        });
+        assert_eq!(opencode_key(None, Some(&auth)), None);
+        assert_eq!(opencode_key(Some("invalid\r\nheader"), Some(&auth)), None);
+        let legacy = json!({"opencode": {"type": "api", "key": " legacy-fixture "}});
+        assert_eq!(opencode_key(None, Some(&legacy)), Some("legacy-fixture"));
+    }
+
+    #[test]
+    fn opencode_reads_native_windows_xdg_storage_without_changing_environment() -> anyhow::Result<()>
+    {
+        let root = env::temp_dir().join(format!(
+            "muelle-opencode-auth-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        // This test owns only this newly created temporary directory.
+        fs::create_dir(&root)?;
+        let result = (|| -> anyhow::Result<()> {
+            let data = root.join("custom-data");
+            let home = root.join("home");
+            let path = opencode_auth_path(Some(&data), Some(&home))
+                .ok_or_else(|| anyhow::anyhow!("missing fixture path"))?;
+            fs::create_dir_all(
+                path.parent()
+                    .ok_or_else(|| anyhow::anyhow!("missing fixture parent"))?,
+            )?;
+            let original = br#"{"opencode-go":{"type":"api","key":"saved-go-fixture"}}"#;
+            fs::write(&path, original)?;
+            assert_eq!(
+                opencode_token(None, Some(&data), Some(&home)).as_deref(),
+                Some("saved-go-fixture")
+            );
+            assert_eq!(fs::read(&path)?, original);
+            let default_path = home.join(".local/share/opencode/auth.json");
+            assert_eq!(
+                opencode_auth_path(None, Some(&home)),
+                Some(default_path.clone())
+            );
+            fs::create_dir_all(
+                default_path
+                    .parent()
+                    .ok_or_else(|| anyhow::anyhow!("missing default parent"))?,
+            )?;
+            fs::write(
+                &default_path,
+                br#"{"opencode":{"type":"api","key":"other-account-fixture"}}"#,
+            )?;
+            assert_eq!(
+                opencode_token(None, None, Some(&home)).as_deref(),
+                Some("other-account-fixture")
+            );
+            // A missing explicit account must not fall back to another directory.
+            assert!(opencode_token(None, Some(&root.join("missing")), Some(&home)).is_none());
+            assert!(opencode_auth_path(Some(Path::new("relative-store")), Some(&home)).is_none());
+            // An explicitly configured environment key works without HOME.
+            assert_eq!(
+                opencode_token(Some("env-fixture"), None, None).as_deref(),
+                Some("env-fixture")
+            );
+            Ok(())
+        })();
+        fs::remove_dir_all(&root)?;
+        result
     }
 
     #[test]

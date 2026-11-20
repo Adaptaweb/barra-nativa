@@ -127,8 +127,6 @@ static PANEL_BOTTOM: AtomicI32 = AtomicI32::new(0);
 static ISLAND_HOOK_WINDOW: AtomicIsize = AtomicIsize::new(0);
 /// Segoe Fluent Icons code points.
 pub(crate) mod glyph {
-    pub const WIFI: [char; 4] = ['\u{E872}', '\u{E873}', '\u{E874}', '\u{E701}'];
-    pub const WIFI_FULL: char = '\u{E701}';
     pub const ETHERNET: char = '\u{E839}';
     pub const OFFLINE: char = '\u{F384}';
     pub const VOLUME: [char; 4] = ['\u{E992}', '\u{E993}', '\u{E994}', '\u{E995}'];
@@ -266,6 +264,7 @@ enum IslandAction {
     Toggle(Island),
     Media(MediaControl),
     Refresh,
+    OpenCodeConnectionHelp,
 }
 
 struct IslandHit {
@@ -803,6 +802,7 @@ fn draw_usage_row(
     } else {
         let message = match usage.state {
             State::Loading => text.usage_loading,
+            State::SignIn if provider == Provider::OpenCode => text.usage_opencode_connect,
             State::SignIn => text.usage_sign_in,
             State::Ready | State::Unavailable => text.usage_unavailable,
         };
@@ -1034,7 +1034,6 @@ impl MenuBar {
         }
         self.widgets = widgets;
         self.refresh(gfx)
-    }
     }
 
     /// The pointer reached the top edge or left the bar.
@@ -1431,6 +1430,14 @@ impl MenuBar {
                     if let Some(usage) = &mut self.usage {
                         usage.refresh(true);
                     }
+                }
+                IslandAction::OpenCodeConnectionHelp => {
+                    // Shell extensions and browser activation run in the
+                    // existing disposable worker, never on the bar's UI thread.
+                    crate::shell_work::dispatch(crate::shell_work::Action::Open {
+                        id: "https://opencode.ai/docs/console/go/".to_owned(),
+                    })
+                    .inspect_err(|_| crate::shell_work::notify_not_started())?;
                 }
                 IslandAction::Media(control) => {
                     if let Some(media) = &self.media
@@ -2040,6 +2047,39 @@ impl MenuBar {
                 island_width,
                 y,
             )?;
+            if *provider == Provider::OpenCode && usage.state == State::SignIn {
+                let label =
+                    gfx.text_brush_sized(title.usage_connection_help, scale, 11.0, true, ink)?;
+                let (left, top) = (px(76.0), y + px(65.0));
+                let (width, height) = (label.width + px(20.0), px(25.0));
+                add_rounded_box(
+                    c,
+                    content,
+                    left,
+                    top,
+                    width,
+                    height,
+                    px(12.5),
+                    geometry.control_fill(),
+                    Some(geometry.border()),
+                )?;
+                add_visual(
+                    c,
+                    content,
+                    &label.brush.cast()?,
+                    left + px(10.0),
+                    top + (height - label.height) / 2.0,
+                    label.width,
+                    label.height,
+                )?;
+                self.island_hits.push(geometry.hit(
+                    left,
+                    top,
+                    width,
+                    height,
+                    IslandAction::OpenCodeConnectionHelp,
+                ));
+            }
         }
         let newest_age = providers
             .iter()
@@ -2713,6 +2753,80 @@ mod island_tests {
     use super::*;
 
     #[test]
+    #[ignore = "Requires Windows desktop composition; keeps the test bar hidden"]
+    fn opencode_connection_help_is_clickable_and_inactive_codex_stays_hidden() -> Result<()> {
+        use anyhow::Context;
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
+        bar.set_visible(false)?;
+        let mut look = bar.look.clone().context("missing initial look")?;
+        look.track = None;
+        look.panel = Some(Island::Usage);
+        look.usage_enabled = true;
+        look.active_providers = ActiveProviders::default();
+        look.active_providers.0[Provider::OpenCode as usize] = true;
+        look.usage.providers[Provider::OpenCode as usize] = ProviderUsage {
+            state: State::SignIn,
+            windows: Vec::new(),
+            fetched_at: None,
+        };
+        // Yesterday's saved reading is not evidence that Codex is running now.
+        look.usage.providers[Provider::Codex as usize] = ProviderUsage {
+            state: State::Ready,
+            windows: vec![usage::Window {
+                label: None,
+                minutes: 300,
+                used_percent: 42,
+                resets_at: None,
+            }],
+            fetched_at: Some(std::time::SystemTime::now() - Duration::from_secs(24 * 60 * 60)),
+        };
+        assert!(
+            island_providers(&look)
+                .iter()
+                .all(|entry| entry.0 == Provider::OpenCode)
+        );
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for light in [false, true] {
+                look.scale = scale;
+                look.light = light;
+                bar.build(&gfx, &look)?;
+                let hit = bar
+                    .island_hits
+                    .iter()
+                    .find(|hit| matches!(hit.action, IslandAction::OpenCodeConnectionHelp))
+                    .context("OpenCode connection help has no click target")?;
+                let (left, top, right, bottom) = hit.bounds;
+                let first = bar
+                    .island_hits
+                    .iter()
+                    .find(|hit| hit.at((left + right) / 2.0, (top + bottom) / 2.0))
+                    .context("connection help cannot be clicked")?;
+                assert!(matches!(first.action, IslandAction::OpenCodeConnectionHelp));
+            }
+        }
+        look.usage.providers[Provider::OpenCode as usize].state = State::Ready;
+        bar.build(&gfx, &look)?;
+        assert!(
+            !bar.island_hits
+                .iter()
+                .any(|hit| matches!(hit.action, IslandAction::OpenCodeConnectionHelp))
+        );
+        Ok(())
+    }
+
+    #[test]
     #[ignore = "Requires Windows desktop composition; keeps the bar hidden"]
     fn accessory_opt_out_blocks_startup_resume_and_retry() -> Result<()> {
         use windows::Win32::System::WinRT::{
@@ -2727,7 +2841,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true)?;
+        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         assert!(!bar.accessories_enabled && bar.accessories.is_none());
         bar.restart_accessories(&gfx)?;
@@ -2801,7 +2915,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true)?;
+        let mut bar = MenuBar::create(&gfx, false, true, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         bar.accessories = None;
         let mut look = bar.look.clone().context("missing initial menu bar")?;

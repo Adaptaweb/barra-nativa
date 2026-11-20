@@ -10,12 +10,20 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Fixed OpenCode Go account discovery: read its `opencode-go` credential, respect
+  `XDG_DATA_HOME`, and fall back from an empty environment key to the saved login.
+  The usage card now identifies Go explicitly and provides a working connection
+  guide button instead of an inert sign-in instruction.
 - WinGet manifests now use `/S` for both unattended modes and declare the
   Visual C++ x64 and WebView2 runtime dependencies. This addresses first-install
   UI and missing-runtime risks; Microsoft installation revalidation is pending.
 
 ### Español
 
+- Corregida la detección de cuentas OpenCode Go: se lee la credencial `opencode-go`,
+  se respeta `XDG_DATA_HOME` y una variable de clave vacía permite usar la sesión
+  guardada. La tarjeta identifica Go e incluye un botón funcional con instrucciones
+  de conexión, en lugar de un texto de inicio de sesión sin acción.
 - Los manifiestos de WinGet usan `/S` en ambos modos desatendidos y declaran
   las dependencias de Visual C++ x64 y WebView2. Se corrigen riesgos de interfaz
   en la primera instalación y de runtimes ausentes; falta revalidar con Microsoft.
