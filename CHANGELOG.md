@@ -8,6 +8,18 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+### English
+
+- WinGet manifests now use `/S` for both unattended modes and declare the
+  Visual C++ x64 and WebView2 runtime dependencies. This addresses first-install
+  UI and missing-runtime risks; Microsoft installation revalidation is pending.
+
+### Español
+
+- Los manifiestos de WinGet usan `/S` en ambos modos desatendidos y declaran
+  las dependencias de Visual C++ x64 y WebView2. Se corrigen riesgos de interfaz
+  en la primera instalación y de runtimes ausentes; falta revalidar con Microsoft.
+
 ## [0.1.17]
 
 ### English
