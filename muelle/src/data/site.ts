@@ -16,3 +16,27 @@ export const site = {
   version: "0.1.17",
   license: "MIT",
 } as const;
+
+/** The person who makes Muelle. The @id matches the Person node of the crafter.run profile. */
+export const author = {
+  name: "Cristian Olivera Chávez",
+  shortName: "Cristian Olivera",
+  role: "Software Engineer",
+  location: "Lima, Peru",
+  id: "https://crafter.run/en/team/cristianolivera1#person",
+  profile: "https://crafter.run/en/team/cristianolivera1",
+  github: "https://github.com/CristianOlivera1",
+  x: "https://x.com/CrisOliveraDev",
+  linkedin: "https://www.linkedin.com/in/cristian-olivera-chavez",
+  website: "https://cristianolivera1.github.io",
+} as const;
+
+/** The community that publishes Muelle. The @id matches the Organization node of crafter.run. */
+export const organization = {
+  name: "Crafter Station",
+  id: "https://crafter.run/#organization",
+  url: "https://crafter.run",
+  github: "https://github.com/crafter-station",
+  products: "https://crafter.run/en/products",
+  description: "The open source community of builders in Peru and LATAM.",
+} as const;
