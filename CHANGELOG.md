@@ -8,6 +8,35 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+### English
+
+- Added read-only USB adapters for SteelSeries Nova 5/5X and more Nova 7/7P
+  variants, Logitech G PRO X 2 (Centurion), selected G PRO/G533 HID++ variants,
+  HyperX Cloud Alpha Wireless and Kingston Cloud II Wireless. Voltage-only and
+  discrete readings remain unknown; HP/DTS Cloud II revisions with a reported
+  connection-query side effect are excluded. Physical validation is pending.
+- Added Logitech Lightspeed and selected Nano receiver IDs, including the G305's
+  C53F, and HID++ Battery Status 1000 reads. Short and long report collections are
+  now queried together once per receiver. The 60-second interval and opt-in
+  setting remain; physical validation of the expanded coverage is pending.
+- Fixed three Clippy violations in the accessory diagnostic's serialization tests.
+  Tag releases now run the full CI checks before building and signing the installer.
+
+### Español
+
+- Añadidos adaptadores USB de lectura para SteelSeries Nova 5/5X y más variantes
+  Nova 7/7P, Logitech G PRO X 2 (Centurion), variantes G PRO/G533 HID++, HyperX
+  Cloud Alpha Wireless y Cloud II Wireless Kingston. Voltajes y niveles discretos
+  siguen sin porcentaje; se excluyen revisiones HP/DTS de Cloud II cuya consulta
+  de conexión tiene un efecto secundario documentado. Falta validación física.
+- Añadidos receptores Logitech Lightspeed y Nano identificados, incluido C53F del
+  G305, y lectura de batería HID++ 1000. Las colecciones de informes cortos y largos
+  se consultan juntas una sola vez por receptor. Se mantienen los 60 segundos y
+  la activación opcional; la ampliación queda pendiente de validación física.
+- Corregidos tres errores de Clippy en las pruebas de serialización del diagnóstico
+  de accesorios. Las releases por etiqueta ejecutan ahora todos los controles de CI
+  antes de compilar y firmar el instalador.
+
 ## [0.1.16]
 
 ### English

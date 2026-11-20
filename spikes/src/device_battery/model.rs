@@ -123,18 +123,20 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_transports_do_not_change_the_result_with_enumeration_order() {
+    fn duplicate_transports_do_not_change_the_result_with_enumeration_order()
+    -> serde_json::Result<()> {
         let a = node("one", Some(70), Some(false));
         let mut b = node("one", Some(70), Some(true));
         b.transport = "Bluetooth LE";
         let first = merge(vec![a.clone(), b.clone()]);
         let second = merge(vec![b, a]);
         assert_eq!(
-            serde_json::to_string(&first).unwrap(),
-            serde_json::to_string(&second).unwrap()
+            serde_json::to_string(&first)?,
+            serde_json::to_string(&second)?
         );
         assert_eq!(first[0].interfaces, 2);
         assert_eq!(first[0].connected, Some(true));
+        Ok(())
     }
 
     #[test]
@@ -169,15 +171,16 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_output_omits_physical_identifiers() {
+    fn diagnostic_output_omits_physical_identifiers() -> serde_json::Result<()> {
         let rows = merge(vec![node(
             "private-container-or-address",
             Some(100),
             Some(true),
         )]);
-        let output = serde_json::to_string(&rows).unwrap();
+        let output = serde_json::to_string(&rows)?;
         assert!(!output.contains("private-container-or-address"));
         assert!(output.contains("100"));
+        Ok(())
     }
 
     #[test]

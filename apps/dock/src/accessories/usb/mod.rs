@@ -1,3 +1,4 @@
+mod headsets;
 mod io;
 pub(super) mod protocol;
 
@@ -7,7 +8,7 @@ use muelle_shell::accessories::{Device, Kind};
 use protocol::{Model, Reading};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{Read, Write},
     os::windows::{io::AsRawHandle, process::CommandExt},
     process::{Child, Command, Stdio},
@@ -33,7 +34,7 @@ const LIMIT: usize = 8;
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
-    path: String,
+    paths: Vec<String>,
 }
 
 pub fn query_main() -> Result<()> {
@@ -41,29 +42,49 @@ pub fn query_main() -> Result<()> {
     std::io::stdin().take(4097).read_to_string(&mut input)?;
     ensure!(input.len() <= 4096, "USB request too large");
     let request: Request = serde_json::from_str(&input)?;
-    let readings = io::query(&request.path)?;
+    let readings = io::query(&request.paths)?;
     serde_json::to_writer(std::io::stdout().lock(), &readings)?;
     Ok(())
 }
 
 pub fn selector() -> Result<String> {
-    protocol::PROFILES
-        .iter()
-        .map(|profile| {
+    let mut selectors = Vec::new();
+    for profile in protocol::PROFILES {
+        if profile.page == 0 {
+            // Only the two exact HyperX revisions whose usage is not fixed in
+            // their protocol notes. No global HID enumeration or vendor-wide IO.
+            selectors.push(format!("System.Devices.InterfaceClassGuid:=\"{{4d1e55b2-f16f-11cf-88cb-001111000030}}\" AND System.DeviceInterface.Hid.VendorId:={} AND System.DeviceInterface.Hid.ProductId:={} AND System.DeviceInterface.Hid.UsagePage:>=65280", profile.vendor, profile.product));
+            continue;
+        }
+        selectors.push(
             HidDevice::GetDeviceSelectorVidPid(
                 profile.page,
                 profile.usage,
                 profile.vendor,
                 profile.product,
-            )
-            .map(|query| format!("({query})"))
-            .map_err(Into::into)
-        })
-        .collect::<Result<Vec<_>>>()
-        .map(|queries| queries.join(" OR "))
+            )?
+            .to_string(),
+        );
+        if profile.model == Model::Logitech {
+            selectors.push(
+                HidDevice::GetDeviceSelectorVidPid(
+                    profile.page,
+                    1,
+                    profile.vendor,
+                    profile.product,
+                )?
+                .to_string(),
+            );
+        }
+    }
+    Ok(selectors
+        .iter()
+        .map(|query| format!("({query})"))
+        .collect::<Vec<_>>()
+        .join(" OR "))
 }
 
-fn probe(path: &str) -> Result<Vec<Reading>> {
+fn probe(paths: &[String]) -> Result<Vec<Reading>> {
     let job = WorkerJob::new()?;
     let mut child = Command::new(std::env::current_exe()?)
         .arg(FLAG)
@@ -79,12 +100,17 @@ fn probe(path: &str) -> Result<Vec<Reading>> {
             return Err(error.into());
         }
     }
-    query_child(&mut child, path, 2000)
+    query_child(&mut child, paths, 2000)
 }
 
-fn query_child(child: &mut Child, path: &str, timeout: u32) -> Result<Vec<Reading>> {
+fn query_child(child: &mut Child, paths: &[String], timeout: u32) -> Result<Vec<Reading>> {
     if let Some(mut input) = child.stdin.take() {
-        serde_json::to_writer(&mut input, &Request { path: path.into() })?;
+        serde_json::to_writer(
+            &mut input,
+            &Request {
+                paths: paths.to_vec(),
+            },
+        )?;
         input.flush()?;
     }
     ensure!(
@@ -101,14 +127,17 @@ fn query_child(child: &mut Child, path: &str, timeout: u32) -> Result<Vec<Readin
         .read_to_end(&mut output)?;
     ensure!(output.len() <= 4096, "USB output too large");
     let readings: Vec<Reading> = serde_json::from_slice(&output)?;
-    let profile = protocol::profile_path(path).context("unknown USB response target")?;
+    let profile = paths
+        .first()
+        .and_then(|path| protocol::profile_path(path))
+        .context("unknown USB response target")?;
     let mut slots = std::collections::BTreeSet::new();
     ensure!(
         readings.len() <= 6
             && readings.iter().all(|r| slots.insert(r.slot)
                 && r.percent.is_none_or(|n| n <= 100)
                 && if profile.model == Model::Logitech {
-                    (1..=6).contains(&r.slot)
+                    (1..=profile.slots).contains(&r.slot)
                 } else {
                     r.slot == 0 && r.kind == Kind::Headset
                 }),
@@ -124,10 +153,12 @@ pub(super) struct Completed {
 }
 struct Job {
     path: String,
+    paths: Vec<String>,
     generation: u64,
 }
 struct Entry {
     id: String,
+    paths: BTreeSet<String>,
     generation: u64,
     next: Instant,
     failures: u8,
@@ -142,17 +173,30 @@ pub struct Sources {
 }
 impl Sources {
     pub fn add(&mut self, path: String, id: String) {
-        if protocol::profile_path(&path).is_none()
-            || self.entries.contains_key(&path)
-            || self.entries.len() >= LIMIT
-        {
+        let Some(key) = protocol::receiver_key(&path) else {
+            return;
+        };
+        let path = path.to_ascii_lowercase();
+        if let Some(entry) = self.entries.get_mut(&key) {
+            if entry.paths.contains(&path) || entry.paths.len() >= 2 {
+                return;
+            }
+            self.generation = self.generation.wrapping_add(1);
+            entry.paths.insert(path);
+            entry.generation = self.generation;
+            entry.devices.clear();
+            entry.next = Instant::now();
+            return;
+        }
+        if self.entries.len() >= LIMIT {
             return;
         }
         self.generation = self.generation.wrapping_add(1);
         self.entries.insert(
-            path,
+            key,
             Entry {
                 id,
+                paths: BTreeSet::from([path]),
                 generation: self.generation,
                 next: Instant::now(),
                 failures: 0,
@@ -161,7 +205,19 @@ impl Sources {
         );
     }
     pub fn remove(&mut self, path: &str) {
-        self.entries.remove(path);
+        if let Some(key) = protocol::receiver_key(path)
+            && let Some(entry) = self.entries.get_mut(&key)
+            && entry.paths.remove(&path.to_ascii_lowercase())
+        {
+            if entry.paths.is_empty() {
+                self.entries.remove(&key);
+            } else {
+                self.generation = self.generation.wrapping_add(1);
+                entry.generation = self.generation;
+                entry.devices.clear();
+                entry.next = Instant::now();
+            }
+        }
         if self.entries.is_empty() && self.in_flight.is_none() {
             self.pool = None;
         }
@@ -181,7 +237,7 @@ impl Sources {
                 .name("muelle-usb-query".into())
                 .spawn(move || {
                     while let Ok(job) = receive.recv() {
-                        let result = probe(&job.path);
+                        let result = probe(&job.paths);
                         if tx
                             .try_send(Event::Usb(Completed {
                                 path: job.path,
@@ -211,6 +267,7 @@ impl Sources {
         {
             pool.try_send(Job {
                 path: path.clone(),
+                paths: entry.paths.iter().cloned().collect(),
                 generation: entry.generation,
             })?;
             self.in_flight = Some((path.clone(), entry.generation));
@@ -283,6 +340,51 @@ fn retry_delay(failures: u8) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receiver_collections_are_polled_once_and_hotplug_invalidates_partial_queries() {
+        let short = r"\\?\hid#vid_046d&pid_c53f&mi_02&col01#7&12345678&0&0000#{hid-guid}";
+        let long = r"\\?\hid#vid_046d&pid_c53f&mi_02&col02#7&12345678&0&0001#{hid-guid}";
+        let mut sources = Sources::default();
+        sources.add(short.into(), "g305-a".into());
+        let key = protocol::receiver_key(short).unwrap_or_default();
+        let old_generation = sources.entries[&key].generation;
+        sources.add(long.into(), "g305-a".into());
+        assert_eq!(sources.entries.len(), 1);
+        assert_eq!(sources.entries[&key].paths.len(), 2);
+        sources.complete(Completed {
+            path: key.clone(),
+            generation: old_generation,
+            result: Ok(vec![Reading {
+                slot: 1,
+                kind: Kind::Mouse,
+                percent: Some(90),
+            }]),
+        });
+        assert_eq!(sources.devices().count(), 0);
+        let generation = sources.entries[&key].generation;
+        sources.complete(Completed {
+            path: key.clone(),
+            generation,
+            result: Ok(vec![Reading {
+                slot: 1,
+                kind: Kind::Mouse,
+                percent: Some(90),
+            }]),
+        });
+        assert_eq!(sources.devices().count(), 1);
+        let deadline = sources.deadline();
+        sources.add(short.to_ascii_uppercase(), "g305-a".into());
+        assert_eq!(sources.deadline(), deadline);
+        sources.add(long.replace("12345678", "87654321"), "g305-b".into());
+        assert_eq!(sources.entries.len(), 2);
+        sources.remove(short);
+        assert!(sources.entries[&key].devices.is_empty());
+        assert_eq!(sources.entries[&key].paths.len(), 1);
+        sources.remove(&long.to_ascii_uppercase());
+        assert!(!sources.entries.contains_key(&key));
+        assert_eq!(sources.entries.len(), 1);
+    }
     #[test]
     fn hotplug_noise_does_not_override_rate_limits_and_removal_clears_readings() {
         let path = r"\\?\hid#vid_1038&pid_22a1&mi_03#instance";
@@ -342,7 +444,7 @@ mod tests {
             AssignProcessToJobObject(job.0, handle)?;
         }
         let start = Instant::now();
-        assert!(query_child(&mut child, "fixture", 100).is_err());
+        assert!(query_child(&mut child, &["fixture".into()], 100).is_err());
         drop(job);
         assert_eq!(unsafe { WaitForSingleObject(handle, 1000) }, WAIT_OBJECT_0);
         assert!(start.elapsed() < Duration::from_secs(2));

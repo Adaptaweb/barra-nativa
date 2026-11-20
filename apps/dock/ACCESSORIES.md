@@ -59,8 +59,17 @@ Son implementaciones en validación, todavía sin compatibilidad física certifi
 |---|---|---|
 | Logitech Unifying | 046D:C52B, 046D:C532 | FF00:0002, informes HID++ largos de 20 bytes. Slots 1–6; ping con eco y consulta del tipo. Porcentaje solo si 1004 anuncia estado de carga real. |
 | Logitech Bolt | 046D:C548 | Misma política. Un dispositivo HID++ 1.0 o sin batería exacta no recibe un porcentaje inventado. |
+| Logitech Lightspeed | 046D:C539, C53A, C53D, C53F, C541, C545, C547, C54D | Un slot por receptor; incluye la ruta documentada del G305/G304 en C53F. Descubrimiento HID++ 2.0+ de batería 1004 y respaldo 1000. |
+| Logitech Nano | 046D:C52E, C52F, C531, C534, C537 | Solo periféricos HID++ 2.0+ con las colecciones correspondientes. C534 permite dos slots; los demás, uno. No implica soporte de variantes HID++ 1.0. |
 | SteelSeries Nova 7 original | 1038:2202 | Interfaz 3, FFC0:0001; informe B0 con estado del enlace. Sus niveles discretos permanecen «—», no 25/50/75 % ficticios. |
 | SteelSeries Nova 7 actualizado / Gen 2 | 1038:22A1, 1038:227E | Misma colección, porcentaje directo 0–100 y estado de conexión. |
+| SteelSeries Nova 5 / 5X | 1038:2232, 1038:2253 | FFC0:0001, interfaz 3. Estado B0 con disposición propia: conexión en byte 1 y porcentaje en byte 3 del cuerpo. |
+| SteelSeries Nova 7/7X/7P y ediciones, nivel discreto | 1038:2206, 220A, 223A, 227A, 22A4 | Misma lectura que 2202. Nivel 0–4 mostrado como «—». |
+| SteelSeries Nova 7/7X/7P actualizado, porcentaje | 1038:2258, 229E, 22AD, 22A9, 22A5, 22A7, 2298 | Misma lectura que 22A1/227E; porcentaje sin conversión de niveles. |
+| Logitech G PRO / PRO X / variantes X2 HID++, G533 | 046D:0AA7, 0AAA, 0ABA, 0AFB, 0AFC, 0A66 | FF43:0202, informes de 20 bytes e índice directo FF. Descubrir SoC 1004/1000; ADC 1F20 solo confirma una lectura de voltaje y deja el porcentaje en «—». |
+| Logitech G PRO X 2 Lightspeed, Centurion | 046D:0AF7 | FFA0:0001, interfaz 3, informes 64/64 e ID 51. Consultas Root/Bridge y Battery SoC 0104. Sin inicialización ni fallback a paquetes legacy. |
+| HyperX Cloud Alpha Wireless | 03F0:098D | Colección de fabricante con informe 21 y salida 31/32 bytes. Confirmación de enlace antes de batería; durante carga, «—». |
+| HyperX Cloud II Wireless, Kingston no DTS | 0951:1718 | Colección de fabricante con informe 06 y salida de 62 bytes. Consultas 01 (enlace) y 02 (batería), respuestas 0B/BB con eco del comando. |
 
 No se amplía por marca o similitud del nombre. El filtro de Windows limita la
 enumeración a estas colecciones; antes de escribir una solicitud de lectura se
@@ -69,10 +78,63 @@ Solo después se abre lectura/escritura compartida de esa colección. Los paquet
 son consultas de estado, nunca cambios de ajustes, luces, emparejamiento o firmware.
 No se usan curvas de voltaje ni se fuerza un valor a entrar en 0–100.
 
+### Corrección del G305 y transporte Logitech
+
+El receptor C53F no estaba en el descubrimiento original; además, el G305 publica
+su batería mediante **Battery Status 1000**, no Unified Battery 1004. La consulta
+ahora descubre 1000 si 1004 no proporciona porcentaje. Se conserva el porcentaje
+que devuelve el dispositivo, incluidos sus posibles saltos de nivel; no se
+interpolan pasos ni voltajes. En 1000, cero significa desconocido; el cero válido
+de 1004 con capacidad SoC sigue mostrándose como 0 %.
+
+Windows separa los informes HID++ de 7 y 20 bytes. Se descubren ambas colecciones
+FF00:0001/0002, se agrupan por instancia USB e interfaz y se consultan en un solo
+proceso. Antes de escribir se validan VID/PID, usage y tamaños de cada handle.
+Ambas lecturas overlapped están preparadas antes de enviar la solicitud; una
+espera de kernel recibe la respuesta corta o larga. Slot, función, software ID y
+eco del ping descartan mensajes ajenos. No hay hilo residente por colección.
+
+La agrupación no mezcla dos receptores iguales. Añadir o retirar una colección
+invalida consultas anteriores; avisos repetidos no adelantan el próximo sondeo.
+La ampliación inicial tuvo 16 receptores Logitech identificados y tres variantes
+Nova. La ampliación de auriculares suma 23 identidades: el registro actual tiene
+42 VID/PID explícitos. Sigue pendiente la validación física por modelo.
+
+### Alcance de la ampliación de auriculares
+
+Los adaptadores propios están en `accessories/usb/headsets.rs` y
+`headsets/centurion.rs`; las pruebas usan trazas simuladas. Para Centurion se
+descubren únicamente Bridge y Battery SoC: cuatro consultas en el caso habitual,
+sin recorrer todas las funciones. Se comprueban longitudes externas/internas,
+software ID, feature y estado de enlace. Los ACK y las respuestas ajenas no son
+una medición; los eventos de desconexión retiran el accesorio.
+
+En HyperX se conservan los porcentajes del dispositivo, incluido 0 %. Los Cloud
+II **HP/DTS** 03F0:0696/018B no se incluyen: su lector de referencia documenta que
+la consulta de conexión puede restablecer estados y quitar el silencio del micro.
+Esto no se extrapola al protocolo Kingston 0951:1718, que es distinto. No se
+envían consultas de mute, sidetone, inicialización, emparejamiento o firmware.
+
+El descubrimiento sigue filtrado por VID/PID y colección. Solo las dos revisiones
+HyperX sin usage fijo publicado usan un filtro de página de fabricante por su
+VID/PID exacto. Antes de abrir acceso de datos se validan descriptor, tamaños e ID
+de informe de salida; la colección equivocada no recibe comandos. Esta validación
+se aplica también a los receptores existentes. No se añaden hilos residentes ni
+temporizadores. La lectura se prepara antes de escribir para no perder una
+respuesta rápida, y se cancela al vencer el presupuesto o cerrar la consulta.
+
+Los Logitech que solo exponen voltaje no tendrán un porcentaje calculado con una
+curva prestada. Que otro lector muestre un estimado no convierte ese valor en SoC.
+G435, G733, otras revisiones de los mismos nombres y otros IDs no se anuncian
+como compatibles por compartir marca. El usuario todavía no dispone de hardware
+inalámbrico para comprobar estas rutas: hacen falta pruebas reales de enlace,
+carga, suspensión y convivencia con G HUB, GG y NGENUITY.
+
 ### Política de consumo y aislamiento
 
 - Sin interfaces autorizadas: ningún proceso de consulta USB ni hilo del pool.
-- Hasta ocho interfaces, una consulta en curso, cola de un trabajo y generaciones
+- Hasta ocho receptores, dos colecciones por receptor y una consulta en curso,
+  cola de un trabajo y generaciones
   para descartar respuestas de un receptor retirado/reconectado. Quitar el último
   receptor libera el pool al acabar su trabajo acotado.
 - Una consulta inicial al detectar la interfaz y, como respaldo, cada 60 segundos
@@ -117,6 +179,7 @@ cargo test -p muelle --locked monitor_repeated_shutdown_and_timeout_are_bounded 
 cargo test -p muelle --locked usb_process_deadline_terminates_a_stalled_provider -- --ignored --test-threads=1
 cargo test -p muelle --locked accessory_indicators_render_without_controls_or_popups -- --ignored --test-threads=1
 cargo test -p muelle --locked accessory_opt_out_blocks_startup_resume_and_retry -- --ignored --test-threads=1
+cargo test -p muelle --locked long_requests_receive_short_or_long_replies_and_cancel_the_other_read -- --test-threads=1
 ```
 
 Ajustar la variable al ejecutable de ese equipo. Las pruebas cubren protocolo por
@@ -165,6 +228,52 @@ independiente. La demo se comprobó en inglés/español y anchos de 390/1440 px;
 `astro check` y build estático correctos. Estas pruebas no sustituyen la
 validación física pendiente.
 
+Tras ampliar Logitech: `cargo clippy --workspace --all-targets -- -D warnings`
+y `cargo test --workspace --quiet` correctos (229 pruebas, 25 omitidas de forma
+explícita). La prueba nativa de tuberías recibe respuestas de 7/20 bytes después
+de una solicitud larga y cancela la otra lectura pendiente. Las comprobaciones
+manuales del supervisor y del proceso USB bloqueado también pasaron; este último
+terminó en unos 120 ms con un plazo de prueba de 100 ms.
+
+Compilación optimizada correcta. Una ejecución aislada del lector durante cinco
+segundos llegó a `Ready`, con lista vacía y sin errores de descubrimiento USB:
+el filtro ampliado arranca en este Windows. No había periféricos compatibles;
+esto no valida los porcentajes del G305 físico ni el coste con un receptor.
+La reversión de esta ampliación se limita a `accessories/usb/{protocol,io,mod}.rs`,
+la dependencia de pruebas de Pipes en `apps/dock/Cargo.toml` y sus notas; no requiere
+revertir preferencias, indicadores, Bluetooth ni los cambios independientes de CI.
+
+### Verificación de la ampliación de auriculares · 2026-11-19
+
+`cargo clippy --workspace --all-targets -- -D warnings` y las 239 pruebas del
+workspace pasaron. Las nuevas trazas prueban cada secuencia completa, incluyendo
+comandos exclusivamente de consulta, enlace apagado/emparejando, carga, 0/100 %,
+niveles inválidos y mensajes ajenos. Centurion verifica ACK, software ID, índices
+de features, longitudes anidadas y desconexión durante una consulta.
+
+La prueba nativa del transporte pasó con tuberías locales: prepara la lectura,
+rellena la salida al tamaño del descriptor y cancela una espera vencida. También
+pasaron las comprobaciones nativas de cierre del supervisor, timeout USB y
+desactivación de la función. El proceso USB simulado se terminó en unos 120 ms;
+no se consultó ningún periférico en esas pruebas.
+
+El watcher USB completó la enumeración del filtro ampliado en 0,71 s, sin abrir
+handles HID de datos. El lector optimizado llegó a `Ready` sin errores durante
+una muestra aislada de cinco segundos, con lista vacía. Son verificaciones de
+integración en este Windows, no de compatibilidad física ni coste con hardware.
+La compilación optimizada del dock también terminó correctamente.
+
+Para ejecutar la prueba de filtro (solo metadatos):
+
+```powershell
+cargo test -p muelle --locked accessory_usb_discovery_enumerates_allowlist -- --ignored --test-threads=1
+```
+
+Reversión de este bloque: adaptadores `headsets.rs` y `headsets/`, sus perfiles y
+ruta de consulta en `protocol.rs`/`io.rs`/`mod.rs`, validación de informes del
+descriptor y la prueba de descubrimiento en `worker.rs`. No requiere retirar el
+soporte previo de ratones, preferencias, indicadores o los arreglos de CI.
+
 ## Referencias de protocolo
 
 Implementación propia en Rust, sin incorporar código ni binarios de otros lectores.
@@ -172,6 +281,15 @@ Se contrastaron los hechos del protocolo en estas fuentes primarias:
 
 - [HID++ y formato de paquetes de Logitech](https://github.com/Logitech/cpg-docs/tree/master/hidpp20).
 - [Identificadores de receptores en Solaar](https://github.com/pwr-Solaar/Solaar/blob/master/lib/logitech_receiver/base_usb.py).
+- [Funciones y receptor del G305 documentados con hardware](https://github.com/pwr-Solaar/Solaar/issues/850).
+- [Lectura Battery Status 1000 en Solaar](https://github.com/pwr-Solaar/Solaar/blob/master/lib/logitech_receiver/hidpp20.py).
 - [Capacidad de porcentaje en HID++ 1004, controlador Linux](https://github.com/torvalds/linux/blob/master/drivers/hid/hid-logitech-hidpp.c).
 - [Identidad y estados Nova 7 documentados por su lector](https://github.com/Sapd/HeadsetControl/blob/master/lib/devices/steelseries_arctis_nova_7.hpp).
+- [Nova 5/5X y su disposición del estado](https://github.com/Sapd/HeadsetControl/blob/master/lib/devices/steelseries_arctis_nova_5.hpp).
+- [Variantes Nova 7P](https://github.com/Sapd/HeadsetControl/blob/master/lib/devices/steelseries_arctis_nova_7p.hpp).
+- [G PRO X 2 y Centurion](https://github.com/Sapd/HeadsetControl/blob/master/lib/devices/logitech_gpro_x2_lightspeed.hpp).
+- [G PRO HID++ y lectura de voltaje](https://github.com/Sapd/HeadsetControl/blob/master/lib/devices/logitech_gpro.hpp).
+- [Cloud Alpha Wireless](https://github.com/Sapd/HeadsetControl/blob/master/lib/devices/hyperx_cloud_alpha_wireless.hpp).
+- [Protocolo Kingston Cloud II](https://github.com/LennardKittner/HyperHeadset/blob/main/old_cloud_2_doc/Headset_protocol.md).
+- [Efecto de la consulta de conexión Cloud II DTS](https://github.com/LennardKittner/HyperHeadset/blob/main/src/devices/cloud_ii_wireless_dts.rs).
 - [Obtención de informes HID en Windows](https://learn.microsoft.com/en-us/windows-hardware/drivers/hid/obtaining-hid-reports-by-user-mode-applications).

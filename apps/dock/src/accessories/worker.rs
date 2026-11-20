@@ -382,3 +382,34 @@ pub fn run(visibility: Option<&str>) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "Enumerates allowlisted Windows USB metadata; never sends HID queries"]
+    fn accessory_usb_discovery_enumerates_allowlist() -> Result<()> {
+        // Own MTA, watcher and callbacks. No Sources pool or data handle exists.
+        unsafe {
+            RoInitialize(RO_INIT_MULTITHREADED)?;
+        }
+        let _apartment = Apartment;
+        let (tx, rx) = mpsc::sync_channel(256);
+        let full = Arc::new(AtomicBool::new(false));
+        let _watch = watch(Source::Usb, tx, full.clone())?;
+        let end = Instant::now() + Duration::from_secs(5);
+        loop {
+            match rx.recv_timeout(end.saturating_duration_since(Instant::now()))? {
+                Event::Complete(Source::Usb) => break,
+                Event::Stopped(_) => bail!("USB discovery stopped before completing"),
+                _ => {}
+            }
+        }
+        ensure!(
+            !full.load(Ordering::Acquire),
+            "USB discovery queue overflow"
+        );
+        Ok(())
+    }
+}
