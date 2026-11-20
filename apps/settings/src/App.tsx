@@ -410,6 +410,13 @@ export function App() {
                   onChange={(aiUsage) => update({ aiUsage })}
                 />
               </SubRow>
+              <SubRow label={t.accessoryBattery} hint={t.accessoryBatteryHint} open={config.menuBar}>
+                <Toggle
+                  label={t.accessoryBattery}
+                  checked={config.accessoryBattery}
+                  onChange={(accessoryBattery) => update({ accessoryBattery })}
+                />
+              </SubRow>
             </Card>
           ) : (
             <>

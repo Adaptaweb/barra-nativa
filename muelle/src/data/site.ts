@@ -5,7 +5,7 @@ export const site = {
   tagline: "The macOS Dock, made for Windows.",
   /** Kept concise for search snippets while naming the supported Windows versions. */
   description:
-    "Free, open-source macOS-style dock for Windows 10 and 11, with the Genie effect, optional live window previews and an AI usage menu bar.",
+    "Free, open-source macOS-style dock for Windows 10 and 11. Genie animations, window previews, AI usage and optional accessory battery indicators.",
   /** Canonical origin. Must match `site` in astro.config.mjs and the sitemap. */
   url: "https://muellee.vercel.app",
   /** Path to the social card in `public/`. */

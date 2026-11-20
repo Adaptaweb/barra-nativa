@@ -16,6 +16,7 @@ export interface Config {
   menuBar: boolean;
   menuBarAutoHide: boolean;
   aiUsage: boolean;
+  accessoryBattery: boolean;
   showIndicators: boolean;
   showRecents: boolean;
   bounceOnOpen: boolean;

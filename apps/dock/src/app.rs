@@ -999,7 +999,11 @@ impl App {
                 continue;
             }
             let variant = if id == recycle_bin::PARSING_NAME {
-                if self.bin_full { "llena" } else { "vacia" }
+                if self.bin_full {
+                    recycle_bin::FULL
+                } else {
+                    recycle_bin::EMPTY
+                }
             } else {
                 ""
             };
@@ -3783,6 +3787,9 @@ impl App {
                     let covered = primary_monitor()
                         .is_some_and(|monitor| tracker::foreground_is_fullscreen(monitor.screen));
                     bar.set_visible(!covered)
+                })
+                .and_then(|()| {
+                    bar.set_accessories_enabled(&self.gfx, self.config.accessory_battery)
                 });
             if let Err(error) = applied {
                 eprintln!("muelle: barra superior: {error:#}");
@@ -4175,6 +4182,20 @@ pub fn menu_bar_clicked(x: f32, y: f32) {
 pub fn menu_bar_media_changed() {
     with_app("reproducción", |app| match &mut app.menubar {
         Some(bar) => bar.media_changed(&app.gfx),
+        None => Ok(()),
+    });
+}
+
+pub fn menu_bar_accessories_changed() {
+    with_app("accesorios", |app| match &mut app.menubar {
+        Some(bar) => bar.accessories_changed(&app.gfx),
+        None => Ok(()),
+    });
+}
+
+pub fn menu_bar_accessories_reset() {
+    with_app("reanudar accesorios", |app| match &mut app.menubar {
+        Some(bar) => bar.restart_accessories(&app.gfx),
         None => Ok(()),
     });
 }

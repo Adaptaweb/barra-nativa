@@ -5,6 +5,10 @@
 //! callbacks on its own threads; they only post `message` to the bar's window,
 //! which then reads the new state on its UI thread.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use windows::{
     Networking::Connectivity::{
         NetworkConnectivityLevel, NetworkInformation, NetworkStatusChangedEventHandler,
@@ -123,6 +127,7 @@ impl IAudioEndpointVolumeCallback_Impl for VolumeChanged_Impl {
 struct DeviceChanged {
     window: isize,
     message: u32,
+    default_changed: Arc<AtomicBool>,
 }
 
 impl IMMNotificationClient_Impl for DeviceChanged_Impl {
@@ -140,6 +145,7 @@ impl IMMNotificationClient_Impl for DeviceChanged_Impl {
 
     fn OnDefaultDeviceChanged(&self, flow: EDataFlow, role: ERole, _id: &PCWSTR) -> Result<()> {
         if flow == eRender && role == eConsole {
+            self.default_changed.store(true, Ordering::Release);
             notify(self.window, self.message);
         }
         Ok(())
@@ -152,6 +158,7 @@ impl IMMNotificationClient_Impl for DeviceChanged_Impl {
 
 /// The default speakers' volume, followed across device changes.
 pub struct AudioWatch {
+    default_changed: Arc<AtomicBool>,
     enumerator: IMMDeviceEnumerator,
     devices: IMMNotificationClient,
     /// Current default device, its volume control and our callback on it.
@@ -166,22 +173,33 @@ impl AudioWatch {
     pub fn new(window: isize, message: u32) -> Option<Self> {
         // SAFETY: COM is initialized on this thread; the enumerator and the
         // registered client are released in `Drop`.
+        let default_changed = Arc::new(AtomicBool::new(false));
         let (enumerator, devices) = unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-            let devices: IMMNotificationClient = DeviceChanged { window, message }.into();
+            let devices: IMMNotificationClient = DeviceChanged {
+                window,
+                message,
+                default_changed: default_changed.clone(),
+            }
+            .into();
             enumerator
                 .RegisterEndpointNotificationCallback(&devices)
                 .ok()?;
             (enumerator, devices)
         };
         Some(Self {
+            default_changed,
             enumerator,
             devices,
             endpoint: None,
             window,
             message,
         })
+    }
+
+    pub fn take_default_changed(&self) -> bool {
+        self.default_changed.swap(false, Ordering::AcqRel)
     }
 
     /// Current volume of the default speakers, or `None` without any.
@@ -263,6 +281,38 @@ impl Drop for AudioWatch {
 }
 
 /* ------------------------------------------------------ Taskbar buttons */
+
+/// Cached physical container of the default output. Query from a background
+/// reader with COM initialized; a source failure is not a device disconnect.
+#[must_use]
+pub fn default_audio_container() -> Option<String> {
+    use windows::Win32::{
+        Foundation::PROPERTYKEY,
+        System::Com::{
+            STGM_READ,
+            StructuredStorage::{PropVariantClear, PropVariantToGUID},
+        },
+    };
+    const CONTAINER: PROPERTYKEY = PROPERTYKEY {
+        fmtid: windows::core::GUID::from_u128(0x8c7ed206_3f8a_4827_b3ab_ae9e1faefc6c),
+        pid: 2,
+    };
+    // SAFETY: Read-only Core Audio property store. Its allocated variant is
+    // cleared on both success and conversion failure before returning.
+    unsafe {
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+        let store = enumerator
+            .GetDefaultAudioEndpoint(eRender, eConsole)
+            .ok()?
+            .OpenPropertyStore(STGM_READ)
+            .ok()?;
+        let mut value = store.GetValue(&CONTAINER).ok()?;
+        let id = PropVariantToGUID(&value);
+        let _ = PropVariantClear(&mut value);
+        id.ok().map(|id| format!("{id:?}"))
+    }
+}
 
 /// The optional buttons the user has turned on in Windows Settings →
 /// Personalization → Taskbar, so the menu bar offers the same ones.

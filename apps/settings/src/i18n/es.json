@@ -21,6 +21,8 @@
   "menuBarAutoHide": "Ocultar y mostrar la barra superior automáticamente",
   "menuBarAutoHideHint": "Aparece cuando el puntero se detiene en el borde superior de la pantalla, nunca encima de los botones de cerrar de una ventana.",
   "aiUsage": "Mostrar uso de proveedores de IA",
+  "accessoryBattery": "Mostrar batería de accesorios",
+  "accessoryBatteryHint": "Detecta ratones y auriculares compatibles y muestra su batería. Desactivado, no detecta ni consulta accesorios.",
   "aiUsageHint": "Lee la cuota de las sesiones que ya tienes abiertas. Consulta directamente a cada proveedor cada cinco minutos y no guarda credenciales.",
   "autostart": "Abrir Muelle al iniciar sesión",
   "language": "Idioma",

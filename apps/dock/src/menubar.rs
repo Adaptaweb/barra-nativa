@@ -19,6 +19,7 @@
 use anyhow::Result;
 use muelle_config::Language;
 use muelle_shell::{
+    accessories::{Kind as AccessoryKind, Snapshot as AccessorySnapshot},
     appbar::{AppBar, Edge},
     launcher,
     status::{self, AudioWatch, Network, NetworkWatch, Privacy, TaskbarButtons, Volume},
@@ -62,7 +63,7 @@ use windows::{
 use windows_numerics::{Vector2, Vector3};
 
 use crate::{
-    app, edge_watch,
+    accessories, app, edge_watch,
     gfx::{Gfx, Ink, LabelBrush},
     mascot,
     media::{self, Control as MediaControl, Track},
@@ -81,6 +82,7 @@ const ITEM_GAP: f32 = 16.0;
 const HIT_SLOP: f32 = 7.0;
 
 const MEDIA_CHANGED: u32 = WM_APP + 28;
+const ACCESSORIES_CHANGED: u32 = WM_APP + 30;
 
 const CLOCK_TIMER: usize = 1;
 const POINTER_TIMER: usize = 2;
@@ -138,10 +140,13 @@ mod glyph {
     pub const HIDDEN_ICONS: char = '\u{E70E}';
     pub const MICROPHONE: char = '\u{E720}';
     pub const CAMERA: char = '\u{E722}';
+    pub const MOUSE: char = '\u{E962}';
+    pub const HEADSET: char = '\u{E95B}';
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
+    AccessoryIndicator,
     QuickSettings,
     Notifications,
     Sound,
@@ -167,6 +172,7 @@ struct Status {
 /// What the bar was last drawn for.
 #[derive(Clone, PartialEq)]
 struct Look {
+    accessories: [Option<AccessoryReading>; 2],
     language: Language,
     screen: RECT,
     scale: f32,
@@ -185,6 +191,22 @@ struct Look {
     panel: Option<Island>,
     usage_refreshing: bool,
     track: Option<Track>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AccessoryReading {
+    kind: AccessoryKind,
+    percent: Option<u8>,
+}
+
+// Compare only visible readings: unrelated names/devices do not redraw the bar.
+fn accessory_readings(snapshot: &AccessorySnapshot) -> [Option<AccessoryReading>; 2] {
+    snapshot.compact().map(|device| {
+        device.map(|device| AccessoryReading {
+            kind: device.kind,
+            percent: device.percent,
+        })
+    })
 }
 
 impl Look {
@@ -246,6 +268,9 @@ impl Drop for ExitAnimation {
 }
 
 pub struct MenuBar {
+    accessories: Option<accessories::Monitor>,
+    accessories_enabled: bool,
+    accessory_retry_at: Instant,
     hwnd: HWND,
     _target: DesktopWindowTarget,
     /// Stable parent: content refreshes must not restart reveal animations.
@@ -307,6 +332,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         HIDE_ANIMATION_DONE => app::menu_bar_finish_hide(Some(w.0)),
         DISMISS_ISLAND => app::menu_bar_dismiss_island(),
         REGISTRY_CHANGED => app::menu_bar_registry_changed(),
+        ACCESSORIES_CHANGED => app::menu_bar_accessories_changed(),
         MEDIA_CHANGED => app::menu_bar_media_changed(),
         WM_SETCURSOR => {
             // SAFETY: Keep the standard arrow throughout the bar and popups.
@@ -339,6 +365,9 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         // WM_TIMECHANGE: the clock or time zone was changed.
         WM_TIMER | WM_POWERBROADCAST | WM_TIMECHANGE | STATUS_CHANGED | USAGE_CHANGED
         | WM_SETTINGCHANGE => {
+            if msg == WM_POWERBROADCAST && matches!(w.0, 7 | 18) {
+                app::menu_bar_accessories_reset();
+            }
             if msg == WM_POWERBROADCAST && w.0 == PBT_POWERSETTINGCHANGE as usize {
                 // SAFETY: Windows owns the setting payload for this message.
                 unsafe {
@@ -846,6 +875,9 @@ impl MenuBar {
         let surface = gfx.compositor.CreateContainerVisual()?;
         target.SetRoot(&surface)?;
         let mut bar = Self {
+            accessories: None,
+            accessories_enabled: false,
+            accessory_retry_at: Instant::now() + Duration::from_secs(60),
             hwnd,
             _target: target,
             surface,
@@ -924,6 +956,44 @@ impl MenuBar {
             return Ok(());
         }
         self.usage = enabled.then(|| UsageMonitor::new(self.hwnd.0 as isize, USAGE_CHANGED));
+        self.refresh(gfx)
+    }
+
+    pub fn set_accessories_enabled(&mut self, gfx: &Gfx, enabled: bool) -> Result<()> {
+        if self.accessories_enabled == enabled {
+            return Ok(());
+        }
+        self.accessories_enabled = enabled;
+        if enabled {
+            self.restart_accessories(gfx)
+        } else {
+            self.accessories = None;
+            self.refresh(gfx)
+        }
+    }
+
+    pub fn accessories_changed(&mut self, gfx: &Gfx) -> Result<()> {
+        if self.accessories_enabled && self.visible && (!self.auto_hide || self.revealed) {
+            self.refresh(gfx)?;
+        }
+        Ok(())
+    }
+
+    pub fn restart_accessories(&mut self, gfx: &Gfx) -> Result<()> {
+        // Resume/audio notifications and the minute tick must never start a
+        // disabled reader, including after a previously enabled one failed.
+        if !self.accessories_enabled {
+            return Ok(());
+        }
+        self.accessory_retry_at = Instant::now() + Duration::from_secs(60);
+        self.accessories = None;
+        self.accessories = accessories::Monitor::new(
+            self.hwnd.0 as isize,
+            ACCESSORIES_CHANGED,
+            self.visible && (!self.auto_hide || self.revealed),
+        )
+        .inspect_err(|error| eprintln!("muelle: accesorios: {error:#}"))
+        .ok();
         self.refresh(gfx)
     }
 
@@ -1084,6 +1154,12 @@ impl MenuBar {
     /// A leave notification can already be queued when the hidden window is
     /// shown. Check the pointer rather than hiding a newly revealed bar on it.
     pub fn check_pointer(&mut self, gfx: &Gfx) -> Result<()> {
+        if self.panel.is_some() {
+            // SAFETY: Read-only Escape state; checked only while a popup is open.
+            if unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x1B) } < 0 {
+                return self.dismiss_island(gfx);
+            }
+        }
         let mut point = POINT::default();
         // SAFETY: Read-only cursor query in the same DPI context as `bounds`.
         unsafe { GetCursorPos(&mut point)? };
@@ -1144,6 +1220,9 @@ impl MenuBar {
             self.exit_animation = None;
         }
         let on_screen = self.visible && (!hidden || self.hide_until.is_some());
+        if let Some(monitor) = &self.accessories {
+            monitor.set_visible(on_screen && !hidden);
+        }
         if !on_screen {
             // Keep the hidden tree transparent. Restoring opacity here races
             // HWND hiding and flashes its last opaque frame on the next show.
@@ -1176,7 +1255,7 @@ impl MenuBar {
                 self.visual_height,
                 SWP_NOACTIVATE | show,
             )?;
-            if on_screen && self.auto_hide {
+            if on_screen && (self.auto_hide || self.panel.is_some()) {
                 // TrackMouseEvent may report a leave immediately after showing
                 // a window. Check real geometry while revealed, including if
                 // no further WM_MOUSEMOVE reaches this window.
@@ -1251,6 +1330,17 @@ impl MenuBar {
 
     pub fn tick(&mut self, gfx: &Gfx) -> Result<()> {
         self.update_status();
+        let audio_changed = self
+            .audio
+            .as_ref()
+            .is_some_and(AudioWatch::take_default_changed);
+        let retry_due = Instant::now() >= self.accessory_retry_at
+            && self.accessories.as_ref().is_none_or(|monitor| {
+                monitor.snapshot().state == muelle_shell::accessories::State::Unavailable
+            });
+        if self.accessories_enabled && (audio_changed || retry_due) {
+            self.restart_accessories(gfx)?;
+        }
         self.schedule_next_minute();
         self.refresh(gfx)
     }
@@ -1329,6 +1419,7 @@ impl MenuBar {
             )
         });
         match hit.map(|(_, _, action)| *action) {
+            Some(Action::AccessoryIndicator) => {}
             Some(Action::QuickSettings) => launcher::open_quick_settings(),
             Some(Action::Notifications) => launcher::open_notifications(),
             Some(Action::Sound) => launcher::open_sound(),
@@ -1387,6 +1478,9 @@ impl MenuBar {
             usage.refresh(false);
         }
         let look = Look {
+            accessories: self.accessories.as_ref().map_or([None, None], |monitor| {
+                accessory_readings(&monitor.snapshot())
+            }),
             language: strings::language(),
             screen: monitor.screen,
             scale: monitor.scale,
@@ -1589,6 +1683,18 @@ impl MenuBar {
                 Action::QuickSettings,
             ));
         }
+        let mut accessory_labels = Vec::new();
+        for device in look.accessories.into_iter().flatten().rev() {
+            let value = device
+                .percent
+                .map_or_else(|| "—".to_owned(), |percent| format!("{percent}%"));
+            accessory_labels.push((items.len(), gfx.text_brush(&value, scale, false, ink)?));
+            let icon = match device.kind {
+                AccessoryKind::Mouse => glyph::MOUSE,
+                AccessoryKind::Headset => glyph::HEADSET,
+            };
+            items.push((symbol(&[(icon, 1.0)])?, Action::AccessoryIndicator));
+        }
         if let Some(language) = &look.input {
             items.push((
                 gfx.text_brush(language, scale, false, ink)?,
@@ -1606,8 +1712,10 @@ impl MenuBar {
         }
         for (index, (item, action)) in items.iter().enumerate() {
             let zone_right = right;
-            if let Some((battery_index, label)) = &battery_label
-                && index == *battery_index
+            if let Some((_, label)) = battery_label
+                .iter()
+                .chain(accessory_labels.iter())
+                .find(|(item_index, _)| *item_index == index)
             {
                 right -= label.width;
                 place(&layers, label, right)?;
@@ -1616,7 +1724,10 @@ impl MenuBar {
             let left = right - item.width;
             place(&layers, item, left)?;
             // The battery icon and its percentage form one control.
-            self.zones.push((left - slop, zone_right + slop, *action));
+            // Accessory readings are passive status indicators, not controls.
+            if *action != Action::AccessoryIndicator {
+                self.zones.push((left - slop, zone_right + slop, *action));
+            }
             right = left - px(ITEM_GAP);
         }
 
@@ -1624,7 +1735,6 @@ impl MenuBar {
         self.triggers_span = Span::default();
         self.panel_span = Span::default();
         self.draw_island(gfx, look, &layers, width, height, left_end, right)?;
-
         self.surface.SetSize(Vector2 {
             X: width,
             Y: visual_height,
@@ -2520,6 +2630,7 @@ fn draw_compact_player(
 
 impl Drop for MenuBar {
     fn drop(&mut self) {
+        self.accessories = None;
         self.exit_animation = None;
         self.media = None;
         ISLAND_HOOK_WINDOW.store(0, Ordering::Relaxed);
@@ -2542,6 +2653,136 @@ impl Drop for MenuBar {
 #[cfg(test)]
 mod island_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "Requires Windows desktop composition; keeps the bar hidden"]
+    fn accessory_opt_out_blocks_startup_resume_and_retry() -> Result<()> {
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let mut bar = MenuBar::create(&gfx, false, true)?;
+        bar.set_visible(false)?;
+        assert!(!bar.accessories_enabled && bar.accessories.is_none());
+        bar.restart_accessories(&gfx)?;
+        bar.tick(&gfx)?;
+        assert!(bar.accessories.is_none());
+        bar.set_accessories_enabled(&gfx, true)?;
+        assert!(bar.accessories.is_some());
+        bar.set_accessories_enabled(&gfx, false)?;
+        bar.accessory_retry_at = Instant::now() - Duration::from_secs(1);
+        bar.restart_accessories(&gfx)?;
+        bar.tick(&gfx)?;
+        assert!(!bar.accessories_enabled && bar.accessories.is_none());
+        assert!(
+            bar.look
+                .as_ref()
+                .is_some_and(|look| look.accessories == [None, None])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn accessory_status_ignores_hidden_metadata_and_hides_incomplete_readings() {
+        use muelle_shell::accessories::{Device, State};
+        let mut snapshot = AccessorySnapshot {
+            state: State::Ready,
+            ..Default::default()
+        };
+        assert_eq!(accessory_readings(&snapshot), [None, None]);
+        snapshot.devices = vec![
+            Device {
+                id: "mouse".into(),
+                name: "Mouse".into(),
+                kind: AccessoryKind::Mouse,
+                percent: Some(0),
+                conflicting: false,
+                active_audio: false,
+            },
+            Device {
+                id: "headset".into(),
+                name: "Headset".into(),
+                kind: AccessoryKind::Headset,
+                percent: None,
+                conflicting: false,
+                active_audio: true,
+            },
+        ];
+        let before = accessory_readings(&snapshot);
+        assert!(before[0].is_some_and(|reading| reading.percent == Some(0)));
+        assert!(before[1].is_some_and(|reading| reading.percent.is_none()));
+        snapshot.devices[0].name = "New name".into();
+        assert!(accessory_readings(&snapshot) == before);
+        for state in [State::Loading, State::Unavailable] {
+            snapshot.state = state;
+            assert_eq!(accessory_readings(&snapshot), [None, None]);
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires Windows desktop composition; keeps the test bar hidden"]
+    fn accessory_indicators_render_without_controls_or_popups() -> Result<()> {
+        use anyhow::Context;
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let mut bar = MenuBar::create(&gfx, false, true)?;
+        bar.set_visible(false)?;
+        bar.accessories = None;
+        let mut look = bar.look.clone().context("missing initial menu bar")?;
+        look.track = None;
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for light in [true, false] {
+                for glass in [true, false] {
+                    look.scale = scale;
+                    look.light = light;
+                    look.glass = glass;
+                    look.accessories = [None, None];
+                    bar.build(&gfx, &look)?;
+                    let root: ContainerVisual =
+                        bar.surface.Children()?.First()?.Current()?.cast()?;
+                    let empty_visuals = root.Children()?.Count()?;
+                    let controls = bar.zones.len();
+                    look.accessories = [
+                        Some(AccessoryReading {
+                            kind: AccessoryKind::Mouse,
+                            percent: Some(76),
+                        }),
+                        Some(AccessoryReading {
+                            kind: AccessoryKind::Headset,
+                            percent: Some(58),
+                        }),
+                    ];
+                    bar.build(&gfx, &look)?;
+                    let root: ContainerVisual =
+                        bar.surface.Children()?.First()?.Current()?.cast()?;
+                    assert_eq!(root.Children()?.Count()?, empty_visuals + 4);
+                    assert_eq!(bar.zones.len(), controls);
+                    assert!(bar.island_hits.is_empty());
+                    assert!(bar.outside_click_hook.is_none());
+                    assert_eq!(bar.panel, None);
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     #[ignore = "Requires Windows desktop composition"]

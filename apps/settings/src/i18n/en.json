@@ -21,6 +21,8 @@
   "menuBarAutoHide": "Automatically hide and show the menu bar",
   "menuBarAutoHideHint": "It appears when the pointer rests on the top edge of the screen, never over a window's close buttons.",
   "aiUsage": "Show AI provider usage",
+  "accessoryBattery": "Show accessory battery",
+  "accessoryBatteryHint": "Detects supported mice and headsets and shows their battery levels. While off, no accessories are monitored or queried.",
   "aiUsageHint": "Reads your existing sessions. Queries each provider directly every five minutes and does not save credentials.",
   "autostart": "Open Muelle at login",
   "language": "Language",

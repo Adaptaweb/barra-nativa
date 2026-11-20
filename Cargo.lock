@@ -2272,6 +2272,7 @@ dependencies = [
  "serde",
  "serde_json",
  "windows",
+ "windows-collections",
  "windows-core",
  "windows-future",
  "windows-numerics",
@@ -2309,6 +2310,7 @@ dependencies = [
 name = "muelle-shell"
 version = "0.1.15"
 dependencies = [
+ "serde",
  "thiserror 2.0.21",
  "windows",
  "windows-core",
@@ -3772,7 +3774,10 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "muelle-shell",
+ "serde",
+ "serde_json",
  "windows",
+ "windows-collections",
  "windows-core",
  "windows-numerics",
 ]

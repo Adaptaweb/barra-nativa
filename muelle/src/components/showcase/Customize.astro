@@ -140,7 +140,9 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
             <ToggleRow name="menuBar" hint="menuBarHint" on={d.menuBar} />
             <ToggleRow name="menuBarAutoHide" hint="menuBarAutoHideHint" on={d.menuBarAutoHide} sub />
             <ToggleRow name="aiUsage" hint="aiUsageHint" on={d.aiUsage} sub />
+            <ToggleRow name="accessoryBattery" hint="accessoryBatteryHint" on={d.accessoryBattery} sub />
           </div>
+          <p class="settings-hint" {...tx("accessoryPreviewHint")}>{t.accessoryPreviewHint}</p>
         </div>
 
         <div class="settings-body" data-view="system" hidden>
@@ -218,7 +220,7 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
           <i style="--ring: #8ab4f8; --p: 28%"></i>28%
         </span>
         <span class="preview-bar-status">
-          <MenuBarStatus />
+          <MenuBarStatus compact accessoryPreview />
           <span class="hidden sm:inline" data-date>
             Fri, Nov 14
           </span>

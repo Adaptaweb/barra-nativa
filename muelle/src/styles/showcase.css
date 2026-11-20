@@ -586,6 +586,7 @@
 
 /* The preview desk the settings act on. */
 .preview {
+  container-type: inline-size;
   position: relative;
   aspect-ratio: 4 / 3;
   overflow: hidden;
@@ -627,6 +628,17 @@
 
 .preview-bar.is-hidden {
   translate: 0 -100%;
+}
+
+/* This desk is a miniature: keep status readings clear when there is no room
+   for the optional centre island, just as in the hero's mobile preview. */
+@container (min-width: 441px) and (max-width: 640px) {
+  .preview-bar.has-accessories [data-date] { display: none; }
+  .preview-bar.has-accessories .preview-island { left: 42%; }
+}
+@container (max-width: 440px) {
+  .preview-island { display: none; }
+  .preview-bar [data-date] { display: none; }
 }
 
 .preview-dock {

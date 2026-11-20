@@ -1,3 +1,4 @@
+pub mod accessories;
 pub mod appbar;
 pub mod autostart;
 pub mod dock_link;

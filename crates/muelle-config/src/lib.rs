@@ -68,6 +68,8 @@ pub struct Config {
     pub menu_bar_auto_hide: bool,
     /// Show supported AI providers' plan usage in the menu bar.
     pub ai_usage: bool,
+    /// Opt-in peripheral monitoring. Off means no accessory reader or queries.
+    pub accessory_battery: bool,
     /// The dot under apps that have windows open.
     pub show_indicators: bool,
     /// The section of recently used apps that are not pinned.
@@ -160,6 +162,7 @@ impl Default for Config {
             menu_bar: true,
             menu_bar_auto_hide: false,
             ai_usage: true,
+            accessory_battery: false,
             show_indicators: true,
             show_recents: true,
             bounce_on_open: true,
@@ -347,6 +350,24 @@ mod tests {
     }
 
     #[test]
+    fn accessory_monitoring_is_opt_in_and_its_preference_round_trips() -> Result<(), ConfigError> {
+        let path = scratch("accessory-monitoring");
+        assert!(!Config::default().accessory_battery);
+        for enabled in [true, false] {
+            let saved = update_preferences(
+                &path,
+                serde_json::Map::from_iter([("accessoryBattery".into(), enabled.into())]),
+            )?;
+            assert_eq!(saved.accessory_battery, enabled);
+            assert_eq!(
+                load(&path)?.map(|config| config.accessory_battery),
+                Some(enabled)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn settings_patch_keeps_the_dock_groups() -> Result<(), ConfigError> {
         let path = scratch("settings-patch-groups");
         let group = DockGroup {
@@ -405,6 +426,7 @@ mod tests {
         // Files from before automatic updates get them, like new installs.
         assert!(config.auto_update);
         assert!(config.ai_usage);
+        assert!(!config.accessory_battery);
         assert!(!config.show_minimized);
     }
 

@@ -21,6 +21,8 @@
   "menuBarAutoHide": "Masquer et afficher automatiquement la barre de menus",
   "menuBarAutoHideHint": "Elle apparaît quand le pointeur s'arrête sur le bord supérieur de l'écran, jamais par-dessus les boutons de fermeture d'une fenêtre.",
   "aiUsage": "Afficher l'utilisation des fournisseurs d'IA",
+  "accessoryBattery": "Afficher la batterie des accessoires",
+  "accessoryBatteryHint": "Détecte les souris et casques compatibles et affiche leur batterie. Désactivé, aucun accessoire n’est surveillé ni interrogé.",
   "aiUsageHint": "Lit le quota des sessions que vous avez déjà ouvertes. Interroge directement chaque fournisseur toutes les cinq minutes et n'enregistre aucun identifiant.",
   "autostart": "Ouvrir Muelle à l'ouverture de session",
   "language": "Langue",

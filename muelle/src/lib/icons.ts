@@ -5,6 +5,8 @@ export type IconName =
   | "arrow-up-right"
   | "sliders"
   | "battery"
+  | "mouse"
+  | "headset"
   | "search"
   | "wifi"
   | "volume"
