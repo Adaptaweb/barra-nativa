@@ -123,9 +123,10 @@ fn run_dock(recovered: bool) -> Result<()> {
 }
 
 fn initialize_dock() -> Result<()> {
-    // SAFETY: Sets DPI awareness and initializes the dispatcher before creating windows.
+    // SAFETY: Sets DPI awareness (if not already locked by the application manifest)
+    // and initializes the dispatcher before creating windows.
     let _queue = unsafe {
-        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         // The compositor requires a dispatcher queue on its thread; this also
         // initializes COM, which icon extraction requires.
         CreateDispatcherQueueController(DispatcherQueueOptions {
