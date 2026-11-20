@@ -14,4 +14,4 @@ Allow: /
 User-agent: PerplexityBot
 Allow: /
 
-Sitemap: https://muellee.vercel.app/sitemap-index.xml
+Sitemap: https://muelle.crafter.run/sitemap-index.xml

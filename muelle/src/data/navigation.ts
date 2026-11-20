@@ -32,7 +32,8 @@ export const footerGroups = [
     title: "Project",
     links: [
       { label: "License", href: `${site.repository}/blob/main/LICENSE`, external: true },
-      { label: "Changelog", href: site.releases, external: true },
+      { label: "Changelog", href: "/changelog", external: false },
+      { label: "About", href: "/about", external: false },
       { label: "Contribute", href: site.issues, external: true },
       { label: "Code signing policy", href: "/code-signing-policy", external: false },
       { label: "Privacy", href: "/privacy", external: false },

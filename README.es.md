@@ -56,7 +56,7 @@ dibujar su animación; las devuelve al cerrarse.
    administrador, sin asistente, en unos dos segundos.
 2. Muelle es nuevo, así que SmartScreen puede no reconocerlo todavía y decir que
    protegió tu PC. Elige **Más información → Ejecutar de todas formas**. Ver la
-   [política de firma de código](https://muellee.vercel.app/code-signing-policy).
+   [política de firma de código](https://muelle.crafter.run/code-signing-policy).
 3. Aparece el dock y se oculta la barra de tareas de Windows. Desde entonces Muelle
    se abre al iniciar Windows; puedes desactivarlo en Ajustes → Sistema.
 
@@ -152,4 +152,4 @@ dos tipos de conexión de red, ambas opcionales:
   permanecen en memoria; Muelle no las guarda. Se desactiva en Ajustes → Barra
   superior → *Mostrar uso de proveedores de IA*.
 
-Detalles: [muellee.vercel.app/privacy](https://muellee.vercel.app/privacy).
+Detalles: [muelle.crafter.run/privacy](https://muelle.crafter.run/privacy).

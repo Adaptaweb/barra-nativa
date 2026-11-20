@@ -6,14 +6,14 @@ Muelle is not an Electron app: the dock is a native Win32 process that draws thr
 
 ## Pages
 
-- [Home](https://muellee.vercel.app/): what Muelle is and how it looks.
-- [The Dock](https://muellee.vercel.app/#dock): the parts of the dock and what each one does.
-- [AI usage](https://muellee.vercel.app/#ai-usage): provider limits and Gemini Pro/Flash quota examples.
-- [Settings](https://muellee.vercel.app/#customize): an interactive replica of the Settings app.
-- [Reversible](https://muellee.vercel.app/#safety): how the Windows taskbar comes back.
-- [Download](https://muellee.vercel.app/#download): installer and build from source.
-- [Privacy policy](https://muellee.vercel.app/privacy): what Muelle sends over the network and what stays on the PC.
-- [Code signing policy](https://muellee.vercel.app/code-signing-policy): how releases are built and signed.
+- [Home](https://muelle.crafter.run/): what Muelle is and how it looks.
+- [The Dock](https://muelle.crafter.run/#dock): the parts of the dock and what each one does.
+- [AI usage](https://muelle.crafter.run/#ai-usage): provider limits and Gemini Pro/Flash quota examples.
+- [Settings](https://muelle.crafter.run/#customize): an interactive replica of the Settings app.
+- [Reversible](https://muelle.crafter.run/#safety): how the Windows taskbar comes back.
+- [Download](https://muelle.crafter.run/#download): installer and build from source.
+- [Privacy policy](https://muelle.crafter.run/privacy): what Muelle sends over the network and what stays on the PC.
+- [Code signing policy](https://muelle.crafter.run/code-signing-policy): how releases are built and signed.
 
 ## Download
 
