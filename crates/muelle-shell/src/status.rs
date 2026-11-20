@@ -372,6 +372,13 @@ pub fn taskbar_buttons() -> TaskbarButtons {
     }
 }
 
+/// The user's native taskbar badge preference. An unset value uses Windows'
+/// default (enabled); the dock never writes or overrides this preference.
+#[must_use]
+pub fn taskbar_badges_enabled() -> bool {
+    dword(ADVANCED, "TaskbarBadges").unwrap_or(1) != 0
+}
+
 /// Windows Settings → System → Power & battery → Battery percentage.
 /// Missing or unreadable means off, matching the Windows default. Read-only:
 /// the user's preference remains owned by Windows, including on older builds.

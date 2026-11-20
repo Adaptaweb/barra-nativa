@@ -87,6 +87,15 @@ que devuelve el dispositivo, incluidos sus posibles saltos de nivel; no se
 interpolan pasos ni voltajes. En 1000, cero significa desconocido; el cero válido
 de 1004 con capacidad SoC sigue mostrándose como 0 %.
 
+Segunda corrección (2026-11-20, el G305 seguía sin verse). El protocolo era
+correcto: Solaar muestra el G305 (C53F, PID inalámbrico 4074) con
+`BATTERY STATUS {1000}` y «Battery: 90%, discharging» (issues #850 y #792). Lo que
+fallaba era el ciclo: el G305 duerme a los pocos segundos sin moverse y entonces no
+contesta por radio. Cada consulta reemplazaba la lista, así que el ratón
+desaparecía en casi todas las consultas (y con cualquier error). Ahora se conserva
+la lectura de los slots de receptor durante 30 minutos y la petición HID++ espera
+400 ms en lugar de 150 ms.
+
 Windows separa los informes HID++ de 7 y 20 bytes. Se descubren ambas colecciones
 FF00:0001/0002, se agrupan por instancia USB e interfaz y se consultan en un solo
 proceso. Antes de escribir se validan VID/PID, usage y tamaños de cada handle.
@@ -143,10 +152,14 @@ carga, suspensión y convivencia con G HUB, GG y NGENUITY.
 - Pausa mientras la barra esté auto-oculta o cubierta. Dos eventos de kernel comunican
   visibilidad; no hay un timer de UI ni escrituras bloqueantes a una tubería.
 - Cada consulta corre en otro `muelle.exe --accessory-usb-query`, con Job Object y
-  plazo de dos segundos. HID usa I/O overlapped, presupuestos de 150 ms por intercambio
-  y 1.250 ms para la secuencia. Si un controlador no cancela, solo se termina ese hijo;
+  plazo de dos segundos. HID usa I/O overlapped, 150 ms por intercambio con auriculares,
+  400 ms por petición HID++ a través de receptor (la radio despierta antes al ratón;
+  el monitor de referencia usa 400 ms en su ping) y 1.250 ms para la secuencia. Si un controlador no cancela, solo se termina ese hijo;
   el coordinador Bluetooth no espera la consulta.
-- Ante errores: se retira su lectura y la espera crece desde dos hasta quince minutos.
+- Ante errores: la espera crece desde dos hasta quince minutos. Un auricular directo
+  que no responde se retira; un dispositivo tras receptor (slot 1–6) que no responde,
+  porque duerme o la consulta falló, conserva su última lectura 30 minutos, como el
+  monitor de referencia (`graceSec = 1800`). Quitar el receptor la borra al instante.
   Los cambios de metadatos no reinician el plazo. Reanudación o cambio de salida de
   audio reconstruyen el lector; no se registra la identidad del periférico en logs.
 

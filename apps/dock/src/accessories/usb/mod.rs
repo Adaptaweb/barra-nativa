@@ -31,6 +31,12 @@ use windows::{
 pub const FLAG: &str = "--accessory-usb-query";
 const INTERVAL: Duration = Duration::from_secs(60);
 const LIMIT: usize = 8;
+/// A device behind a receiver stops answering while it sleeps: a G305 does
+/// after a few seconds without movement, which is most of the time someone
+/// types. Its last reading stays this long, as the reference monitor does
+/// (`graceSec = 1800` for receiver devices), so the indicator does not come
+/// and go with every query. Unplugging the receiver still clears it at once.
+const RECEIVER_GRACE: Duration = Duration::from_secs(30 * 60);
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
@@ -162,7 +168,13 @@ struct Entry {
     generation: u64,
     next: Instant,
     failures: u8,
-    devices: Vec<Device>,
+    devices: Vec<Held>,
+}
+/// One device's last reading and when its receiver last reported it.
+struct Held {
+    slot: u8,
+    seen: Instant,
+    device: Device,
 }
 #[derive(Default)]
 pub struct Sources {
@@ -297,36 +309,54 @@ impl Sources {
         else {
             return;
         };
-        entry.devices.clear();
+        let now = Instant::now();
+        let previous = std::mem::take(&mut entry.devices);
         match response.result {
             Ok(readings) => {
                 entry.failures = 0;
                 entry.devices = readings
                     .into_iter()
-                    .map(|reading| Device {
-                        id: if reading.slot == 0 {
-                            entry.id.clone()
-                        } else {
-                            format!("{}/{}", entry.id, reading.slot)
+                    .map(|reading| Held {
+                        slot: reading.slot,
+                        seen: now,
+                        device: Device {
+                            id: if reading.slot == 0 {
+                                entry.id.clone()
+                            } else {
+                                format!("{}/{}", entry.id, reading.slot)
+                            },
+                            name: if reading.kind == Kind::Mouse {
+                                "Logitech HID++".into()
+                            } else {
+                                "Wireless headset".into()
+                            },
+                            kind: reading.kind,
+                            percent: reading.percent,
+                            conflicting: false,
+                            active_audio: false,
                         },
-                        name: if reading.kind == Kind::Mouse {
-                            "Logitech HID++".into()
-                        } else {
-                            "Wireless headset".into()
-                        },
-                        kind: reading.kind,
-                        percent: reading.percent,
-                        conflicting: false,
-                        active_audio: false,
                     })
                     .collect();
             }
             Err(_) => entry.failures = entry.failures.saturating_add(1),
         }
-        entry.next = Instant::now() + retry_delay(entry.failures);
+        // Receiver slots that did not answer this time (asleep, or a query
+        // that failed) keep their last reading for a while. Slot 0 is a
+        // headset on its own cable or dongle: silent means gone.
+        for held in previous {
+            if held.slot != 0
+                && now.saturating_duration_since(held.seen) < RECEIVER_GRACE
+                && !entry.devices.iter().any(|fresh| fresh.slot == held.slot)
+            {
+                entry.devices.push(held);
+            }
+        }
+        entry.next = now + retry_delay(entry.failures);
     }
     pub fn devices(&self) -> impl Iterator<Item = &Device> {
-        self.entries.values().flat_map(|entry| &entry.devices)
+        self.entries
+            .values()
+            .flat_map(|entry| entry.devices.iter().map(|held| &held.device))
     }
 }
 fn retry_delay(failures: u8) -> Duration {
@@ -416,6 +446,49 @@ mod tests {
         assert_eq!(sources.devices().count(), 0);
         sources.remove(path);
         assert!(sources.deadline().is_none());
+    }
+
+    #[test]
+    fn a_sleeping_receiver_device_keeps_its_last_reading_for_a_while() {
+        let path = r"\\?\hid#vid_046d&pid_c53f&mi_02&col02#7&12345678&0&0001#{hid-guid}";
+        let mut sources = Sources::default();
+        sources.add(path.into(), "g305".into());
+        let key = protocol::receiver_key(path).unwrap_or_default();
+        let generation = sources.entries[&key].generation;
+        let mouse = Reading {
+            slot: 1,
+            kind: Kind::Mouse,
+            percent: Some(90),
+        };
+        let done = |result| Completed {
+            path: key.clone(),
+            generation,
+            result,
+        };
+        sources.complete(done(Ok(vec![mouse.clone()])));
+        // Asleep: the receiver answers, the mouse does not.
+        sources.complete(done(Ok(Vec::new())));
+        assert_eq!(sources.devices().next().and_then(|d| d.percent), Some(90));
+        // A failed query does not drop it either.
+        sources.complete(done(Err(anyhow::anyhow!("timeout"))));
+        assert_eq!(sources.devices().count(), 1);
+        // A fresh reading replaces it, never duplicates it.
+        sources.complete(done(Ok(vec![Reading {
+            percent: Some(85),
+            ..mouse
+        }])));
+        assert_eq!(sources.devices().count(), 1);
+        assert_eq!(sources.devices().next().and_then(|d| d.percent), Some(85));
+        // Past the grace period it is gone.
+        if let Some(entry) = sources.entries.get_mut(&key) {
+            for held in &mut entry.devices {
+                held.seen = Instant::now()
+                    .checked_sub(RECEIVER_GRACE + Duration::from_secs(1))
+                    .unwrap_or(held.seen);
+            }
+        }
+        sources.complete(done(Ok(Vec::new())));
+        assert_eq!(sources.devices().count(), 0);
     }
 
     #[test]

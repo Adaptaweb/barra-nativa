@@ -280,6 +280,12 @@ impl Drop for PendingRead<'_> {
     }
 }
 
+/// How long one HID++ request through a receiver may wait for its reply.
+/// The radio wakes a mouse in power saving first (a G305 spends most of its
+/// time there), which takes longer than a wired reply; the reference monitor
+/// waits 400 ms for its ping. The query's total budget is unchanged.
+const HIDPP_REPLY: Duration = Duration::from_millis(400);
+
 struct LogitechWire {
     collections: Vec<Hid>,
     until: Instant,
@@ -301,7 +307,7 @@ impl Wire for LogitechWire {
         }
         let mut packet = request[..output.output].to_vec();
         packet[0] = if output.output == 7 { 0x10 } else { 0x11 };
-        let end = self.until.min(Instant::now() + Duration::from_millis(150));
+        let end = self.until.min(Instant::now() + HIDPP_REPLY);
         let mut reads = self
             .collections
             .iter()

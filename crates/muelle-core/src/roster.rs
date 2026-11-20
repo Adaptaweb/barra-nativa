@@ -331,6 +331,15 @@ impl Roster {
         &self.recent
     }
 
+    /// Takes `id` out of the recent apps (the user dismissed it, or it was
+    /// uninstalled). Opening and closing it again makes it recent again.
+    /// Returns whether it was there.
+    pub fn forget_recent(&mut self, id: &str) -> bool {
+        let before = self.recent.len();
+        self.recent.retain(|recent| recent != id);
+        self.recent.len() != before
+    }
+
     /// Pinned items and open apps in display order, with pinned items first.
     /// A group is running when any of its apps is.
     #[must_use]
@@ -512,6 +521,21 @@ mod tests {
         roster.sync([]);
         roster.sync(["editor"]);
         assert!(roster.recent().is_empty());
+    }
+
+    #[test]
+    fn forgetting_a_recent_app_removes_only_it_until_it_closes_again() {
+        let mut roster = roster();
+        for app in ["a", "b"] {
+            roster.sync([app]);
+            roster.sync([]);
+        }
+        assert!(roster.forget_recent("a"));
+        assert!(!roster.forget_recent("a"));
+        assert_eq!(roster.recent(), ["b"]);
+        roster.sync(["a"]);
+        roster.sync([]);
+        assert_eq!(roster.recent(), ["a", "b"]);
     }
 
     #[test]

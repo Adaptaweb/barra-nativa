@@ -42,7 +42,7 @@ use windows_numerics::{Vector2, Vector3};
 use crate::{
     app,
     gfx::{Gfx, Ink},
-    scene::Theme,
+    scene::{AttentionBadge, Theme},
 };
 
 const TIMER: usize = 1;
@@ -263,6 +263,7 @@ const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
 struct ItemVisual {
     root: ContainerVisual,
     highlight: SpriteVisual,
+    attention: Option<AttentionBadge>,
 }
 
 pub struct GroupView {
@@ -279,6 +280,7 @@ pub struct GroupView {
     panel: Option<ContainerVisual>,
     anchor: RECT,
     scale: f32,
+    theme: Theme,
     opened: Instant,
     animated: bool,
     /// The app pressed, and where the pointer was on screen.
@@ -340,6 +342,7 @@ impl GroupView {
             panel: None,
             anchor: place.anchor,
             scale: place.scale,
+            theme: place.theme,
             opened: Instant::now(),
             animated: animations_enabled(),
             pressed: None,
@@ -386,6 +389,37 @@ impl GroupView {
     /// The group's apps as they were when it opened.
     pub fn apps(&self) -> &[String] {
         &self.ids
+    }
+
+    pub fn set_attention(&mut self, gfx: &Gfx, pending: impl Fn(&str) -> bool) -> Result<()> {
+        for ((id, item), rect) in self
+            .ids
+            .iter()
+            .zip(&mut self.visuals)
+            .zip(&self.layout.icons)
+        {
+            let on = pending(id);
+            if on && item.attention.is_none() {
+                let badge = AttentionBadge::new(gfx, self.theme)?;
+                item.root.Children()?.InsertAtTop(&badge.visual)?;
+                item.attention = Some(badge);
+            }
+            if let Some(badge) = &mut item.attention {
+                badge.set_visible(on)?;
+                badge.place(
+                    muelle_core::layout::Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: (rect.right - rect.left) as f32,
+                        height: (rect.bottom - rect.top) as f32,
+                    },
+                    self.scale,
+                    1.0,
+                    true,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     fn build(&mut self, gfx: &Gfx, items: &[GroupItem], theme: Theme) -> Result<()> {
@@ -490,6 +524,7 @@ impl GroupView {
             self.visuals.push(ItemVisual {
                 root: app,
                 highlight,
+                attention: None,
             });
             self.targets.push(target);
         }

@@ -77,7 +77,7 @@ une version dans les [Releases](https://github.com/crafter-station/Muelle/releas
 2. Muelle est récent : SmartScreen peut ne pas encore le reconnaître et
    indiquer qu'il a protégé votre ordinateur. Choisissez **Informations
    complémentaires → Exécuter quand même**. Voir la
-   [politique de signature du code](https://muellee.vercel.app/code-signing-policy).
+   [politique de signature du code](https://muelle.crafter.run/code-signing-policy).
 3. Ouvrez **Muelle** depuis le menu Démarrer, puis choisissez **Dock** pour
    personnaliser le dock et la barre de menus.
 
@@ -171,4 +171,4 @@ au projet. Il fait deux sortes de requêtes réseau, toutes deux facultatives :
   Désactivez-la dans Réglages → Barre de menus → *Afficher l'utilisation des
   fournisseurs d'IA*.
 
-Détails : [muellee.vercel.app/privacy](https://muellee.vercel.app/privacy).
+Détails : [muelle.crafter.run/privacy](https://muelle.crafter.run/privacy).

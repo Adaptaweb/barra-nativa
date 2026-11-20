@@ -30,6 +30,9 @@ use windows::Win32::{
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
+mod opencode;
+pub use opencode::{LocalSpend, OpenCodeDetails};
+
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum State {
     Loading,
@@ -73,6 +76,8 @@ pub struct ProviderUsage {
     pub state: State,
     pub windows: Vec<Window>,
     pub fetched_at: Option<SystemTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode: Option<OpenCodeDetails>,
 }
 
 impl Default for ProviderUsage {
@@ -81,11 +86,33 @@ impl Default for ProviderUsage {
             state: State::Loading,
             windows: Vec::new(),
             fetched_at: None,
+            opencode: None,
         }
     }
 }
 
 impl ProviderUsage {
+    pub fn name(&self, provider: Provider) -> &'static str {
+        match (provider, self.opencode.as_ref()) {
+            (Provider::OpenCode, Some(details)) => match (details.go, details.zen) {
+                (true, false) => "OpenCode Go",
+                (false, true) => "OpenCode Zen",
+                _ => "OpenCode",
+            },
+            _ => provider.name(),
+        }
+    }
+
+    pub fn compact_text(&self) -> String {
+        if let Some(window) = self.main_window() {
+            format!("{}%", window.used_percent)
+        } else if let Some(spend) = self.opencode.as_ref().and_then(|details| details.spend) {
+            spend.amount()
+        } else {
+            "—".to_owned()
+        }
+    }
+
     pub fn main_window(&self) -> Option<&Window> {
         self.windows.first()
     }
@@ -123,7 +150,7 @@ impl Provider {
         match self {
             Self::Claude => "Claude",
             Self::Codex => "Codex",
-            Self::OpenCode => "OpenCode Go",
+            Self::OpenCode => "OpenCode",
             Self::Gemini => "Gemini",
         }
     }
@@ -348,8 +375,12 @@ impl Drop for Monitor {
 }
 
 fn merge(previous: &mut ProviderUsage, fetched: ProviderUsage) {
-    if fetched.state == State::Unavailable && !previous.windows.is_empty() {
+    if fetched.state == State::Unavailable
+        && !previous.windows.is_empty()
+        && fetched.opencode.is_none_or(|details| details.go)
+    {
         previous.state = State::Unavailable;
+        previous.opencode = fetched.opencode;
     } else {
         *previous = fetched;
     }
@@ -401,6 +432,7 @@ fn ready(windows: Vec<Window>) -> ProviderUsage {
         state: State::Ready,
         windows,
         fetched_at: Some(SystemTime::now()),
+        opencode: None,
     }
 }
 
@@ -502,10 +534,49 @@ fn fetch_opencode(client: &Client) -> ProviderUsage {
     let api_key = env::var("OPENCODE_API_KEY").ok();
     let data_home = env::var_os("XDG_DATA_HOME").map(PathBuf::from);
     let home = home();
-    let Some(token) = opencode_token(api_key.as_deref(), data_home.as_deref(), home.as_deref())
-    else {
-        return sign_in();
-    };
+    let path = opencode_auth_path(data_home.as_deref(), home.as_deref());
+    // One bounded read, shared by both credential detection and the Go request.
+    let auth = path.as_deref().and_then(read_opencode_auth);
+    let token = opencode_key(api_key.as_deref(), auth.as_ref());
+    // OPENCODE_API_KEY can belong to either service. An environment key alone
+    // is not evidence of a Go subscription: require its saved ID or real quotas.
+    let go_key = auth
+        .as_ref()
+        .is_some_and(|auth| opencode_entry(auth, "opencode-go").is_some());
+    let zen_key = auth
+        .as_ref()
+        .is_some_and(|auth| opencode_entry(auth, "opencode").is_some());
+    let spend = path
+        .as_deref()
+        .and_then(Path::parent)
+        .and_then(|directory| {
+            opencode::local_spend(&directory.join("opencode.db"), Utc::now())
+                .ok()
+                .flatten()
+        });
+    let quota = token.map_or_else(sign_in, |token| fetch_opencode_go(client, token));
+    combine_opencode(quota, go_key, zen_key, spend)
+}
+
+fn combine_opencode(
+    mut quota: ProviderUsage,
+    go_key: bool,
+    zen_key: bool,
+    spend: Option<LocalSpend>,
+) -> ProviderUsage {
+    let go = go_key || !quota.windows.is_empty();
+    let zen = zen_key || spend.is_some();
+    // Zen's local cost history needs no authentication. Lack of a Go subscription
+    // must not produce a misleading sign-in prompt for a Zen-only connection.
+    if !go && zen {
+        quota.state = State::Ready;
+        quota.fetched_at = Some(SystemTime::now());
+    }
+    quota.opencode = Some(OpenCodeDetails { go, zen, spend });
+    quota
+}
+
+fn fetch_opencode_go(client: &Client, token: &str) -> ProviderUsage {
     let Ok(response) = client
         .get("https://opencode.ai/zen/go/v1/usage")
         .bearer_auth(token)
@@ -514,7 +585,7 @@ fn fetch_opencode(client: &Client) -> ProviderUsage {
     else {
         return unavailable();
     };
-    if matches!(response.status().as_u16(), 401 | 403) {
+    if response.status().as_u16() == 401 {
         return sign_in();
     }
     let Ok(body) = response
@@ -550,28 +621,39 @@ fn opencode_auth_path(data_home: Option<&Path>, home: Option<&Path>) -> Option<P
 }
 
 fn opencode_key<'a>(api_key: Option<&'a str>, auth: Option<&'a Value>) -> Option<&'a str> {
-    let usable = |key: &'a str| {
-        let key = key.trim();
-        (!key.is_empty()
-            && key != "opencode-oauth-dummy-key"
-            && !key
-                .bytes()
-                .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control()))
-        .then_some(key)
-    };
-    api_key.and_then(usable).or_else(|| {
+    api_key.and_then(opencode_usable_key).or_else(|| {
         // Go has its own provider ID. Keep the legacy Zen API-key entry as a
         // fallback, but never forward another provider's OAuth or API secrets.
-        ["opencode-go", "opencode"].into_iter().find_map(|id| {
-            let entry = auth?.get(id)?;
-            if entry.get("type")?.as_str()? != "api" {
-                return None;
-            }
-            entry.get("key")?.as_str().and_then(usable)
-        })
+        ["opencode-go", "opencode"]
+            .into_iter()
+            .find_map(|id| opencode_entry(auth?, id))
     })
 }
 
+fn opencode_usable_key(key: &str) -> Option<&str> {
+    let key = key.trim();
+    (!key.is_empty()
+        && key != "opencode-oauth-dummy-key"
+        && !key
+            .bytes()
+            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control()))
+    .then_some(key)
+}
+
+fn opencode_entry<'a>(auth: &'a Value, id: &str) -> Option<&'a str> {
+    let entry = auth.get(id)?;
+    (entry.get("type")?.as_str()? == "api")
+        .then(|| entry.get("key")?.as_str().and_then(opencode_usable_key))?
+}
+
+fn read_opencode_auth(path: &Path) -> Option<Value> {
+    let file = fs::File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(256 * 1024).read_to_end(&mut bytes).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+#[cfg(test)]
 fn opencode_token(
     api_key: Option<&str>,
     data_home: Option<&Path>,
@@ -581,7 +663,7 @@ fn opencode_token(
         return Some(key.to_owned());
     }
     let path = opencode_auth_path(data_home, home)?;
-    let auth: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    let auth = read_opencode_auth(&path)?;
     opencode_key(None, Some(&auth)).map(str::to_owned)
 }
 
@@ -603,11 +685,19 @@ fn parse_opencode(value: &Value) -> Vec<Window> {
             (limit > 0.0).then(|| (used * 100.0 / limit).clamp(0.0, 100.0).round() as u8)
         })?;
         let resets_at = lane
-            .get("resetInSec")
-            .or_else(|| lane.get("reset_in_sec"))
-            .and_then(Value::as_i64)
-            .filter(|seconds| *seconds >= 0)
-            .and_then(|seconds| DateTime::from_timestamp(Utc::now().timestamp() + seconds, 0));
+            .get("resetsAt")
+            .or_else(|| lane.get("resets_at"))
+            .and_then(Value::as_str)
+            .and_then(|time| DateTime::parse_from_rfc3339(time).ok())
+            .map(|time| time.with_timezone(&Utc))
+            .or_else(|| {
+                lane.get("resetInSec")
+                    .or_else(|| lane.get("reset_in_sec"))
+                    .and_then(Value::as_i64)
+                    .filter(|seconds| *seconds >= 0)
+                    .and_then(|seconds| Utc::now().timestamp().checked_add(seconds))
+                    .and_then(|seconds| DateTime::from_timestamp(seconds, 0))
+            });
         Some(Window {
             label: None,
             minutes,
@@ -984,6 +1074,7 @@ fn scan_rollout(path: &std::path::Path) -> Option<ProviderUsage> {
             state: State::Ready,
             windows,
             fetched_at,
+            opencode: None,
         });
     }
     None
@@ -1061,6 +1152,75 @@ fn parse_codex(value: &Value) -> Vec<Window> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn opencode_go_reads_official_absolute_resets_and_rejects_overflowing_legacy_dates() {
+        let windows = parse_opencode(&json!({"usage": {
+            "rolling": {"percent": 15, "resetsAt": "2026-11-20T22:00:00Z"},
+            "weekly": {"percent": 35, "resets_at": "2026-11-23T00:00:00Z"},
+            "monthly": {"percent": 50, "resetInSec": i64::MAX}
+        }}));
+        assert_eq!(windows.len(), 3);
+        assert_eq!(
+            windows[0]
+                .resets_at
+                .map(|time| time.to_rfc3339())
+                .as_deref(),
+            Some("2026-11-20T22:00:00+00:00")
+        );
+        assert!(windows[1].resets_at.is_some());
+        assert!(windows[2].resets_at.is_none());
+    }
+
+    #[test]
+    fn opencode_zen_without_go_never_requests_a_go_login_or_invents_a_quota() {
+        let usage = combine_opencode(unavailable(), false, true, None);
+        assert!(usage.state == State::Ready);
+        assert_eq!(usage.name(Provider::OpenCode), "OpenCode Zen");
+        assert!(usage.main_window().is_none());
+        assert_eq!(usage.compact_text(), "—");
+        let usage = combine_opencode(
+            sign_in(),
+            false,
+            false,
+            Some(LocalSpend {
+                micro_usd: 1_250_000,
+                requests: 3,
+            }),
+        );
+        assert_eq!(usage.name(Provider::OpenCode), "OpenCode Zen");
+        assert_eq!(usage.compact_text(), "$1.25");
+    }
+
+    #[test]
+    fn opencode_keeps_go_quotas_and_zen_cost_separate_in_the_same_snapshot() {
+        let quota = ready(parse_opencode(&json!({"usage": {
+            "rolling": {"percent": 15}, "weekly": {"percent": 35}, "monthly": {"percent": 50}
+        }})));
+        let usage = combine_opencode(
+            quota,
+            true,
+            true,
+            Some(LocalSpend {
+                micro_usd: 4_200_000,
+                requests: 5,
+            }),
+        );
+        assert_eq!(usage.name(Provider::OpenCode), "OpenCode");
+        assert_eq!(usage.compact_text(), "15%");
+        assert_eq!(usage.windows.len(), 3);
+        assert_eq!(
+            usage
+                .opencode
+                .and_then(|details| details.spend)
+                .map(LocalSpend::amount)
+                .as_deref(),
+            Some("$4.20")
+        );
+        let only_go = combine_opencode(sign_in(), true, false, None);
+        assert!(only_go.state == State::SignIn);
+        assert_eq!(only_go.name(Provider::OpenCode), "OpenCode Go");
+    }
 
     #[test]
     fn claude_missing_window_does_not_become_zero() {

@@ -10,6 +10,29 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Added a persistent red attention badge for apps that request attention through
+  Windows, including grouped apps and minimized-window thumbnails (issue #22,
+  first stage). It clears on window activation/closure and follows Windows' badge
+  preference live. Updates reuse visuals without rebuilding the dock, additional
+  polling, notification-content access, or invented unread-message counts.
+- Fixed (issue #25): an uninstalled app could stay in Recent Apps with no way
+  to remove it. Recent apps that no longer exist now leave the dock on their
+  own, as pinned ones already did, and clicking one that was just uninstalled
+  removes it instead of failing. A recent app's menu also has "Remove from
+  Dock", to dismiss it while recent apps stay on; it comes back the next time
+  you open and close it.
+- Fixed: a Logitech mouse on a receiver (reported with a G305 on its LIGHTSPEED
+  receiver) did not show its battery in the menu bar, or showed it only for a
+  moment. The mouse sleeps a few seconds after it stops moving and then does not
+  answer, and every check dropped it. A device behind a receiver now keeps its
+  last reading for 30 minutes while it sleeps, as Logitech's own tools do, and
+  each request waits longer for a reply over the radio. Unplugging the
+  receiver still removes it at once.
+- OpenCode now distinguishes Go quotas from Zen's estimated cost on this device
+  over the last 30 days. Both appear in one theme-aware card; Go also shows its
+  monthly window. Zen opens the official Console for the real account balance,
+  which is not exposed by its public API. Local history is read only, bounded,
+  and refreshed by the existing worker without extra background polling.
 - Fixed OpenCode Go account discovery: read its `opencode-go` credential, respect
   `XDG_DATA_HOME`, and fall back from an empty environment key to the saved login.
   The usage card now identifies Go explicitly and provides a working connection
@@ -28,6 +51,24 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Añadido un badge rojo persistente para las apps que solicitan atención mediante
+  Windows, también en grupos y miniaturas minimizadas (issue #22, primera etapa).
+  Se quita al activar/cerrar la ventana y sigue en caliente la preferencia de
+  badges de Windows. Se reutilizan los visuales sin reconstruir el dock, sin
+  sondeos adicionales, sin leer mensajes y sin inventar contadores de no leídos.
+- Corregido (issue #25): una app desinstalada podía quedarse en Apps recientes
+  sin forma de quitarla. Las apps recientes que ya no existen salen solas del
+  dock, como ya pasaba con las fijadas, y al hacer clic en una recién
+  desinstalada se quita en vez de fallar. El menú de una app reciente tiene
+  además «Quitar del Dock» para descartarla sin desactivar las recientes;
+  vuelve la próxima vez que la abras y la cierres.
+- Corregido: un ratón Logitech con receptor (reportado con un G305 y su receptor
+  LIGHTSPEED) no mostraba su batería en la barra superior, o solo un momento. El
+  ratón se duerme a los pocos segundos de no moverlo y entonces no responde, y
+  cada comprobación lo quitaba. Un dispositivo tras receptor conserva ahora su
+  última lectura 30 minutos mientras duerme, como las herramientas de Logitech, y
+  cada petición espera más la respuesta por radio. Quitar el
+  receptor lo sigue borrando al instante.
 - Corregido un diálogo de error bloqueante ("No se encuentra el ordinal 381") al abrir
   aplicaciones con Uninstall Tool (`utshellext.dll`) u otras extensiones del shell de
   terceros instaladas (issue #23). `muelle.exe` ahora incrusta un manifiesto de aplicación
@@ -49,6 +90,11 @@ copia la sección de la versión que se publica a la release de GitHub.
   se respeta `XDG_DATA_HOME` y una variable de clave vacía permite usar la sesión
   guardada. La tarjeta identifica Go e incluye un botón funcional con instrucciones
   de conexión, en lugar de un texto de inicio de sesión sin acción.
+- OpenCode distingue las cuotas de Go del gasto estimado de Zen en este equipo
+  durante los últimos 30 días, en una misma tarjeta que respeta el tema. Go muestra
+  también su ventana mensual. Zen permite abrir la consola oficial para consultar
+  el saldo real, que no expone su API pública. El historial se lee sin modificarlo,
+  con límites de trabajo y usando el worker e intervalo existentes.
 - Los manifiestos de WinGet usan `/S` en ambos modos desatendidos y declaran
   las dependencias de Visual C++ x64 y WebView2. Se corrigen riesgos de interfaz
   en la primera instalación y de runtimes ausentes; falta revalidar con Microsoft.
