@@ -8,8 +8,11 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+## [0.1.17]
+
 ### English
 
+- Added Google Search Console ownership verification to the website.
 - Automated WinGet manifest generation and submission for the first package and
   future stable releases, with manual retries, native validation, final installer
   checksum checks, duplicate detection and explicit missing-token failures.
@@ -34,6 +37,7 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Añadida la verificación de propiedad de Google Search Console en la web.
 - Automatizada la generación y el envío de manifiestos de WinGet para la primera
   publicación y las próximas releases estables, con reintentos manuales, validación
   nativa, comprobación del hash final, detección de duplicados y error si falta el token.
