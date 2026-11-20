@@ -8,8 +8,20 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+## [0.1.16]
+
 ### English
 
+- Initial automatic USB battery adapters for allowlisted Logitech Unifying/Bolt
+  receivers and SteelSeries Nova 7 variants. Queries run in disposable processes,
+  pause with the hidden menu bar and use a 60-second interval with error backoff.
+  Approximate levels stay unknown. Physical validation is still pending; radio
+  link changes may take until the next query to appear.
+- Optional mouse/headset battery indicators in Settings → Menu bar, off by default.
+  Enabling them detects connected accessories automatically; missing battery data
+  displays a dash. Disabling them stops the isolated reader and all accessory
+  queries. The landing's Settings demo includes the switch and inline indicators.
+  Hardware compatibility still needs validation.
 - The menu bar now follows Windows' Battery percentage setting, showing the
   charge next to the battery icon when enabled. Preference changes apply
   without restarting Muelle, through registry notifications rather than polling.
@@ -19,9 +31,26 @@ copia la sección de la versión que se publica a la release de GitHub.
 - Grouping now requires dropping over the target icon vertically as well as
   horizontally. Recovered or collapsed groups no longer duplicate pinned apps
   in recent apps.
+- Fixed (issue #15): the Recycle Bin could keep its full icon after being
+  emptied, even after restarting Muelle. Right after a change, Explorer may
+  still draw the previous state, and that icon was cached for the day under
+  the other state. The empty and full icons now come from where Windows names
+  them (`DefaultIcon`, including an icon you chose in Desktop icon settings),
+  and wrongly cached ones are replaced on their own.
 
 ### Español
 
+- Adaptadores USB iniciales para receptores Logitech Unifying/Bolt y variantes
+  SteelSeries Nova 7 identificadas. Consultas en procesos desechables, pausadas
+  con la barra oculta, con intervalo de 60 segundos y espera tras errores.
+  Los niveles aproximados siguen sin porcentaje. Falta validación física; los
+  cambios del enlace radio pueden tardar hasta la consulta siguiente.
+- Indicadores opcionales de batería del ratón y auriculares en Ajustes → Barra
+  superior, desactivados por defecto. Al activarlos se detectan los accesorios
+  conectados automáticamente; un guion indica batería no disponible. Desactivarlos
+  termina el lector aislado y todas las consultas de accesorios. La demo de Ajustes
+  de la landing incluye el interruptor y los indicadores en la barra.
+  La compatibilidad con hardware real queda pendiente de validar.
 - La barra superior respeta la opción Porcentaje de batería de Windows y
   muestra la carga junto al icono cuando está activada. Los cambios se aplican
   sin reiniciar Muelle, mediante notificaciones del registro, sin sondeo.
@@ -31,6 +60,12 @@ copia la sección de la versión que se publica a la release de GitHub.
   una cancelación.
 - Agrupar requiere soltar sobre el icono también en vertical. Recuperar o
   reducir un grupo ya no duplica apps fijadas en las apps recientes.
+- Corregido (issue #15): la Papelera podía seguir con el icono de llena tras
+  vaciarla, incluso al reiniciar Muelle. Justo después de un cambio, Explorer
+  puede dibujar aún el estado anterior, y ese icono se guardaba en caché todo
+  el día bajo el otro estado. Los iconos de vacía y llena se leen ahora de
+  donde Windows los define (`DefaultIcon`, incluido un icono elegido en la
+  configuración de iconos del escritorio), y los guardados mal se reemplazan solos.
 
 ## [0.1.15]
 
