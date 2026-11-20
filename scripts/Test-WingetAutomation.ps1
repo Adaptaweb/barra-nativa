@@ -11,6 +11,7 @@ $savedSummary = $env:GITHUB_STEP_SUMMARY
 $savedExitCode = $global:LASTEXITCODE
 $state = @{}
 $state.downloads = 0
+$state.apiCalls = 0
 $state.validationExit = 0
 $state.productVersion = '0.1.16'
 $state.signatureStatus = 'NotSigned'
@@ -27,6 +28,7 @@ $state.fixture = [pscustomobject]@{
 }
 function Invoke-RestMethod {
     param($Uri, $Headers, $TimeoutSec)
+    $state.apiCalls++
     if ($Uri -like 'https://api.github.com/repos/crafter-station/Muelle/releases/*') { return $state.fixture }
     if ($Uri -like 'https://api.github.com/repos/microsoft/winget-pkgs/contents/*') { return $state.catalog }
     if ($Uri -like 'https://api.github.com/search/issues?*') { return @{ items = $state.openPrs } }
@@ -106,6 +108,13 @@ try {
     $state.validationExit = 0
     $beforeSubmit = $state.downloads
     Assert-Rejected 'missing submission token' { & $submit -ManifestDirectory $manifest.Directory } 'WINGET_TOKEN is missing*'
+    $env:WINGET_CREATE_GITHUB_TOKEN = 'github_pat_fixture_not_a_real_token'
+    $beforeTokenCheck = $state.apiCalls
+    Assert-Rejected 'fine-grained PAT rejected before API access or tool download' { & $submit -ManifestDirectory $manifest.Directory } 'WINGET_TOKEN is a fine-grained PAT*'
+    if ($state.apiCalls -ne $beforeTokenCheck -or $state.downloads -ne $beforeSubmit) {
+        throw 'Unsupported credentials reached a network or executable download boundary.'
+    }
+    $env:WINGET_CREATE_GITHUB_TOKEN = ''
     $state.catalog = @{ content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("InstallerSha256: $hash`n")) }
     & $submit -ManifestDirectory $manifest.Directory
     Write-Host 'PASS: accepted version is not resubmitted'

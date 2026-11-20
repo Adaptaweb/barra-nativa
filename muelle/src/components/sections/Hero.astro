@@ -29,18 +29,16 @@ import { site } from "@/data/site";
   </p>
 
   <div data-h class="flex flex-wrap items-center justify-center gap-3">
-    <div class="inline-flex items-center gap-2">
-      <Button href={site.download}>
-        Download for Windows
-        <Icon name="arrow-right" size={18} />
-      </Button>
+    <Button href={site.download}>
+      Download for Windows
       <span
         data-installer-download-count
         aria-label="Total installer downloads"
-        class="font-mono text-sm font-semibold text-mute"
+        class="rounded-full bg-ink/10 px-2 py-0.5 font-mono text-xs font-semibold"
         hidden
       ></span>
-    </div>
+      <Icon name="arrow-right" size={18} />
+    </Button>
     <Button href="#dock" variant="secondary">Take a look</Button>
   </div>
 

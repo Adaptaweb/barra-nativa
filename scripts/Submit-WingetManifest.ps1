@@ -12,6 +12,11 @@ $sha256 = [regex]::Match($installer, '(?m)^\s+InstallerSha256: ([A-Fa-f0-9]{64})
 if (-not $version -or -not $sha256 -or $installer -notmatch '(?m)^PackageIdentifier: CrafterStation\.Muelle\s*$') {
     throw 'Expected a generated, validated CrafterStation.Muelle installer manifest.'
 }
+# WinGetCreate does not support fine-grained PATs, including ones that can
+# read all public repositories. They cannot perform this cross-repository flow.
+if ($env:WINGET_CREATE_GITHUB_TOKEN -clike 'github_pat_*') {
+    throw 'WINGET_TOKEN is a fine-grained PAT, which WinGetCreate does not support. Create a token under GitHub Settings > Developer settings > Personal access tokens > Tokens (classic), select public_repo, replace the WINGET_TOKEN Actions secret, and rerun this same published version with Submit enabled. See https://github.com/settings/tokens/new and FIRMA-DE-CODIGO.md.'
+}
 $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'Muelle-WinGet' }
 $lookupToken = if ($env:WINGET_CREATE_GITHUB_TOKEN) { $env:WINGET_CREATE_GITHUB_TOKEN } else { $env:GH_TOKEN }
 if ($lookupToken) { $headers.Authorization = "Bearer $lookupToken" }
@@ -63,7 +68,7 @@ try {
     }
     & $tool submit --no-open --prtitle "${kind}: $id version $version" $ManifestDirectory
     if ($LASTEXITCODE) {
-        throw "WinGetCreate submission failed (exit $LASTEXITCODE). Check the token permissions/expiry and Microsoft CLA; the validated artifact remains available."
+        throw "WinGetCreate submission failed (exit $LASTEXITCODE). Check the client output above. For token permission errors, use a classic PAT with public_repo, check expiry/SSO authorization, replace the WINGET_TOKEN Actions secret and rerun this same published version. The validated artifact remains available."
     }
     Write-Result "Submitted $id $version to microsoft/winget-pkgs. Microsoft review and catalog indexing are still required."
 } finally {
