@@ -10,6 +10,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Settings now illustrate Dock placement, island styles and Genie speeds, with
+  native keyboard-selectable options, clearer icons and shorter descriptions.
+  A permanent sidebar link opens Muelle on GitHub to explore and star the project.
 - Settings → Dock → Position on screen: Left, Bottom or Right, as on macOS.
   Bottom stays the default. On a side the dock runs top to bottom below the
   menu bar, icons grow and show their names inward, menus, groups and window
@@ -77,6 +80,10 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Ajustes incorpora vistas de la posición del Dock, los estilos de isla y la
+  velocidad del genio, con selección por teclado, iconos y textos más breves.
+  Un enlace fijo al pie del sidebar abre Muelle en GitHub para conocer y apoyar
+  el proyecto con una estrella.
 - Ajustes → Dock → Posición en la pantalla: Izquierda, Abajo o Derecha, como
   en macOS. Abajo sigue siendo la predeterminada. En un lateral el dock va de
   arriba abajo bajo la barra superior, los iconos crecen y muestran su nombre

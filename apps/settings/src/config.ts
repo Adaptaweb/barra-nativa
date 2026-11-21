@@ -63,4 +63,6 @@ export interface UpdateInfo {
 /** Resolves to the newer version available, or null when up to date. */
 export const checkUpdate = () => invoke<UpdateInfo | null>("check_update");
 export const openReleaseNotes = (url: string) => invoke<void>("open_release_notes", { url });
+/** Fixed project URL, opened only when the user asks. */
+export const openRepository = () => invoke<void>("open_repository");
 export const installUpdate = () => invoke<void>("install_update");

@@ -170,6 +170,17 @@ fn open_release_notes(url: String) -> Result<(), String> {
     launcher::open(&url).map_err(|error| error.to_string())
 }
 
+/// A fixed destination: this command cannot launch arbitrary frontend input.
+#[tauri::command]
+async fn open_repository() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        launcher::open("https://github.com/crafter-station/Muelle")
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// Downloads the signed installer and runs it; the installer stops the dock,
 /// replaces both apps and starts the dock again. This process exits.
 #[tauri::command]
@@ -286,7 +297,8 @@ fn main() {
             pick_folder,
             check_update,
             install_update,
-            open_release_notes
+            open_release_notes,
+            open_repository
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {
