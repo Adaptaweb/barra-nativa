@@ -10,6 +10,14 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Fixed notification controls and stray conditional text appearing in Menu Bar
+  settings. Each page now starts at the top when selected. Failed preference
+  writes remain retryable and keep Settings open until changes can be saved.
+- Fixed stale reset-confirmation timers; added Settings rendering and save-failure
+  regression checks to CI without new runtime dependencies.
+- Settings now shows the actual Windows state for automatic Search, Task View,
+  Widgets and battery-percentage switches. Explicit choices remain authoritative;
+  system values are display-only and refresh on focus without idle polling.
 - Added macOS-style glass notification banners supporting configurable screen positions (top-right or bottom-right), auto-dismiss with hover pause, click-to-activate, and dismiss button or middle-click.
 - Added red unread notification count badges on dock icons, cleared automatically when the app is focused or dismissed.
 - Added dock icon attention bounce on shell alert events (`HSHELL_FLASH`), respecting Windows reduced-motion settings.
@@ -28,6 +36,16 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Corregidas las opciones de Notificaciones y el texto de una condición que
+  aparecían en Barra superior. Cada sección comienza arriba al seleccionarla.
+  Los cambios que fallen al guardarse se conservan para reintentar y Ajustes
+  permanece abierto hasta poder guardarlos.
+- Corregidos los temporizadores antiguos de confirmación al restablecer;
+  añadidas pruebas de pantallas y fallos de guardado a CI sin nuevas dependencias.
+- Ajustes muestra el estado real de Windows en los interruptores automáticos de
+  Búsqueda, Vista de tareas, Widgets y porcentaje de batería. Las elecciones
+  explícitas tienen prioridad; los valores del sistema solo se muestran y se
+  releen al recuperar el foco, sin sondeo en reposo.
 - Incorporadas alertas en banners de cristal estilo macOS con posición configurable (superior o inferior derecha), desaparición automática con pausa al pasar el cursor, clic para activar y botón de cierre o clic central para descartar.
 - Incorporadas insignias rojas de contador de notificaciones pendientes en los iconos del dock, eliminadas automáticamente al enfocar la app o descartar sus avisos.
 - Incorporada animación de rebote de atención en el dock cuando una app solicita atención (`HSHELL_FLASH`), respetando las preferencias de movimiento reducido de Windows.

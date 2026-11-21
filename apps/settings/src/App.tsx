@@ -9,13 +9,14 @@ import {
   type IslandStyle,
   type Language,
   type UpdateInfo,
+  type WindowsPreferences,
   ICON_SIZE,
   MAX_MAGNIFIED_SIZE,
   checkUpdate,
   defaultConfig,
   getAutostart,
   openAnimationSettings,
-  windowsAnimations,
+  loadWindowsPreferences,
   installUpdate,
   loadConfig,
   loadWallpaperPreview,
@@ -76,18 +77,20 @@ function textsFor(language: Language): Texts {
 export function App() {
   const [config, setConfig] = useState<Config | null>(null);
   const [autostart, setAutostartState] = useState(false);
-  // Assumed on until asked, so the notice never flashes on a normal PC.
-  const [animations, setAnimations] = useState(true);
+  const [windowsPreferences, setWindowsPreferences] = useState<WindowsPreferences | null>(null);
+  // Keep the animation notice from flashing while the initial system read is pending.
+  const animations = windowsPreferences?.animations ?? true;
   useEffect(() => {
+    let alive = true;
     const check = () => {
-      windowsAnimations()
-        .then(setAnimations)
+      loadWindowsPreferences()
+        .then((values) => { if (alive) setWindowsPreferences(values); })
         .catch(() => {});
     };
     check();
-    // Back from Windows Settings after turning them on: the notice goes.
+    // One shared focus listener, with no polling while Settings is idle or closed.
     window.addEventListener("focus", check);
-    return () => window.removeEventListener("focus", check);
+    return () => { alive = false; window.removeEventListener("focus", check); };
   }, []);
   const [section, setSection] = useState<SectionId>("dock");
   const [failed, setFailed] = useState(false);
@@ -104,19 +107,29 @@ export function App() {
   /** "Later" hides the banner until Settings is opened again. */
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const pending = useRef<Partial<Config> | null>(null);
-  const writes = useRef(Promise.resolve());
+  const writes = useRef(Promise.resolve(true));
   const timer = useRef<number | undefined>(undefined);
   const resetTimer = useRef<number | undefined>(undefined);
 
   const flushSettings = useCallback(() => {
     window.clearTimeout(timer.current);
-    const latest = pending.current;
-    pending.current = null;
-    if (latest) {
-      writes.current = writes.current
-        .then(() => saveConfig(latest))
-        .then(() => setFailed(false))
-        .catch(() => setFailed(true));
+    if (pending.current) {
+      writes.current = writes.current.then(async () => {
+        // Take the patch when its turn starts. A failed earlier write can then
+        // rejoin the queue without overwriting a newer choice for the same key.
+        const latest = pending.current;
+        if (!latest) return true;
+        pending.current = null;
+        try {
+          await saveConfig(latest);
+          setFailed(false);
+          return true;
+        } catch {
+          pending.current = Object.assign({}, latest, pending.current);
+          setFailed(true);
+          return false;
+        }
+      });
     }
     return writes.current;
   }, []);
@@ -153,10 +166,14 @@ export function App() {
       }
       closing = true;
       // A change can be buffered or queued while an earlier write finishes.
-      let drained: Promise<void>;
+      let drained: Promise<boolean>;
       do {
         drained = flushSettings();
-        await drained;
+        if (!await drained) {
+          event.preventDefault();
+          closing = false;
+          return;
+        }
       } while (pending.current || writes.current !== drained);
     });
     return () => {
@@ -219,6 +236,7 @@ export function App() {
       resetTimer.current = window.setTimeout(() => setConfirmingReset(false), RESET_CONFIRM_MS);
       return;
     }
+    window.clearTimeout(resetTimer.current);
     setConfirmingReset(false);
     defaultConfig()
       .then(({ pinned: _pinned, recent: _recent, shortcutsFolder: _folder, ...defaults }) =>
@@ -304,7 +322,7 @@ export function App() {
             onNotes={() => showNotes(waiting)}
           />
         ) : null}
-        <div className="content-body">
+        <div className="content-body" key={section}>
           {section === "dock" ? (
             <>
               <Card title={t.groupAppearance}>
@@ -441,7 +459,6 @@ export function App() {
               </Card>
             </>
           ) : section === "menubar" ? (
-
             <>
               <Card>
                 <Row icon={<SettingIcon name="menu" />} label={t.menuBarShow} hint={t.menuBarHint}>
@@ -508,33 +525,34 @@ export function App() {
                   <Row icon={<SettingIcon name="battery" />} label={t.menuBarBatteryPercent} hint={t.menuBarBatteryPercentHint}>
                     <Toggle
                       label={t.menuBarBatteryPercent}
-                      checked={config.menuBarBatteryPercent ?? false}
+                      checked={config.menuBarBatteryPercent ?? windowsPreferences?.menuBarBatteryPercent}
                       onChange={(menuBarBatteryPercent) => update({ menuBarBatteryPercent })}
                     />
                   </Row>
                   <Row icon={<SettingIcon name="search" />} label={t.menuBarSearch} hint={t.menuBarSearchHint}>
                     <Toggle
                       label={t.menuBarSearch}
-                      checked={config.menuBarSearch ?? true}
+                      checked={config.menuBarSearch ?? windowsPreferences?.menuBarSearch}
                       onChange={(menuBarSearch) => update({ menuBarSearch })}
                     />
                   </Row>
                   <Row icon={<SettingIcon name="windows" />} label={t.menuBarTaskView} hint={t.menuBarTaskViewHint}>
                     <Toggle
                       label={t.menuBarTaskView}
-                      checked={config.menuBarTaskView ?? true}
+                      checked={config.menuBarTaskView ?? windowsPreferences?.menuBarTaskView}
                       onChange={(menuBarTaskView) => update({ menuBarTaskView })}
                     />
                   </Row>
                   <Row icon={<SettingIcon name="widgets" />} label={t.menuBarWidgets} hint={t.menuBarWidgetsHint}>
                     <Toggle
                       label={t.menuBarWidgets}
-                      checked={config.menuBarWidgets ?? true}
+                      checked={config.menuBarWidgets ?? windowsPreferences?.menuBarWidgets}
                       onChange={(menuBarWidgets) => update({ menuBarWidgets })}
                     />
                   </Row>
                 </Card>
               )}
+            </>
           ) : section === "notifications" ? (
             <>
               <Card>
@@ -590,7 +608,6 @@ export function App() {
                   />
                 </Row>
               </Card>
-            </>
             </>
           ) : (
             <>

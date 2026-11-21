@@ -56,8 +56,20 @@ export const loadConfig = () => invoke<Config>("get_config");
 export const defaultConfig = () => invoke<Config>("default_config");
 export const saveConfig = (patch: Partial<Config>) => invoke<Config>("set_config", { patch });
 export const getAutostart = () => invoke<boolean>("get_autostart");
-/** Windows' animation setting; the genie only plays while it is on. */
-export const windowsAnimations = () => invoke<boolean>("windows_animations");
+/** Current Windows values for display only; never merge these into Config. */
+export interface WindowsPreferences {
+  animations: boolean;
+  menuBarSearch: boolean;
+  menuBarTaskView: boolean;
+  menuBarWidgets: boolean;
+  menuBarBatteryPercent: boolean;
+}
+
+let windowsPreferencesRequest: Promise<WindowsPreferences> | undefined;
+/** Coalesce overlapping focus/StrictMode reads, but reread after returning from Windows Settings. */
+export const loadWindowsPreferences = () =>
+  windowsPreferencesRequest ??= invoke<WindowsPreferences>("windows_preferences")
+    .finally(() => { windowsPreferencesRequest = undefined; });
 export const openAnimationSettings = () => invoke<void>("open_animation_settings");
 export const setAutostart = (enabled: boolean) => invoke<void>("set_autostart", { enabled });
 /** The folder the user picks, or null if they cancel. */

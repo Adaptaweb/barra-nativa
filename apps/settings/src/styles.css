@@ -408,6 +408,9 @@ input:focus-visible {
   background: #34c759;
 }
 
+.toggle[aria-busy="true"] { opacity: 0.55; }
+.toggle-pending { display: block; color: var(--text-dim); line-height: 18px; }
+
 .toggle-knob {
   display: block;
   width: 18px;

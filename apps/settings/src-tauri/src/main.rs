@@ -46,11 +46,28 @@ async fn set_config(patch: serde_json::Map<String, serde_json::Value>) -> Result
     .map_err(|error| error.to_string())?
 }
 
-/// Windows' own animation setting, which the genie follows: off, the
-/// genie does not play, and the window says so.
+/// Read-only system defaults for the Settings view, separate from saved
+/// overrides. Reuse the menu bar's readers so both agree on absent values.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowsPreferences {
+    animations: bool,
+    menu_bar_search: bool,
+    menu_bar_task_view: bool,
+    menu_bar_widgets: bool,
+    menu_bar_battery_percent: bool,
+}
+
 #[tauri::command]
-fn windows_animations() -> bool {
-    muelle_shell::system::animations_enabled()
+fn windows_preferences() -> WindowsPreferences {
+    let buttons = muelle_shell::status::taskbar_buttons();
+    WindowsPreferences {
+        animations: muelle_shell::system::animations_enabled(),
+        menu_bar_search: buttons.search,
+        menu_bar_task_view: buttons.task_view,
+        menu_bar_widgets: buttons.widgets,
+        menu_bar_battery_percent: muelle_shell::status::battery_percentage_enabled(),
+    }
 }
 
 /// The page of Windows Settings with that switch: "Animation effects" on
@@ -329,7 +346,7 @@ fn main() {
             set_config,
             get_autostart,
             set_autostart,
-            windows_animations,
+            windows_preferences,
             open_animation_settings,
             pick_folder,
             check_update,
