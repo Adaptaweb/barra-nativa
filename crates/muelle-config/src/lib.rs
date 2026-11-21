@@ -63,6 +63,7 @@ pub struct Config {
     pub dock_auto_hide_speed: DockAutoHideSpeed,
     pub show_start: bool,
     pub show_trash: bool,
+    pub show_downloads: bool,
     /// Keep Explorer pinned; otherwise it appears only while its windows are open.
     pub pin_explorer: bool,
     /// Genie effect when minimizing. On by default; while enabled, the dock
@@ -306,6 +307,7 @@ impl Default for Config {
             dock_auto_hide_speed: DockAutoHideSpeed::Normal,
             show_start: true,
             show_trash: true,
+            show_downloads: true,
             pin_explorer: true,
             magnified_size: 77,
             genie: true,
@@ -475,7 +477,9 @@ mod tests {
     #[test]
     fn older_configs_keep_the_original_dock_defaults() -> Result<(), serde_json::Error> {
         let config: Config = serde_json::from_str(r#"{"iconSize":64}"#)?;
-        assert!(config.show_start && config.show_trash && config.pin_explorer);
+        assert!(
+            config.show_start && config.show_trash && config.show_downloads && config.pin_explorer
+        );
         assert_eq!(config.dock_density.spacing(), (12.0, 9.0));
         assert_eq!(config.dock_auto_hide_speed.omega(), 24.0);
         Ok(())
@@ -486,11 +490,16 @@ mod tests {
     {
         let config: Config = serde_json::from_str(
             r#"{
-            "showStart":false,"showTrash":false,"pinExplorer":false,
+            "showStart":false,"showTrash":false,"showDownloads":false,"pinExplorer":false,
             "dockDensity":"compact","dockAutoHideSpeed":"fast"
         }"#,
         )?;
-        assert!(!config.show_start && !config.show_trash && !config.pin_explorer);
+        assert!(
+            !config.show_start
+                && !config.show_trash
+                && !config.show_downloads
+                && !config.pin_explorer
+        );
         assert_eq!(config.dock_density.spacing(), (8.0, 6.0));
         assert_eq!(config.dock_auto_hide_speed.omega(), 36.0);
         assert_eq!(

@@ -82,18 +82,6 @@ export function App() {
   const [windowsPreferences, setWindowsPreferences] = useState<WindowsPreferences | null>(null);
   // Keep the animation notice from flashing while the initial system read is pending.
   const animations = windowsPreferences?.animations ?? true;
-  useEffect(() => {
-    let alive = true;
-    const check = () => {
-      loadWindowsPreferences()
-        .then((values) => { if (alive) setWindowsPreferences(values); })
-        .catch(() => {});
-    };
-    check();
-    // One shared focus listener, with no polling while Settings is idle or closed.
-    window.addEventListener("focus", check);
-    return () => { alive = false; window.removeEventListener("focus", check); };
-  }, []);
   const [section, setSection] = useState<SectionId>("dock");
   const [failed, setFailed] = useState(false);
   const [version, setVersion] = useState("");
@@ -138,6 +126,27 @@ export function App() {
 
   useEffect(() => {
     let alive = true;
+    let focusRead = 0;
+    const readWindowsPreferences = () => {
+      loadWindowsPreferences()
+        .then((values) => { if (alive) setWindowsPreferences(values); })
+        .catch(() => {});
+    };
+    const refreshOnFocus = async () => {
+      const read = ++focusRead;
+      readWindowsPreferences();
+      const queued = flushSettings();
+      if (!await queued || !alive || pending.current || writes.current !== queued) return;
+      const loaded = await loadConfig();
+      // A dock menu may have hidden an item. Never replace a newer local edit
+      // or a newer focus read with an older snapshot from the native bridge.
+      if (alive && read === focusRead && !pending.current && writes.current === queued) {
+        setConfig(loaded);
+      }
+    };
+    const onFocus = () => { void refreshOnFocus().catch(() => {}); };
+    readWindowsPreferences();
+    window.addEventListener("focus", onFocus);
     Promise.all([loadConfig(), getAutostart()])
       .then(([loaded, starts]) => {
         if (!alive) return;
@@ -180,6 +189,7 @@ export function App() {
     });
     return () => {
       alive = false;
+      window.removeEventListener("focus", onFocus);
       window.clearTimeout(timer.current);
       window.clearTimeout(resetTimer.current);
       progress.then((unlisten) => unlisten()).catch(() => {});
@@ -380,6 +390,9 @@ export function App() {
                 </Row>
                 <Row label={t.pinExplorer} hint={t.pinExplorerHint}>
                   <Toggle label={t.pinExplorer} checked={config.pinExplorer ?? true} onChange={(pinExplorer) => update({ pinExplorer })} />
+                </Row>
+                <Row label={t.showDownloads}>
+                  <Toggle label={t.showDownloads} checked={config.showDownloads ?? true} onChange={(showDownloads) => update({ showDownloads })} />
                 </Row>
                 <Row label={t.showTrash}>
                   <Toggle label={t.showTrash} checked={config.showTrash ?? true} onChange={(showTrash) => update({ showTrash })} />

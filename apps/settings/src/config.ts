@@ -22,6 +22,7 @@ export interface Config {
   dockAutoHideSpeed: DockAutoHideSpeed;
   showStart: boolean;
   showTrash: boolean;
+  showDownloads: boolean;
   pinExplorer: boolean;
   genie: boolean;
   genieSpeed: GenieSpeed;

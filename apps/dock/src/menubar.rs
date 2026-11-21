@@ -154,7 +154,6 @@ pub(crate) mod glyph {
     pub const HIDDEN_ICONS: char = '\u{E70E}';
     pub const MICROPHONE: char = '\u{E720}';
     pub const CAMERA: char = '\u{E722}';
-    pub const FOCUS: char = '\u{E708}';
     pub const MOUSE: char = '\u{E962}';
     pub const HEADSET: char = '\u{E95B}';
     pub const BLUETOOTH: char = '\u{E702}';
@@ -165,7 +164,6 @@ enum Action {
     AccessoryIndicator,
     QuickSettings,
     Notifications,
-    ToggleDnd,
     Sound,
     Search,
     TaskView,
@@ -185,7 +183,6 @@ pub struct MenuBarWidgets {
     pub bluetooth: bool,
     pub battery_percent: Option<bool>,
     pub island_style: IslandStyle,
-    pub dnd: bool,
 }
 
 impl Default for MenuBarWidgets {
@@ -197,7 +194,6 @@ impl Default for MenuBarWidgets {
             bluetooth: true,
             battery_percent: None,
             island_style: IslandStyle::Notch,
-            dnd: false,
         }
     }
 }
@@ -1731,7 +1727,6 @@ impl MenuBar {
             Some(Action::AccessoryIndicator) => {}
             Some(Action::QuickSettings) => launcher::open_quick_settings(),
             Some(Action::Notifications) => launcher::open_notifications(),
-            Some(Action::ToggleDnd) => {} // Dispatched by App without borrowing it again.
             Some(Action::Sound) => launcher::open_sound(),
             Some(Action::Search) => launcher::open_search(),
             Some(Action::TaskView) => launcher::open_task_view(),
@@ -1749,22 +1744,6 @@ impl MenuBar {
             None => {}
         }
         Ok(())
-    }
-
-    pub fn dnd_at(&self, x: f32, y: f32) -> bool {
-        y >= 0.0
-            && y < (self.bounds.bottom - self.bounds.top) as f32
-            && self.zones.iter().any(|(left, right, action)| {
-                x >= *left && x < *right && *action == Action::ToggleDnd
-            })
-    }
-
-    pub fn set_dnd(&mut self, gfx: &Gfx, enabled: bool) -> Result<()> {
-        let widgets = MenuBarWidgets {
-            dnd: enabled,
-            ..self.widgets
-        };
-        self.set_widgets(gfx, widgets)
     }
 
     pub fn input_switcher_anchor(&self, x: f32, y: f32) -> Option<POINT> {
@@ -1986,7 +1965,6 @@ impl MenuBar {
                 Action::Notifications,
             ),
             (gfx.control_center_brush(scale, ink)?, Action::QuickSettings),
-            (symbol(&[(glyph::FOCUS, 1.0)])?, Action::ToggleDnd),
         ];
         // Privacy indicators, as the Windows tray shows them: something is
         // using the microphone or camera right now.
@@ -2088,23 +2066,6 @@ impl MenuBar {
                 right -= px(6.0);
             }
             let left = right - item.width;
-            if *action == Action::ToggleDnd && look.widgets.dnd {
-                add_rounded_box(
-                    c,
-                    &layers,
-                    left - px(5.0),
-                    px(4.0),
-                    item.width + px(10.0),
-                    height - px(8.0),
-                    px(6.0),
-                    if look.light {
-                        rgba(0, 0, 0, 28)
-                    } else {
-                        rgba(255, 255, 255, 48)
-                    },
-                    None,
-                )?;
-            }
             place(&layers, item, left)?;
             // The battery icon and its percentage form one control.
             // Accessory readings are passive status indicators, not controls.
@@ -3735,41 +3696,6 @@ impl Drop for MenuBar {
 #[cfg(test)]
 mod island_tests {
     use super::*;
-
-    #[test]
-    #[ignore = "Requires Windows composition; hidden bar, no config or audio writes"]
-    fn native_dnd_hit_and_presentation_follow_the_saved_state() -> Result<()> {
-        use anyhow::Context;
-        use windows::Win32::System::WinRT::{
-            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
-            DispatcherQueueOptions,
-        };
-        let _queue = unsafe {
-            CreateDispatcherQueueController(DispatcherQueueOptions {
-                dwSize: size_of::<DispatcherQueueOptions>() as u32,
-                threadType: DQTYPE_THREAD_CURRENT,
-                apartmentType: DQTAT_COM_STA,
-            })?
-        };
-        let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, false, true, MenuBarWidgets::default())?;
-        bar.set_visible(false)?;
-        for enabled in [false, true, false] {
-            bar.set_dnd(&gfx, enabled)?;
-            assert_eq!(bar.look.as_ref().context("bar look")?.widgets.dnd, enabled);
-            let (left, right, _) = *bar
-                .zones
-                .iter()
-                .find(|(_, _, action)| *action == Action::ToggleDnd)
-                .context("focus button")?;
-            let x = (left + right) * 0.5;
-            let height = (bar.bounds.bottom - bar.bounds.top) as f32;
-            assert!(bar.dnd_at(x, height * 0.5));
-            assert!(!bar.dnd_at(x, -1.0));
-            assert!(!bar.dnd_at(x, height + 1.0));
-        }
-        Ok(())
-    }
 
     #[test]
     #[ignore = "Native popup layout/input regression; hidden window, no audio writes"]

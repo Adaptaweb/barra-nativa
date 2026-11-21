@@ -30,6 +30,7 @@ const base = {
   magnification: true, dockPosition: "bottom", genie: true, genieSpeed: "normal",
   dockDensity: "normal", dockAutoHideSpeed: "normal", showStart: true,
   showTrash: true, pinExplorer: true,
+  showDownloads: true,
   menuBarIslandStyle: "notch", menuBarSearch: null, menuBarTaskView: null,
   menuBarWidgets: null, menuBarBatteryPercent: null, checkUpdates: false,
   pinned: [], recent: [], mutedApps: [], shortcutsFolder: null,
@@ -41,11 +42,12 @@ function* elements(node) {
 }
 
 function fixture(section = "menubar", config = {}, save = async () => {}) {
-  const states = [], refs = [], effects = [], timers = new Map(), calls = [];
+  const states = [], refs = [], effects = [], timers = new Map(), calls = [], listeners = new Map();
   let stateIndex = 0, refIndex = 0, nextTimer = 0, close;
   const loaded = { ...base, ...config };
   const browser = {
-    addEventListener() {}, removeEventListener() {},
+    addEventListener(event, callback) { assert.ok(!listeners.has(event)); listeners.set(event, callback); },
+    removeEventListener(event) { listeners.delete(event); },
     setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
     clearTimeout(id) { timers.delete(id); },
   };
@@ -54,7 +56,7 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
     ...React,
     useState(initial) {
       const index = stateIndex++;
-      if (!(index in states)) states[index] = index === 0 ? loaded : initial === "dock" ? section : initial;
+      if (!(index in states)) states[index] = index === 0 ? { ...loaded } : initial === "dock" ? section : initial;
       return [states[index], (value) => { states[index] = typeof value === "function" ? value(states[index]) : value; }];
     },
     useRef(initial) { const index = refIndex++; return refs[index] ??= { current: initial }; },
@@ -68,7 +70,7 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
     "@tauri-apps/api/window": { getCurrentWindow: () => nativeWindow },
     "@tauri-apps/api/core": { invoke: async (command, args) => {
       switch (command) {
-        case "get_config": return loaded;
+        case "get_config": return { ...loaded };
         case "get_autostart": return false;
         case "windows_preferences": return { animations: true, menuBarSearch: false };
         case "wallpaper_preview": return null;
@@ -98,6 +100,8 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
   function find(predicate) { const node = [...elements(render())].find(predicate); assert.ok(node); return node; }
   return {
     calls, timers, render,
+    external(patch) { Object.assign(loaded, patch); },
+    async focus() { listeners.get("focus")?.(); await settle(); },
     async mount() { render(); const cleanup = effects.map((effect) => effect()); await settle(); return () => cleanup.forEach((fn) => fn?.()); },
     change(label, value) { find((node) => node.props.label === label && typeof node.props.onChange === "function").props.onChange(value); },
     button(text) { find((node) => node.type === "button" && node.props.children === text).props.onClick(); },
@@ -183,19 +187,42 @@ test("dock choices save only the selected preferences and preserve icon size", a
     view.change(texts.en.showStart, false);
     view.change(texts.en.pinExplorer, false);
     view.change(texts.en.showTrash, false);
+    view.change(texts.en.showDownloads, false);
     view.change(texts.en.dockDensity, "compact");
     view.change(texts.en.dockAutoHideSpeed, "fast");
     view.fire(60);
     await settle();
-    assert.deepEqual(view.calls, [{ showStart: false, pinExplorer: false, showTrash: false,
+    assert.deepEqual(view.calls, [{ showStart: false, pinExplorer: false, showTrash: false, showDownloads: false,
       dockDensity: "compact", dockAutoHideSpeed: "fast" }]);
     const controls = [...elements(view.body())];
-    for (const label of [texts.en.showStart, texts.en.pinExplorer, texts.en.showTrash]) {
+    for (const label of [texts.en.showStart, texts.en.pinExplorer, texts.en.showTrash, texts.en.showDownloads]) {
       assert.equal(controls.find((node) => node.props.label === label && "checked" in node.props).props.checked, false);
     }
     assert.equal(controls.find((node) => node.props.label === texts.en.size && "value" in node.props).props.value, 64);
     const html = renderToStaticMarkup(view.body());
     assert.ok(html.includes('checked="" value="compact"'));
     assert.ok(html.includes('checked="" value="fast"'));
+  } finally { unmount(); }
+});
+
+test("returning to Settings reflects dock removals without overwriting local edits", async () => {
+  let finishSave;
+  const view = fixture("dock", {}, () => new Promise((resolve) => { finishSave = resolve; }));
+  const unmount = await view.mount();
+  const checked = (label) => [...elements(view.body())]
+    .find((node) => node.props.label === label && "checked" in node.props).props.checked;
+  try {
+    view.external({ showDownloads: false });
+    assert.equal(checked(texts.en.showDownloads), true);
+    await view.focus();
+    assert.equal(checked(texts.en.showDownloads), false);
+    view.change(texts.en.showDownloads, true);
+    await view.focus(); // Flushes the unsaved change before requesting another snapshot.
+    view.change(texts.en.showTrash, false);
+    finishSave();
+    await settle();
+    assert.equal(checked(texts.en.showDownloads), true);
+    assert.equal(checked(texts.en.showTrash), false);
+    assert.deepEqual(view.calls, [{ showDownloads: true }]);
   } finally { unmount(); }
 });

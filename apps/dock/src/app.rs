@@ -280,6 +280,7 @@ const CMD_UNGROUP: u32 = 15;
 const CMD_REMOVE_FOLDER: u32 = 16;
 const CMD_FORGET_RECENT: u32 = 17;
 const CMD_END_TASK: u32 = 18;
+const CMD_HIDE_FIXED: u32 = 19;
 const CMD_WINDOW: u32 = 100;
 const MENU_WINDOWS: usize = 12;
 const MENU_TITLE_CHARS: usize = 60;
@@ -971,6 +972,22 @@ fn forget_shortcuts_folder(config: &Config) -> Result<()> {
     Ok(())
 }
 
+fn fixed_item_preference(role: Role) -> Option<&'static str> {
+    match role {
+        Role::Start => Some("showStart"),
+        Role::Folder => Some("showDownloads"),
+        Role::Trash => Some("showTrash"),
+        _ => None,
+    }
+}
+
+/// Hides only the shortcut. No folder, file or Windows pin is removed.
+fn hide_fixed_item(path: &std::path::Path, role: Role) -> Result<Config> {
+    let key = fixed_item_preference(role).context("el elemento no es un acceso fijo")?;
+    let patch = serde_json::Map::from_iter([(key.to_owned(), serde_json::Value::Bool(false))]);
+    Ok(muelle_config::update_preferences(path, patch)?)
+}
+
 fn shorten(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         text.to_owned()
@@ -1078,7 +1095,9 @@ impl App {
         if let Some(folder) = &self.config.shortcuts_folder {
             entries.push(icon(folder, Role::Shortcuts, false));
         }
-        if let Some(downloads) = &self.downloads {
+        if self.config.show_downloads
+            && let Some(downloads) = &self.downloads
+        {
             entries.push(icon(downloads, Role::Folder, false));
         }
         if self.config.show_trash {
@@ -3739,6 +3758,10 @@ impl App {
                 });
             }
         }
+        if fixed_item_preference(role).is_some() {
+            items.push(MenuItem::Separator);
+            items.push(MenuItem::action(CMD_HIDE_FIXED, t.remove_from_dock));
+        }
         (items, end_task)
     }
 
@@ -3782,6 +3805,14 @@ impl App {
                 None
             }
             CMD_SETTINGS => Some(Outside::OpenSettings),
+            CMD_HIDE_FIXED => {
+                let saved = hide_fixed_item(&muelle_config::default_path(), role)?;
+                self.config.show_start = saved.show_start;
+                self.config.show_downloads = saved.show_downloads;
+                self.config.show_trash = saved.show_trash;
+                self.refresh()?;
+                None
+            }
             CMD_FORGET_RECENT => {
                 if self.roster.forget_recent(&id) {
                     save_settings(&self.roster, &self.config);
@@ -4147,22 +4178,6 @@ impl App {
         }
     }
 
-    fn toggle_dnd(&mut self) -> Result<()> {
-        let enabled = !self.config.notification_dnd;
-        let mut patch = serde_json::Map::new();
-        patch.insert("notificationDnd".into(), serde_json::Value::Bool(enabled));
-        muelle_config::update_preferences(&muelle_config::default_path(), patch)?;
-        self.config.notification_dnd = enabled;
-        if enabled {
-            self.notifications.clear_banners();
-            notification_banner::NotificationBannerView::hide();
-        }
-        if let Some(bar) = &mut self.menubar {
-            bar.set_dnd(&self.gfx, enabled)?;
-        }
-        Ok(())
-    }
-
     fn sync_attention_visuals(&mut self) -> Result<()> {
         if let Some(stage) = &mut self.stage {
             stage.scene.set_attention(
@@ -4399,7 +4414,6 @@ impl App {
             bluetooth: self.config.menu_bar_bluetooth,
             battery_percent: self.config.menu_bar_battery_percent,
             island_style: self.config.menu_bar_island_style,
-            dnd: self.config.notification_dnd,
         };
         if !self.config.menu_bar {
             self.menubar = None;
@@ -4865,11 +4879,6 @@ fn with_app_value<T: Default>(what: &str, action: impl FnOnce(&mut App) -> Resul
 pub fn menu_bar_clicked(x: f32, y: f32) {
     with_app_then("barra superior", |app| {
         if let Some(bar) = &mut app.menubar {
-            if bar.dnd_at(x, y) {
-                bar.dismiss_island(&app.gfx)?;
-                app.toggle_dnd()?;
-                return Ok(None);
-            }
             if let Some(anchor) = bar.input_switcher_anchor(x, y) {
                 bar.dismiss_island(&app.gfx)?;
                 return Ok(Some(Outside::InputMenu {
@@ -5912,6 +5921,41 @@ pub fn run() -> Result<()> {
 #[cfg(test)]
 mod dock_preferences_tests {
     use super::*;
+
+    #[test]
+    fn removing_fixed_shortcuts_preserves_folders_pins_and_other_preferences() -> Result<()> {
+        struct Fixture(std::path::PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+                let _ = std::fs::remove_file(self.0.with_extension("json.lock"));
+            }
+        }
+        let file = Fixture(env::temp_dir().join(format!(
+            "muelle-fixed-shortcuts-{}.json",
+            std::process::id()
+        )));
+        let initial = Config {
+            pinned: vec!["editor".into()],
+            shortcuts_folder: Some("C:\\Projects".into()),
+            notification_dnd: true,
+            ..Config::default()
+        };
+        muelle_config::save(&file.0, &initial)?;
+        let downloads = hide_fixed_item(&file.0, Role::Folder)?;
+        assert!(!downloads.show_downloads);
+        assert!(downloads.show_trash && downloads.show_start);
+        hide_fixed_item(&file.0, Role::Trash)?;
+        let saved = hide_fixed_item(&file.0, Role::Start)?;
+        assert!(!saved.show_downloads && !saved.show_trash && !saved.show_start);
+        assert_eq!(saved.pinned, initial.pinned);
+        assert_eq!(saved.shortcuts_folder, initial.shortcuts_folder);
+        assert!(saved.notification_dnd);
+        let before = std::fs::read(&file.0)?;
+        assert!(hide_fixed_item(&file.0, Role::App).is_err());
+        assert_eq!(std::fs::read(&file.0)?, before);
+        Ok(())
+    }
 
     #[test]
     fn explorer_preference_preserves_other_pins_and_follows_open_windows() {
