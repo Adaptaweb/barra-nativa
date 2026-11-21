@@ -7,12 +7,20 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Manual runs exercise test-signing only, with no release or updater output.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  check:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
   installer:
+    needs: check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,15 +34,27 @@ jobs:
           cache-dependency-path: apps/settings/pnpm-lock.yaml
       - uses: Swatinem/rust-cache@v2
 
-      - name: Check the tag matches the version
+      - name: Select signing lane and validate release configuration
         shell: pwsh
+        env:
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT: ${{ vars.SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         run: |
           $version = (cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).packages |
             Where-Object name -eq 'muelle' | Select-Object -ExpandProperty version
-          if ("v$version" -ne $env:GITHUB_REF_NAME) {
-            throw "Tag $env:GITHUB_REF_NAME does not match the workspace version $version"
-          }
-          "VERSION=$version" >> $env:GITHUB_ENV
+          $lane = ./scripts/Get-ReleaseSigningMode.ps1 -EventName $env:GITHUB_EVENT_NAME `
+            -Version $version -RefName $env:GITHUB_REF_NAME `
+            -Organization $env:SIGNPATH_ORGANIZATION_ID -Project $env:SIGNPATH_PROJECT_SLUG `
+            -Policy $env:SIGNPATH_SIGNING_POLICY_SLUG `
+            -ProductionThumbprint $env:SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT `
+            -TokenPresent ([bool]$env:SIGNPATH_API_TOKEN)
+          "VERSION=$($lane.Version)" >> $env:GITHUB_ENV
+          "SIGNING_MODE=$($lane.Mode)" >> $env:GITHUB_ENV
+          "SIGNING_POLICY=$($lane.Policy)" >> $env:GITHUB_ENV
+          Write-Host "Signing lane: $($lane.Mode)"
 
       - name: Install settings dependencies
         working-directory: apps/settings
@@ -43,18 +63,18 @@ jobs:
       - name: Build installer
         shell: pwsh
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.SIGNING_MODE != 'Test' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.SIGNING_MODE != 'Test' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: ./scripts/build-installer.ps1
 
       # Windows code signing through SignPath Foundation (FIRMA-DE-CODIGO.md).
-      # It runs only once the SignPath repository variables exist; until then
-      # the release is built unsigned, as before. Two signing requests, each
+      # Tag pushes without SignPath remain unsigned, as before. Manual runs
+      # are isolated test builds; configured tags require production. Two requests,
       # approved by hand in SignPath: first the two programs, then the
       # installer rebuilt around them. The installer must be signed before the
       # updater signature (.sig) is made, or the updater rejects it.
       - name: Collect the programs to sign
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        if: env.SIGNING_MODE != 'Unsigned'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force sign/binaries | Out-Null
@@ -62,7 +82,7 @@ jobs:
           Copy-Item apps/settings/src-tauri/binaries/muelle-x86_64-pc-windows-msvc.exe sign/binaries/muelle.exe
 
       - name: Upload the programs to sign
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        if: env.SIGNING_MODE != 'Unsigned'
         id: unsigned-binaries
         uses: actions/upload-artifact@v7
         with:
@@ -70,13 +90,13 @@ jobs:
           path: sign/binaries
 
       - name: Sign the programs
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        if: env.SIGNING_MODE != 'Unsigned'
         uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          signing-policy-slug: ${{ env.SIGNING_POLICY }}
           artifact-configuration-slug: binaries
           github-artifact-id: ${{ steps.unsigned-binaries.outputs.artifact-id }}
           wait-for-completion: true
@@ -84,12 +104,26 @@ jobs:
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: sign/binaries-signed
 
+      - name: Verify both signed programs
+        if: env.SIGNING_MODE != 'Unsigned'
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          PRODUCTION_THUMBPRINT: ${{ vars.SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT }}
+        run: |
+          ./scripts/Assert-Authenticode.ps1 -Mode $env:SIGNING_MODE `
+            -ProductionThumbprint $env:PRODUCTION_THUMBPRINT -ReportDirectory sign/verification-binaries `
+            -Path sign/binaries-signed/muelle.exe,sign/binaries-signed/muelle-settings.exe
+
       # Tauri marks the settings program while bundling; it is already marked
       # from the first build, so bundling again keeps the signature intact
       # (checked locally with a test certificate).
       - name: Rebuild the installer around the signed programs
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        if: env.SIGNING_MODE != 'Unsigned'
+        timeout-minutes: 10
         shell: pwsh
+        env:
+          PRODUCTION_THUMBPRINT: ${{ vars.SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT }}
         run: |
           Copy-Item sign/binaries-signed/muelle-settings.exe target/release/ -Force
           Copy-Item sign/binaries-signed/muelle.exe apps/settings/src-tauri/binaries/muelle-x86_64-pc-windows-msvc.exe -Force
@@ -98,11 +132,14 @@ jobs:
           pnpm tauri bundle --bundles nsis --config src-tauri/tauri.bundle.conf.json --config ../../no-updater.json
           if ($LASTEXITCODE) { throw 'tauri bundle failed' }
           Pop-Location
+          ./scripts/Assert-Authenticode.ps1 -Mode $env:SIGNING_MODE `
+            -ProductionThumbprint $env:PRODUCTION_THUMBPRINT -ReportDirectory sign/verification-bundled `
+            -Path target/release/muelle-settings.exe,apps/settings/src-tauri/binaries/muelle-x86_64-pc-windows-msvc.exe
           New-Item -ItemType Directory -Force sign/installer | Out-Null
           Copy-Item "target/release/bundle/nsis/Muelle_${env:VERSION}_x64-setup.exe" sign/installer/Muelle-Setup.exe
 
       - name: Upload the installer to sign
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        if: env.SIGNING_MODE != 'Unsigned'
         id: unsigned-installer
         uses: actions/upload-artifact@v7
         with:
@@ -110,56 +147,70 @@ jobs:
           path: sign/installer
 
       - name: Sign the installer
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        if: env.SIGNING_MODE != 'Unsigned'
         uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          signing-policy-slug: ${{ env.SIGNING_POLICY }}
           artifact-configuration-slug: installer
           github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
           wait-for-completion: true
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: sign/installer-signed
 
-      - name: Sign the signed installer for the updater
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+      - name: Verify and use the signed installer
+        if: env.SIGNING_MODE != 'Unsigned'
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          PRODUCTION_THUMBPRINT: ${{ vars.SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT }}
+        run: |
+          $setup = (Resolve-Path "target/release/bundle/nsis").Path + "/Muelle_${env:VERSION}_x64-setup.exe"
+          Copy-Item sign/installer-signed/Muelle-Setup.exe $setup -Force
+          ./scripts/Assert-Authenticode.ps1 -Mode $env:SIGNING_MODE `
+            -ProductionThumbprint $env:PRODUCTION_THUMBPRINT -ReportDirectory sign/verification-installer -Path $setup
+
+      - name: Sign the final production installer for the updater
+        if: env.SIGNING_MODE == 'Production'
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
         run: |
           $setup = (Resolve-Path "target/release/bundle/nsis").Path + "/Muelle_${env:VERSION}_x64-setup.exe"
-          Copy-Item sign/installer-signed/Muelle-Setup.exe $setup -Force
-          $signature = Get-AuthenticodeSignature -LiteralPath $setup
-          if (-not $signature.SignerCertificate) { throw 'The installer has no Authenticode signer certificate' }
-          if ($env:SIGNPATH_SIGNING_POLICY_SLUG -eq 'test-signing') {
-            $testThumbprint = '3A93532146A10D3B1FA8DEAF4192AD4A232FFCAC'
-            if ($signature.SignerCertificate.Thumbprint -ne $testThumbprint) {
-              throw "Unexpected SignPath test certificate: $($signature.SignerCertificate.Thumbprint)"
-            }
-            $certificatePath = Join-Path $env:RUNNER_TEMP 'muelle-signpath-test.cer'
-            [IO.File]::WriteAllBytes(
-              $certificatePath,
-              $signature.SignerCertificate.Export(
-                [Security.Cryptography.X509Certificates.X509ContentType]::Cert
-              )
-            )
-            Import-Certificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
-            Remove-Item -LiteralPath $certificatePath
-            $signature = Get-AuthenticodeSignature -LiteralPath $setup
-          }
-          if ($signature.Status -ne 'Valid') { throw "The installer signature is $($signature.Status)" }
           Push-Location apps/settings
           pnpm tauri signer sign --app-version $env:VERSION $setup
           if ($LASTEXITCODE) { throw 'tauri signer sign failed' }
           Pop-Location
 
+      - name: Keep signing artifacts and diagnostics
+        if: always() && env.SIGNING_MODE != '' && env.SIGNING_MODE != 'Unsigned'
+        uses: actions/upload-artifact@v7
+        with:
+          name: signpath-${{ env.SIGNING_MODE }}-${{ env.VERSION }}
+          path: |
+            sign/binaries-signed/
+            sign/installer-signed/
+            sign/verification-*/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Explain the test result
+        if: always() && env.SIGNING_MODE == 'Test'
+        shell: pwsh
+        run: |
+          @'
+          SignPath test lane only. No draft release, latest.json or updater signature is produced.
+          Review the verification steps and the signpath-Test artifact, including signature-report.json.
+          If a signature remains invalid, send its status/message and the signing request IDs to SignPath support.
+          '@ >> $env:GITHUB_STEP_SUMMARY
+
       # latest.json is what the in-app updater reads; Muelle-Setup.exe is a
       # stable name for the website's "latest" download link.
       - name: Prepare release files
+        if: env.SIGNING_MODE != 'Test'
         shell: pwsh
         run: |
           $nsis = 'target/release/bundle/nsis'
@@ -194,6 +245,7 @@ jobs:
           $section | Set-Content -Encoding utf8NoBOM notes.md
 
       - name: Create draft release
+        if: env.SIGNING_MODE != 'Test'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

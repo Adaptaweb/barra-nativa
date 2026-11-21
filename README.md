@@ -64,7 +64,7 @@ restored when Muelle exits.
    rights, no wizard, about two seconds.
 2. Muelle is new, so Windows SmartScreen may not recognize it yet and say it
    protected your PC. Choose **More info → Run anyway**. See the
-   [code-signing policy](https://muellee.vercel.app/code-signing-policy).
+   [code-signing policy](https://muelle.crafter.run/code-signing-policy).
 3. Open **Muelle** from the Start menu, then choose **Dock** to
    personalize the dock and top menu bar.
 
@@ -155,4 +155,4 @@ project. It makes two kinds of network requests, both optional:
   → *Show AI provider usage*.
 - **Notifications:** notification content and banners are processed strictly in memory on your local machine and are never written to disk, saved in log files, or transmitted over the network.
 
-Details: [muellee.vercel.app/privacy](https://muellee.vercel.app/privacy).
+Details: [muelle.crafter.run/privacy](https://muelle.crafter.run/privacy).

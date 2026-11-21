@@ -22,9 +22,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use muelle_config::{Config, DockGroup};
+use muelle_config::{Config, DockGroup, DockPosition};
 use muelle_core::{
+    attention::Attention,
     bounce,
+    frame::{DockEdge, Frame as DockFrame},
     layout::{ItemKind, Layout, Metrics, Rect, layout},
     magnify::{Magnifier, magnify},
     roster::{Group, Roster},
@@ -32,6 +34,7 @@ use muelle_core::{
 };
 use muelle_shell::{
     appbar::{ABN_FULLSCREENAPP, AppBar, Edge},
+    end_task::PreparedEndTask,
     files,
     icons::IconImage,
     launcher,
@@ -100,8 +103,8 @@ use crate::{
     group_view::{DragGhost, GroupItem, GroupView, Placement, Released},
     mascot,
     menu::{self, MenuItem},
-    menubar::MenuBar,
-    multi_window_view::{MultiWindowAction, MultiWindowView},
+    menubar::{MenuBar, MenuBarWidgets},
+    multi_window_view::{self, MultiWindowAction, MultiWindowView},
     notification_banner,
     scene::{Drag, Frame, Scene, SceneInput, SlotContent, Theme},
     shell_work::{self, Action as ShellAction},
@@ -114,6 +117,7 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 const HSHELL_WINDOWACTIVATED: usize = 4;
 const HSHELL_RUDEAPPACTIVATED: usize = 0x8004;
 const HSHELL_FLASH: usize = 0x8006;
+const HSHELL_WINDOWDESTROYED: usize = 2;
 /// A window's title or icon changed.
 const HSHELL_REDRAW: usize = 6;
 /// The keyboard language changed.
@@ -143,6 +147,9 @@ const DROP_RUN: u32 = WM_APP + 6;
 /// Posted when apps are pinned to or unpinned from the Windows taskbar.
 const PINS_CHANGED: u32 = WM_APP + 7;
 const ASSETS_READY: u32 = WM_APP + 8;
+/// The guard also checks graphics health while the scene is otherwise idle.
+pub(crate) const HEALTH_CHECK: u32 = WM_APP + 9;
+const TASKBAR_PREFS_CHANGED: u32 = WM_APP + 10;
 
 /// Magnification range, in icons on either side of the cursor.
 const RANGE_IN_ICONS: f32 = 3.0;
@@ -159,6 +166,8 @@ const ATTENTION_HOPS: f32 = 3.0;
 const FLOAT_MARGIN: f32 = 8.0;
 const SHADOW_ROOM: f32 = 44.0;
 const LABEL_ROOM: f32 = 60.0;
+/// Widest room kept beside a side dock for an app's name, in logical pixels.
+const SIDE_LABEL_MAX: f32 = 320.0;
 /// Hysteresis distances: the effect starts at the first distance and ends at the second.
 const ENTER_HALO: f32 = 5.0;
 const LEAVE_HALO: f32 = 15.0;
@@ -270,6 +279,8 @@ const CMD_TASK_MANAGER: u32 = 13;
 const CMD_TASKBAR_SETTINGS: u32 = 14;
 const CMD_UNGROUP: u32 = 15;
 const CMD_REMOVE_FOLDER: u32 = 16;
+const CMD_FORGET_RECENT: u32 = 17;
+const CMD_END_TASK: u32 = 18;
 const CMD_WINDOW: u32 = 100;
 const MENU_WINDOWS: usize = 12;
 const MENU_TITLE_CHARS: usize = 60;
@@ -337,6 +348,43 @@ struct Entry {
     members: Vec<String>,
 }
 
+fn app_has_attention(attention: &Attention, windows: &[TrackedWindow], id: &str) -> bool {
+    windows
+        .iter()
+        .any(|window| window.app_id == id && attention.contains(window.hwnd))
+}
+
+fn entry_has_attention(attention: &Attention, windows: &[TrackedWindow], entry: &Entry) -> bool {
+    match entry.role {
+        Role::App => entry
+            .id
+            .as_deref()
+            .is_some_and(|id| app_has_attention(attention, windows, id)),
+        Role::Group => entry
+            .members
+            .iter()
+            .any(|id| app_has_attention(attention, windows, id)),
+        Role::Window => entry
+            .id
+            .as_deref()
+            .and_then(window_of)
+            .is_some_and(|hwnd| attention.contains(hwnd)),
+        _ => false,
+    }
+}
+
+fn active_attention_window(windows: &[TrackedWindow], foreground: isize) -> isize {
+    // Windows may briefly report its last minimized window as foreground.
+    if windows
+        .iter()
+        .any(|window| window.hwnd == foreground && !window.minimized)
+    {
+        foreground
+    } else {
+        0
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
     App,
@@ -367,6 +415,7 @@ pub(crate) enum Outside {
     OpenStart,
     Activate(Vec<isize>),
     Minimize(Vec<isize>),
+    EndTask(PreparedEndTask),
     Reveal(String),
     EmptyBin,
     OpenWith(String, Vec<String>),
@@ -377,10 +426,11 @@ pub(crate) enum Outside {
         copy: bool,
     },
     Menu(MenuRequest),
-    /// The shortcuts folder's contents, as a menu above its icon.
+    /// The shortcuts folder's contents, as a menu beside its icon.
     FolderMenu {
         folder: String,
         anchor: POINT,
+        placement: menu::Placement,
         dark: bool,
     },
     InputMenu {
@@ -401,6 +451,7 @@ pub(crate) struct MenuRequest {
     target: MenuTarget,
     items: Vec<MenuItem>,
     anchor: POINT,
+    placement: menu::Placement,
     dark: bool,
 }
 
@@ -440,6 +491,7 @@ enum MenuTarget {
         id: String,
         role: Role,
         windows: Vec<isize>,
+        end_task: Option<PreparedEndTask>,
     },
     Dock,
 }
@@ -504,6 +556,11 @@ struct Bounce {
 #[derive(PartialEq)]
 struct StageKey {
     screen: RECT,
+    /// The screen edge the dock sits on.
+    edge: DockEdge,
+    /// The menu bar's strip at the top of this screen: a side dock is
+    /// centred in the height below it.
+    top_inset: i32,
     scale: f32,
     light: bool,
     glass: bool,
@@ -601,15 +658,90 @@ struct Stage {
     icon: f32,
     gap: f32,
     scale: f32,
-    dock_origin: POINT,
-    /// Position of the resting dock inside the visual window.
-    origin: (f32, f32),
+    /// The resting dock on the screen: maps dock coordinates (along, across)
+    /// to screen pixels and back, whatever edge it is on.
+    frame: DockFrame,
+    /// The same, inside the visual window.
+    window_frame: DockFrame,
     rest_zone: RECT,
     hover_zone: RECT,
     /// Thin strip at the screen edge that reveals the dock when auto-hide is on.
     edge_zone: RECT,
-    /// How far the dock slides down to hide completely.
+    /// How far the dock slides toward its screen edge to hide completely.
     slide_distance: f32,
+}
+
+impl Stage {
+    /// Dock coordinates (along, across) of a screen point. Across is
+    /// negative away from the screen edge.
+    fn to_dock(&self, point: POINT) -> (f32, f32) {
+        self.frame.to_dock(point.x as f32, point.y as f32)
+    }
+
+    /// The screen box of a box in dock coordinates.
+    fn screen_rect(&self, rect: Rect) -> RECT {
+        let rect = self.frame.rect(rect);
+        RECT {
+            left: rect.x.round() as i32,
+            top: rect.y.round() as i32,
+            right: (rect.x + rect.width).round() as i32,
+            bottom: (rect.y + rect.height).round() as i32,
+        }
+    }
+
+    /// The screen point `gap` pixels off the box `rect` (dock coordinates)
+    /// on its side away from the screen edge, centred: where menus and
+    /// popups for an icon hang.
+    fn beside(&self, rect: Rect, gap: i32) -> POINT {
+        let r = self.frame.rect(rect);
+        let (middle_x, middle_y) = (
+            (r.x + r.width / 2.0).round() as i32,
+            (r.y + r.height / 2.0).round() as i32,
+        );
+        match self.frame.edge {
+            DockEdge::Bottom => POINT {
+                x: middle_x,
+                y: r.y.round() as i32 - gap,
+            },
+            DockEdge::Left => POINT {
+                x: (r.x + r.width).round() as i32 + gap,
+                y: middle_y,
+            },
+            DockEdge::Right => POINT {
+                x: r.x.round() as i32 - gap,
+                y: middle_y,
+            },
+        }
+    }
+
+    /// Which way a menu or popup for an icon opens: away from the edge.
+    fn menu_placement(&self) -> menu::Placement {
+        match self.frame.edge {
+            DockEdge::Bottom => menu::Placement::Above,
+            DockEdge::Left => menu::Placement::Right,
+            DockEdge::Right => menu::Placement::Left,
+        }
+    }
+
+    /// Where the dock starts along the screen axis it runs on.
+    fn along_origin(&self) -> f32 {
+        if self.frame.edge.is_vertical() {
+            self.frame.origin.1
+        } else {
+            self.frame.origin.0
+        }
+    }
+
+    /// Whether `point` is within the span of the reveal strip (the pointer
+    /// came out of it toward the dock rather than past its end).
+    fn spans_reveal(&self, point: POINT) -> bool {
+        let zone = self.edge_zone;
+        if self.frame.edge.is_vertical() {
+            point.y >= zone.top && point.y < zone.bottom
+        } else {
+            point.x >= zone.left && point.x < zone.right
+        }
+    }
 }
 
 struct ReorderMotion {
@@ -643,9 +775,14 @@ pub(crate) struct App {
     _saver_watch: power::SaverWatch,
     /// Hears pins and unpins on the Windows taskbar.
     pin_watch: Option<muelle_shell::watch::RegistryWatch>,
+    badge_watch: Option<muelle_shell::watch::RegistryWatch>,
+    attention: Attention,
+    attention_enabled: bool,
     assets: HashMap<String, Asset>,
     /// Scale, theme and icon pixel size the cached assets were drawn for.
-    assets_for: (f32, bool, u32),
+    /// Scale, theme, icon size and dock edge the assets were drawn for
+    /// (labels point at their icon, so they depend on the edge).
+    assets_for: (f32, bool, u32, DockEdge),
     placeholder: Option<CompositionSurfaceBrush>,
     remove_label: Option<LabelBrush>,
     config: Config,
@@ -934,15 +1071,15 @@ impl App {
     }
 
     /// `wanted` is the pixel side icons are drawn at: their magnified size.
-    fn prepare_assets(&mut self, wanted: u32, scale: f32, light: bool) {
-        if self.assets_for != (scale, light, wanted) {
+    fn prepare_assets(&mut self, wanted: u32, scale: f32, light: bool, edge: DockEdge) {
+        if self.assets_for != (scale, light, wanted, edge) {
             self.assets.clear();
             self.remove_label = None;
             self.placeholder = None;
-            self.assets_for = (scale, light, wanted);
+            self.assets_for = (scale, light, wanted, edge);
         }
         if self.remove_label.is_none() {
-            self.remove_label = self.gfx.label_brush(text().remove, scale, light).ok();
+            self.remove_label = self.gfx.label_brush(text().remove, scale, light, edge).ok();
         }
         if self.placeholder.is_none() {
             self.placeholder = self.gfx.placeholder_brush(wanted, light).ok();
@@ -987,7 +1124,12 @@ impl App {
                     .collect();
                 let label = self
                     .gfx
-                    .label_brush(&shorten(&names.join(", "), GROUP_LABEL_CHARS), scale, light)
+                    .label_brush(
+                        &shorten(&names.join(", "), GROUP_LABEL_CHARS),
+                        scale,
+                        light,
+                        edge,
+                    )
                     .inspect_err(|error| eprintln!("muelle: etiqueta del grupo `{id}`: {error:#}"))
                     .ok();
                 self.assets.insert(
@@ -1001,7 +1143,11 @@ impl App {
                 continue;
             }
             let variant = if id == recycle_bin::PARSING_NAME {
-                if self.bin_full { "llena" } else { "vacia" }
+                if self.bin_full {
+                    recycle_bin::FULL
+                } else {
+                    recycle_bin::EMPTY
+                }
             } else {
                 ""
             };
@@ -1015,7 +1161,7 @@ impl App {
             }
             if let Some(hwnd) = window_of(id) {
                 let title = shorten(&tracker::title(hwnd), WINDOW_TITLE_CHARS);
-                let label = self.gfx.label_brush(&title, scale, light).ok();
+                let label = self.gfx.label_brush(&title, scale, light, edge).ok();
                 self.assets.insert(
                     id.clone(),
                     Asset {
@@ -1028,7 +1174,7 @@ impl App {
             }
             if id == START_ID {
                 let icon = self.gfx.start_brush(wanted).ok();
-                let label = self.gfx.label_brush(text().start, scale, light).ok();
+                let label = self.gfx.label_brush(text().start, scale, light, edge).ok();
                 self.assets.insert(
                     id.clone(),
                     Asset {
@@ -1052,7 +1198,7 @@ impl App {
             let name = visual.map_or_else(|| fallback_name(id), |visual| visual.name.clone());
             let label = self
                 .gfx
-                .label_brush(&name, scale, light)
+                .label_brush(&name, scale, light, edge)
                 .inspect_err(|error| eprintln!("muelle: etiqueta de `{id}`: {error:#}"))
                 .ok();
             self.assets.insert(
@@ -1108,14 +1254,20 @@ impl App {
     /// nothing if the scene inputs are unchanged, since many Windows notifications
     /// do not affect the dock.
     fn refresh(&mut self) -> Result<()> {
-        if let Some(bar) = &mut self.menubar {
-            bar.refresh(&self.gfx)?;
+        if let Some(bar) = &mut self.menubar
+            && let Err(error) = bar.refresh(&self.gfx)
+        {
+            crate::recovery::graphics_error(&error);
+            muelle_shell::log::line(&format!("actualización de la barra superior: {error:#}"));
         }
         let monitor = self
             .dock_monitor()
             .context("no se pudo consultar el monitor del dock")?;
+        let edge = self.position();
         let key = StageKey {
             screen: monitor.screen,
+            edge,
+            top_inset: self.menu_bar_inset(monitor.screen, edge),
             scale: monitor.scale,
             light: uses_light_theme(),
             // A backdrop brush made while Windows had transparency off stays
@@ -1153,13 +1305,33 @@ impl App {
         let px = |logical: f32| (logical * scale).round();
         let screen = monitor.screen;
         let screen_width = (screen.right - screen.left) as f32;
+        // On a side, the dock runs down the height left under the menu bar.
+        let span_start = (screen.top + key.top_inset) as f32;
+        let length_room = if edge.is_vertical() {
+            screen.bottom as f32 - span_start
+        } else {
+            screen_width
+        };
         let kinds: Vec<ItemKind> = key.entries.iter().map(|entry| entry.kind).collect();
         let mut dock = layout(&kinds, &metrics);
-        let available = (screen_width - 2.0 * px(FLOAT_MARGIN)).max(1.0);
-        if dock.width > available {
+        let available = (length_room - 2.0 * px(FLOAT_MARGIN)).max(1.0);
+        // A side dock often fills the height. Magnified, it spreads by up to
+        // half its growth past each end, which would put the first icon
+        // under the menu bar and the last off screen: room is kept for it.
+        // It scales with the icons, so one ratio fits both exactly.
+        let spread = if edge.is_vertical() {
+            Magnifier {
+                range: RANGE_IN_ICONS * (metrics.icon + metrics.gap),
+                max_scale,
+            }
+            .max_growth()
+        } else {
+            0.0
+        };
+        if dock.width + spread > available {
             // Keep the roster reachable on a smaller display without
             // changing the user's saved icon size.
-            metrics = metrics.scaled(available / dock.width);
+            metrics = metrics.scaled(available / (dock.width + spread));
             dock = layout(&kinds, &metrics);
         }
         dock.width = dock.width.round();
@@ -1170,6 +1342,7 @@ impl App {
             (metrics.icon * max_scale).round().max(1.0) as u32,
             scale,
             theme.light,
+            edge,
         );
 
         let magnifier = Magnifier {
@@ -1182,26 +1355,81 @@ impl App {
 
         // Position relative to the screen, not the work area; the work area
         // already excludes the strip reserved by the dock.
-        let dock_x = screen.left as f32 + ((screen_width - dock.width) / 2.0).round();
-        let dock_y = screen.bottom as f32 - px(FLOAT_MARGIN) - dock.height;
+        let margin = px(FLOAT_MARGIN);
+        let centred = span_start + ((length_room - dock.width) / 2.0).round();
+        let (dock_x, dock_y) = match edge {
+            DockEdge::Bottom => (
+                screen.left as f32 + ((screen_width - dock.width) / 2.0).round(),
+                screen.bottom as f32 - margin - dock.height,
+            ),
+            DockEdge::Left => (screen.left as f32 + margin, centred),
+            DockEdge::Right => (screen.right as f32 - margin - dock.height, centred),
+        };
+        let frame = DockFrame::new(edge, (dock_x, dock_y), dock.height);
         // A hidden dock leaves the whole screen to maximized windows.
         let strip = if self.config.auto_hide {
             0
         } else {
-            (dock.height + 2.0 * px(FLOAT_MARGIN)) as i32
+            (dock.height + 2.0 * margin) as i32
         };
-        let (dock_right, dock_bottom) = (dock_x + dock.width, dock_y + dock.height);
-        let zone = move |left: f32, top: f32, right: f32, bottom: f32| RECT {
-            left: (dock_x - left) as i32,
-            top: (dock_y - top) as i32,
-            right: (dock_right + right) as i32,
-            // A display below this one must not receive the sliding dock
-            // or its mouse input while the animation crosses the edge.
-            bottom: ((dock_bottom + bottom) as i32).min(screen.bottom),
+        // The resting dock's box on screen: across the edge it is as deep as
+        // the layout is tall.
+        let (box_width, box_height) = if edge.is_vertical() {
+            (dock.height, dock.width)
+        } else {
+            (dock.width, dock.height)
+        };
+        let (dock_right, dock_bottom) = (dock_x + box_width, dock_y + box_height);
+        // Room around the dock, in its own terms: before and after it along
+        // the edge, inward (where icons grow and labels show) and outward.
+        // Outward never passes the screen edge: a display beyond it must not
+        // receive the sliding dock or its mouse input while it slides.
+        let zone = move |before: f32, inward: f32, after: f32, outward: f32| match edge {
+            DockEdge::Bottom => RECT {
+                left: (dock_x - before) as i32,
+                top: (dock_y - inward) as i32,
+                right: (dock_right + after) as i32,
+                bottom: ((dock_bottom + outward) as i32).min(screen.bottom),
+            },
+            DockEdge::Left => RECT {
+                left: ((dock_x - outward) as i32).max(screen.left),
+                top: (dock_y - before) as i32,
+                right: (dock_right + inward) as i32,
+                bottom: (dock_bottom + after) as i32,
+            },
+            DockEdge::Right => RECT {
+                left: (dock_x - inward) as i32,
+                top: (dock_y - before) as i32,
+                right: ((dock_right + outward) as i32).min(screen.right),
+                bottom: (dock_bottom + after) as i32,
+            },
         };
 
         let room = px(SHADOW_ROOM);
-        let (room_x, room_top) = (room + side_growth, rise + px(LABEL_ROOM));
+        // Labels show inward of the icon: above it on the bottom, beside it
+        // on a side, where they need their full width.
+        let label_room = if edge.is_vertical() {
+            let widest = self
+                .assets
+                .values()
+                .filter_map(|asset| asset.label.as_ref())
+                .chain(&self.remove_label)
+                .map(|label| label.width)
+                .fold(0.0_f32, f32::max);
+            px(12.0) + widest.min(px(SIDE_LABEL_MAX))
+        } else {
+            px(LABEL_ROOM)
+        };
+        let (room_x, room_top) = (room + side_growth, rise + label_room);
+        let window_zone = zone(room_x, room_top, room_x, room);
+        let window_frame = DockFrame::new(
+            edge,
+            (
+                dock_x - window_zone.left as f32,
+                dock_y - window_zone.top as f32,
+            ),
+            dock.height,
+        );
         let notify_badges: Vec<Option<LabelBrush>> = if self.config.notification_badges {
             self.entries
                 .iter()
@@ -1249,7 +1477,7 @@ impl App {
                 contents: &contents,
                 theme,
                 scale,
-                origin: (room_x, room_top),
+                frame: window_frame,
                 remove_label: self.remove_label.as_ref(),
             },
         )?;
@@ -1257,6 +1485,7 @@ impl App {
             // Do not interpolate between monitors or on a theme-only rebuild.
             if self.fullscreen
                 || previous.key.screen != key.screen
+                || previous.key.edge != key.edge
                 || previous.scale != scale
                 || previous
                     .key
@@ -1294,10 +1523,10 @@ impl App {
                     };
                     // Start from the currently drawn icon, including any earlier
                     // move still in progress when the user crosses another slot.
-                    previous
-                        .scene
-                        .slot_x(index)
-                        .map_or(0.0, |x| previous.dock_origin.x as f32 + x - dock_x - rect.x)
+                    let along = if edge.is_vertical() { dock_y } else { dock_x };
+                    previous.scene.slot_along(index).map_or(0.0, |drawn| {
+                        previous.along_origin() + drawn - along - rect.x
+                    })
                 })
                 .collect();
             offsets
@@ -1313,18 +1542,15 @@ impl App {
         let (enter, leave) = (px(ENTER_HALO), px(LEAVE_HALO));
         let stage = Stage {
             key,
-            window_zone: zone(room_x, room_top, room_x, room),
+            window_zone,
             scene,
             reorder,
             magnifier,
             icon: metrics.icon,
             gap: metrics.gap,
             scale,
-            origin: (room_x, room_top),
-            dock_origin: POINT {
-                x: dock_x as i32,
-                y: dock_y as i32,
-            },
+            frame,
+            window_frame,
             rest_zone: zone(enter, enter, enter, enter),
             hover_zone: zone(
                 side_growth + leave,
@@ -1332,16 +1558,33 @@ impl App {
                 side_growth + leave,
                 leave,
             ),
-            edge_zone: RECT {
-                left: (dock_x - side_growth) as i32,
-                top: screen.bottom - REVEAL_STRIP,
-                right: (dock_right + side_growth) as i32,
-                bottom: screen.bottom,
+            // The thin strip at the screen edge that reveals a hidden dock,
+            // as long as the dock (plus how far its icons spread).
+            edge_zone: match edge {
+                DockEdge::Bottom => RECT {
+                    left: (dock_x - side_growth) as i32,
+                    top: screen.bottom - REVEAL_STRIP,
+                    right: (dock_right + side_growth) as i32,
+                    bottom: screen.bottom,
+                },
+                DockEdge::Left => RECT {
+                    left: screen.left,
+                    top: (dock_y - side_growth) as i32,
+                    right: screen.left + REVEAL_STRIP,
+                    bottom: (dock_bottom + side_growth) as i32,
+                },
+                DockEdge::Right => RECT {
+                    left: screen.right - REVEAL_STRIP,
+                    top: (dock_y - side_growth) as i32,
+                    right: screen.right,
+                    bottom: (dock_bottom + side_growth) as i32,
+                },
             },
             slide_distance: dock.height + px(FLOAT_MARGIN) + room,
             layout: dock,
         };
         self.stage = Some(stage);
+        self.sync_attention_visuals()?;
         self.place_windows()?;
         self.schedule_trim();
         self.render()?;
@@ -1355,7 +1598,12 @@ impl App {
             } else {
                 screen
             };
-            appbar.reserve(Edge::Bottom, reservation, strip);
+            let side = match edge {
+                DockEdge::Bottom => Edge::Bottom,
+                DockEdge::Left => Edge::Left,
+                DockEdge::Right => Edge::Right,
+            };
+            appbar.reserve(side, reservation, strip);
         }
         Ok(())
     }
@@ -1442,10 +1690,7 @@ impl App {
                     .entries
                     .iter()
                     .position(|entry| entry.id.as_deref() == Some(drag.id.as_str()))?,
-                center: (
-                    (drag.point.x - stage.dock_origin.x) as f32,
-                    (drag.point.y - stage.dock_origin.y) as f32,
-                ),
+                center: stage.to_dock(drag.point),
                 removing: drag.removing,
                 ghost: drag.from_group,
             })
@@ -1489,12 +1734,9 @@ impl App {
         let visible = !self.fullscreen;
         for (entry, rect) in self.entries.iter().zip(&state.rects) {
             if let Some(hwnd) = entry.id.as_deref().and_then(window_of) {
-                let slot = (
-                    stage.origin.0 + rect.x,
-                    stage.origin.1 + rect.y + slide,
-                    rect.width,
-                    rect.height,
-                );
+                let box_ = stage.window_frame.rect(*rect);
+                let (slide_x, slide_y) = stage.window_frame.outward(slide);
+                let slot = (box_.x + slide_x, box_.y + slide_y, box_.width, box_.height);
                 let has_badge = self
                     .windows
                     .iter()
@@ -1538,14 +1780,14 @@ impl App {
                     .iter()
                     .position(|entry| entry.members.contains(&id))
             })?;
-        let rect = stage.layout.slots.get(index)?.rect;
+        let rect = stage.frame.rect(stage.layout.slots.get(index)?.rect);
         let (width, height) = if aspect >= 1.0 {
             (rect.width, rect.width / aspect)
         } else {
             (rect.height * aspect, rect.height)
         };
-        let left = stage.dock_origin.x as f32 + rect.x + (rect.width - width) / 2.0;
-        let top = stage.dock_origin.y as f32 + rect.y + (rect.height - height) / 2.0;
+        let left = rect.x + (rect.width - width) / 2.0;
+        let top = rect.y + (rect.height - height) / 2.0;
         Some(RECT {
             left: left as i32,
             top: top as i32,
@@ -1654,7 +1896,15 @@ impl App {
         };
         let flight = self.snapshots.get(position).and_then(|(_, snapshot)| {
             let slot = self.minimized_slot(hwnd, snapshot.aspect())?;
-            Flight::restore(&self.gfx, hwnd, snapshot, slot, screen)
+            Flight::restore(
+                &self.gfx,
+                hwnd,
+                snapshot,
+                slot,
+                screen,
+                self.config.genie_speed.seconds(),
+                self.position(),
+            )
         });
         let Some(flight) = flight else {
             return false;
@@ -1707,7 +1957,15 @@ impl App {
             let Some((from, frame)) = tracker::rect_before_minimize(hwnd, last_seen) else {
                 continue;
             };
-            if let Some(flight) = Flight::start(&self.gfx, hwnd, from, frame, screen) {
+            if let Some(flight) = Flight::start(
+                &self.gfx,
+                hwnd,
+                from,
+                frame,
+                screen,
+                self.config.genie_speed.seconds(),
+                self.position(),
+            ) {
                 self.flights.push(flight);
                 self.last_frame = Instant::now();
                 break;
@@ -1723,9 +1981,9 @@ impl App {
         // SAFETY: `point` remains alive for the duration of the call.
         unsafe { GetCursorPos(&mut point)? };
 
-        let origin_x = stage.dock_origin.x;
+        let (along, _) = stage.to_dock(point);
         if self.update_drag(point) {
-            self.cursor = (point.x - origin_x) as f32;
+            self.cursor = along;
             return self.drag_to(point);
         }
         let Some(stage) = &self.stage else {
@@ -1734,12 +1992,12 @@ impl App {
 
         // Keep the active-area boundary aligned with the icons as they grow.
         let rise = stage.icon * (stage.magnifier.max_scale - 1.0) * self.amount.value;
-        let ceiling = stage.dock_origin.y as f32 - rise - LEAVE_HALO * stage.scale;
-        if self.hovering && (point.y as f32) < ceiling {
+        let (along, across) = stage.to_dock(point);
+        if self.hovering && across < -rise - LEAVE_HALO * stage.scale {
             return self.on_mouse_leave();
         }
 
-        self.cursor = (point.x - stage.dock_origin.x) as f32;
+        self.cursor = along;
         if !self.hovering {
             self.hovering = true;
             self.amount.target = 1.0;
@@ -1858,12 +2116,7 @@ impl App {
             &stage.magnifier,
         );
         let rect = &state.rects[index];
-        let anchor = RECT {
-            left: stage.dock_origin.x + rect.x.round() as i32,
-            top: stage.dock_origin.y + rect.y.round() as i32,
-            right: stage.dock_origin.x + (rect.x + rect.width).round() as i32,
-            bottom: stage.dock_origin.y + (rect.y + rect.height).round() as i32,
-        };
+        let anchor = stage.screen_rect(*rect);
         let windows = if let Some(hwnd) = window_of(&candidate) {
             vec![hwnd]
         } else {
@@ -1876,8 +2129,11 @@ impl App {
             &self.gfx,
             candidate,
             windows,
-            anchor,
-            stage.key.screen,
+            &multi_window_view::Anchor {
+                icon: anchor,
+                screen: stage.key.screen,
+                edge: stage.frame.edge,
+            },
             stage.scale,
             Theme::for_system(stage.key.light, stage.key.glass),
             self.config.show_preview_close_button,
@@ -2275,16 +2531,27 @@ impl App {
         }
     }
 
-    /// The top edge of the dock, for the crab to walk on. An auto-hidden
+    /// The dock's inner rim, for the crab to walk on. An auto-hidden
     /// dock comes up for the act and goes down after it, as the macOS Dock
     /// does when something asks for attention.
     fn dock_edge(&self) -> Option<mascot::Place> {
         let stage = self.stage.as_ref()?;
         let margin = (stage.icon / 2.0) as i32;
+        let frame = stage.frame;
+        // The rim is the dock's side away from the screen edge (dock
+        // coordinate across = 0), and the walk runs the dock's length.
+        let start = frame.point(0.0, 0.0);
+        let end = frame.point(stage.layout.width, 0.0);
+        let (from, to, rim) = if frame.edge.is_vertical() {
+            (start.1, end.1, start.0)
+        } else {
+            (start.0, end.0, start.1)
+        };
         Some(mascot::Place::Along {
-            left: stage.dock_origin.x - margin,
-            right: stage.dock_origin.x + stage.layout.width as i32 + margin,
-            top: stage.dock_origin.y,
+            left: from as i32 - margin,
+            right: to as i32 + margin,
+            top: rim as i32,
+            edge: frame.edge,
         })
     }
 
@@ -2416,7 +2683,7 @@ impl App {
                 return Ok(None);
             }
         }
-        self.hover_at(point.x)?;
+        self.hover_at(point)?;
         self.track_leave()?;
         Ok(Some(point))
     }
@@ -2470,9 +2737,9 @@ impl App {
         let id = drag.id.clone();
         let pinned = self.roster.is_pinned(&id);
         let group = self.roster.is_group(&id);
-        let top = stage.dock_origin.y as f32
-            - stage.icon * (stage.magnifier.max_scale - 1.0 + REMOVE_DISTANCE);
-        let above = (point.y as f32) < top;
+        // How far the pointer is from the dock, away from the screen edge.
+        let (_, across) = stage.to_dock(point);
+        let above = across < -stage.icon * (stage.magnifier.max_scale - 1.0 + REMOVE_DISTANCE);
         // A group never leaves the dock this way (it can be ungrouped from
         // its menu), and an app taken out of a group stays in the dock,
         // where it was last placed, wherever it is released.
@@ -2490,7 +2757,7 @@ impl App {
         );
         let explorer = explorer_id();
         let rise = stage.icon * (stage.magnifier.max_scale - 1.0);
-        let in_dock = (point.y as f32) >= stage.dock_origin.y as f32 - rise;
+        let in_dock = across >= -rise;
         if !group && in_dock {
             drag.merge = self
                 .entries
@@ -2501,11 +2768,7 @@ impl App {
                         && entry.id.as_ref().is_some_and(|other| {
                             *other != id && *other != explorer && self.roster.is_pinned(other)
                         })
-                        && group_drop_contains(
-                            rect,
-                            self.cursor,
-                            (point.y - stage.dock_origin.y) as f32,
-                        )
+                        && group_drop_contains(rect, self.cursor, across)
                 })
                 .and_then(|(entry, _)| entry.id.clone());
             if drag.merge.is_some() {
@@ -2569,11 +2832,11 @@ impl App {
 
     /// Hover driven by a drag from another app: OLE takes the mouse, so the
     /// dock gets no WM_MOUSEMOVE meanwhile.
-    fn hover_at(&mut self, x: i32) -> Result<()> {
+    fn hover_at(&mut self, point: POINT) -> Result<()> {
         let Some(stage) = &self.stage else {
             return Ok(());
         };
-        self.cursor = (x - stage.dock_origin.x) as f32;
+        self.cursor = stage.to_dock(point).0;
         if !self.hovering {
             self.hovering = true;
             self.amount.target = 1.0;
@@ -2641,7 +2904,7 @@ impl App {
         DropAction::Pin { id, before }
     }
 
-    fn on_drag_enter(&mut self, incoming: Vec<String>, x: i32) -> Result<DROPEFFECT> {
+    fn on_drag_enter(&mut self, incoming: Vec<String>, point: POINT) -> Result<DROPEFFECT> {
         self.close_preview();
         // What a single dropped app or shortcut would pin, worked out once:
         // drag-over runs on every mouse move, and reading a shortcut is a
@@ -2653,11 +2916,11 @@ impl App {
         };
         self.incoming = incoming;
         self.drag_over = true;
-        self.on_drag_over(x)
+        self.on_drag_over(point)
     }
 
-    fn on_drag_over(&mut self, x: i32) -> Result<DROPEFFECT> {
-        self.hover_at(x)?;
+    fn on_drag_over(&mut self, point: POINT) -> Result<DROPEFFECT> {
+        self.hover_at(point)?;
         self.aim_spring();
         Ok(self.drop_action().effect())
     }
@@ -2732,9 +2995,9 @@ impl App {
         Ok(self.activating(windows))
     }
 
-    fn on_drop(&mut self, x: i32) -> Result<DROPEFFECT> {
+    fn on_drop(&mut self, point: POINT) -> Result<DROPEFFECT> {
         self.end_drag_over();
-        self.hover_at(x)?;
+        self.hover_at(point)?;
         let action = self.drop_action();
         let effect = action.effect();
         let files = std::mem::take(&mut self.incoming);
@@ -2952,9 +3215,13 @@ impl App {
     /// The shortcuts folder's menu, above its icon. The label hides while
     /// the menu is open, as for the context menu.
     fn folder_menu(&mut self, folder: String) -> Result<Option<Outside>> {
-        let Some(anchor) = self.hovered.and_then(|index| self.anchor_above(index)) else {
+        let Some(anchor) = self.hovered.and_then(|index| self.anchor_beside(index)) else {
             return Ok(None);
         };
+        let placement = self
+            .stage
+            .as_ref()
+            .map_or(menu::Placement::Above, Stage::menu_placement);
         self.close_preview();
         self.close_group_view();
         self.hovered = None;
@@ -2963,12 +3230,14 @@ impl App {
         Ok(Some(Outside::FolderMenu {
             folder,
             anchor,
+            placement,
             dark: !uses_light_theme(),
         }))
     }
 
-    /// Where a menu for the icon at `index` opens: centered just above it.
-    fn anchor_above(&self, index: usize) -> Option<POINT> {
+    /// Where a menu for the icon at `index` opens: just off it, on the side
+    /// away from the screen edge (see `Stage::menu_placement`).
+    fn anchor_beside(&self, index: usize) -> Option<POINT> {
         let stage = self.stage.as_ref()?;
         let state = magnify(
             &stage.layout,
@@ -2978,10 +3247,7 @@ impl App {
         );
         let rect = state.rects.get(index)?;
         let gap = (stage.gap / 2.0).round() as i32;
-        Some(POINT {
-            x: stage.dock_origin.x + (rect.x + rect.width / 2.0).round() as i32,
-            y: stage.dock_origin.y + rect.y.round() as i32 - gap,
-        })
+        Some(stage.beside(*rect, gap))
     }
 
     /// What clicking the app `id` does, in the dock or in an unfolded group:
@@ -3006,7 +3272,17 @@ impl App {
                 Outside::Open(id)
             });
         }
-        if windows.is_empty() {
+        if windows.is_empty() && !app_exists(&id) {
+            // Uninstalled while the dock was running: it leaves the dock
+            // instead of failing to open.
+            if self.prune_missing_apps() {
+                save_settings(&self.roster, &self.config);
+                if let Err(error) = self.refresh() {
+                    muelle_shell::log::line(&format!("app desinstalada: {error:#}"));
+                }
+            }
+            None
+        } else if windows.is_empty() {
             self.start_bounce(id.clone(), None);
             Some(Outside::Open(id))
         } else if group_is_foreground(&windows, tracker::foreground_window()) {
@@ -3016,7 +3292,7 @@ impl App {
         }
     }
 
-    /// Unfolds the group `id` above its icon.
+    /// Unfolds the group `id` beside its icon, away from the screen edge.
     fn open_group_view(&mut self, id: &str) -> Result<()> {
         self.close_preview();
         self.close_group_view();
@@ -3039,17 +3315,11 @@ impl App {
         let Some(rect) = state.rects.get(index) else {
             return Ok(());
         };
-        let anchor = RECT {
-            left: stage.dock_origin.x + rect.x.round() as i32,
-            top: stage.dock_origin.y + rect.y.round() as i32,
-            right: stage.dock_origin.x + (rect.x + rect.width).round() as i32,
-            bottom: stage.dock_origin.y + (rect.y + rect.height).round() as i32,
-        };
+        let anchor = stage.screen_rect(*rect);
         let (icon, scale) = (stage.icon.round(), stage.scale);
         let theme = Theme::for_system(stage.key.light, stage.key.glass);
-        let Some(monitor) = primary_monitor() else {
-            return Ok(());
-        };
+        // The dock's own display, which a hidden dock can move between.
+        let (screen, edge) = (stage.key.screen, stage.frame.edge);
         let items = self.group_items(id, icon as u32);
         self.group_view = Some(GroupView::show(
             &self.gfx,
@@ -3057,13 +3327,15 @@ impl App {
             &items,
             &Placement {
                 anchor,
-                screen: monitor.screen,
+                screen,
+                edge,
                 scale,
                 icon,
                 theme,
                 dock: self.input,
             },
         )?);
+        self.sync_attention_visuals()?;
         self.render()
     }
 
@@ -3156,7 +3428,7 @@ impl App {
         });
         self.refresh()?;
         if let Some(stage) = &self.stage {
-            self.cursor = (point.x - stage.dock_origin.x) as f32;
+            self.cursor = stage.to_dock(point).0;
         }
         // SAFETY: Capture keeps mouse input while dragging outside the dock.
         unsafe {
@@ -3194,7 +3466,7 @@ impl App {
             return Ok(None);
         };
         let windows = self.windows_of(&id);
-        let items = self.entry_menu(&id, Role::App, &windows);
+        let (items, end_task) = self.entry_menu(&id, Role::App, &windows);
         let gap = self
             .stage
             .as_ref()
@@ -3210,9 +3482,11 @@ impl App {
                 id,
                 role: Role::App,
                 windows,
+                end_task,
             },
             items,
             anchor,
+            placement: menu::Placement::Above,
             dark: !uses_light_theme(),
         })))
     }
@@ -3268,22 +3542,34 @@ impl App {
             Some((entry.id.clone()?, entry.role, *state.rects.get(index)?))
         });
         let gap = (stage.gap / 2.0).round() as i32;
+        let stage_placement = stage.menu_placement();
 
         let (target, items, anchor) = match target_entry {
             Some((id, role, rect)) => {
                 let windows = self.windows_of(&id);
-                let anchor = POINT {
-                    x: stage.dock_origin.x + (rect.x + rect.width / 2.0).round() as i32,
-                    y: stage.dock_origin.y + rect.y.round() as i32 - gap,
-                };
-                let items = self.entry_menu(&id, role, &windows);
-                (MenuTarget::Entry { id, role, windows }, items, anchor)
+                let anchor = stage.beside(rect, gap);
+                let (items, end_task) = self.entry_menu(&id, role, &windows);
+                (
+                    MenuTarget::Entry {
+                        id,
+                        role,
+                        windows,
+                        end_task,
+                    },
+                    items,
+                    anchor,
+                )
             }
             None => {
-                let anchor = POINT {
-                    x: stage.dock_origin.x + self.cursor.round() as i32,
-                    y: stage.dock_origin.y - gap,
-                };
+                let anchor = stage.beside(
+                    Rect {
+                        x: self.cursor,
+                        y: 0.0,
+                        width: 0.0,
+                        height: stage.layout.height,
+                    },
+                    gap,
+                );
                 let hiding = if self.config.auto_hide {
                     text().turn_hiding_off
                 } else {
@@ -3309,14 +3595,25 @@ impl App {
             target,
             items,
             anchor,
+            placement: stage_placement,
             dark: !uses_light_theme(),
         })))
     }
 
-    fn entry_menu(&self, id: &str, role: Role, windows: &[isize]) -> Vec<MenuItem> {
+    fn entry_menu(
+        &self,
+        id: &str,
+        role: Role,
+        windows: &[isize],
+    ) -> (Vec<MenuItem>, Option<PreparedEndTask>) {
         let is_file = !id.starts_with("shell:") && !id.starts_with("::");
         let t = text();
         let mut items = Vec::new();
+        let end_task = if role == Role::App && id != explorer_id() {
+            PreparedEndTask::capture(id, windows, &self.windows)
+        } else {
+            None
+        };
         match role {
             Role::App => {
                 for (index, &hwnd) in windows.iter().take(MENU_WINDOWS).enumerate() {
@@ -3345,6 +3642,10 @@ impl App {
                         enabled: true,
                     });
                 }
+                // A recent app can be dismissed while recent apps stay on.
+                if windows.is_empty() && self.roster.recent().iter().any(|recent| recent == id) {
+                    items.push(MenuItem::action(CMD_FORGET_RECENT, t.remove_from_dock));
+                }
                 if is_file {
                     items.push(MenuItem::action(CMD_RUN_AS_ADMIN, t.run_as_admin));
                     items.push(MenuItem::action(CMD_REVEAL, t.show_in_explorer));
@@ -3352,6 +3653,14 @@ impl App {
                 if !windows.is_empty() {
                     items.push(MenuItem::Separator);
                     items.push(MenuItem::action(CMD_QUIT_APP, t.quit_app));
+                    if id != explorer_id() {
+                        items.push(MenuItem::Action {
+                            command: CMD_END_TASK,
+                            label: t.end_task.into(),
+                            checked: false,
+                            enabled: end_task.is_some(),
+                        });
+                    }
                 }
             }
             Role::Group => {
@@ -3387,11 +3696,17 @@ impl App {
                 });
             }
         }
-        items
+        (items, end_task)
     }
 
     fn on_command(&mut self, target: MenuTarget, command: u32) -> Result<Option<Outside>> {
-        let MenuTarget::Entry { id, role, windows } = target else {
+        let MenuTarget::Entry {
+            id,
+            role,
+            windows,
+            end_task,
+        } = target
+        else {
             return match command {
                 CMD_QUIT_DOCK => Ok(Some(Outside::QuitDock)),
                 CMD_TOGGLE_HIDING => self.toggle_hiding().map(|()| None),
@@ -3424,6 +3739,13 @@ impl App {
                 None
             }
             CMD_SETTINGS => Some(Outside::OpenSettings),
+            CMD_FORGET_RECENT => {
+                if self.roster.forget_recent(&id) {
+                    save_settings(&self.roster, &self.config);
+                    self.refresh()?;
+                }
+                None
+            }
             CMD_REMOVE_FOLDER => {
                 if let Err(error) = forget_shortcuts_folder(&self.config) {
                     eprintln!("muelle: {error}");
@@ -3463,6 +3785,7 @@ impl App {
                 launcher::close(&windows);
                 None
             }
+            CMD_END_TASK => end_task.map(Outside::EndTask),
             CMD_EMPTY_BIN => Some(Outside::EmptyBin),
             window => {
                 let index = window.checked_sub(CMD_WINDOW).map(|index| index as usize);
@@ -3496,7 +3819,7 @@ impl App {
         if config.language != self.config.language {
             strings::set_language(config.language);
             // Labels are drawn text: redraw them in the new language.
-            self.assets_for = (0.0, false, 0);
+            self.assets_for = (0.0, false, 0, DockEdge::Bottom);
         }
         if !config.genie {
             self.restore_transitions();
@@ -3506,7 +3829,12 @@ impl App {
             self.slide.target = if config.auto_hide { 1.0 } else { 0.0 };
             self.last_frame = Instant::now();
         }
+        let moved = config.dock_position != self.config.dock_position;
         self.config = config;
+        if moved {
+            // A hidden dock comes out of its new edge on every display.
+            self.apply_edge_settings();
+        }
         // Updates may have been turned on or off.
         self.schedule_update();
         self.sync_thumbnails();
@@ -3526,7 +3854,7 @@ impl App {
     /// unpinned there is unpinned here. Apps pinned only in the dock stay.
     /// Windows offers no way to do the reverse (pin to the taskbar).
     fn sync_taskbar_pins(&mut self) -> Result<()> {
-        let pruned = self.prune_missing_pins();
+        let pruned = self.prune_missing_apps();
         let Some(current) = taskbar_pins_if_readable() else {
             if pruned {
                 save_settings(&self.roster, &self.config);
@@ -3565,10 +3893,10 @@ impl App {
         self.refresh()
     }
 
-    /// Unpins apps that were uninstalled, so no broken icon stays behind, as
-    /// the Windows taskbar drops them; apps in groups too. Returns whether
-    /// anything changed.
-    fn prune_missing_pins(&mut self) -> bool {
+    /// Removes apps that were uninstalled, so no broken icon stays behind, as
+    /// the Windows taskbar drops them: pinned apps (in groups too) and recent
+    /// apps (issue #25). Returns whether anything changed.
+    fn prune_missing_apps(&mut self) -> bool {
         let missing: Vec<String> = self
             .roster
             .pinned_apps()
@@ -3578,7 +3906,17 @@ impl App {
         for id in &missing {
             self.roster.unpin(id);
         }
-        !missing.is_empty()
+        let gone: Vec<String> = self
+            .roster
+            .recent()
+            .iter()
+            .filter(|id| !app_exists(id))
+            .cloned()
+            .collect();
+        for id in &gone {
+            self.roster.forget_recent(id);
+        }
+        !missing.is_empty() || !gone.is_empty()
     }
 
     fn toggle_hiding(&mut self) -> Result<()> {
@@ -3612,19 +3950,42 @@ impl App {
         self.last_frame = Instant::now();
     }
 
-    fn on_attention(&mut self, hwnd: isize) {
-        if hwnd == tracker::foreground_window() {
-            return;
+    fn on_attention(&mut self, hwnd: isize) -> Result<()> {
+        if !self.windows.iter().any(|window| window.hwnd == hwnd) && self.read_windows() {
+            self.sync_attention_visuals()?;
+            self.render()?;
         }
-        if let Some(window) = self.windows.iter().find(|window| window.hwnd == hwnd) {
-            let app_id = window.app_id.clone();
-            if self.config.muted_apps.contains(&app_id) {
-                return;
-            }
-            if self.config.notification_bounce && animations_enabled() {
+        // A minimize/flash can arrive before the debounced tracker refresh.
+        // SAFETY: Read-only query; a stale or destroyed HWND returns false.
+        let minimized =
+            unsafe { windows::Win32::UI::WindowsAndMessaging::IsIconic(HWND(hwnd as *mut _)) }
+                .as_bool();
+        let foreground = if minimized {
+            0
+        } else {
+            active_attention_window(&self.windows, tracker::foreground_window())
+        };
+        if hwnd == foreground {
+            return Ok(());
+        }
+        let app_id = self
+            .windows
+            .iter()
+            .find(|window| window.hwnd == hwnd)
+            .map(|window| window.app_id.clone());
+        if let Some(app_id) = app_id {
+            let changed = self.attention_enabled && self.attention.request(hwnd, foreground);
+            if (changed || !self.attention_enabled)
+                && self.config.notification_bounce
+                && animations_enabled()
+            {
                 self.start_bounce(app_id.clone(), Some(ATTENTION_HOPS * bounce::HOP_SECONDS));
             }
-            if self.config.notification_badges {
+            if changed {
+                self.sync_attention_visuals()?;
+                self.render()?;
+            }
+            if self.config.notification_badges && !self.config.muted_apps.contains(&app_id) {
                 let title = tracker::title(hwnd);
                 self.notifications.push(
                     app_id.clone(),
@@ -3640,6 +4001,7 @@ impl App {
                 let _ = self.render();
             }
         }
+        Ok(())
     }
 
     pub fn on_notification(&mut self, payload: muelle_shell::dock_link::NotificationPayload) {
@@ -3749,9 +4111,49 @@ impl App {
         menu_bar_refresh();
     }
 
+    fn sync_attention_visuals(&mut self) -> Result<()> {
+        if let Some(stage) = &mut self.stage {
+            stage.scene.set_attention(
+                &self.gfx,
+                self.entries.iter().map(|entry| {
+                    self.attention_enabled
+                        && entry_has_attention(&self.attention, &self.windows, entry)
+                }),
+            )?;
+        }
+        if let Some(view) = &mut self.group_view {
+            view.set_attention(&self.gfx, |id| {
+                self.attention_enabled && app_has_attention(&self.attention, &self.windows, id)
+            })?;
+        }
+        Ok(())
+    }
+
+    fn taskbar_preferences_changed(&mut self) -> Result<()> {
+        if let Some(watch) = &mut self.badge_watch {
+            watch.arm();
+        }
+        let enabled = status::taskbar_badges_enabled();
+        if self.attention_enabled != enabled {
+            self.attention_enabled = enabled;
+            self.attention.clear();
+            self.sync_attention_visuals()?;
+            self.render()?;
+        }
+        Ok(())
+    }
+
+    fn forget_attention(&mut self, hwnd: isize) -> Result<()> {
+        if self.attention.acknowledge(hwnd) {
+            self.sync_attention_visuals()?;
+            self.render()?;
+        }
+        Ok(())
+    }
+
     /// Refreshes open windows and recomposes the dock if anything changed.
     fn sync(&mut self) -> Result<()> {
-        self.read_windows();
+        let attention_changed = self.read_windows();
         if self
             .preview
             .as_ref()
@@ -3819,6 +4221,10 @@ impl App {
             self.start_flights(&newly_minimized);
         }
         self.started = true;
+        if attention_changed {
+            self.sync_attention_visuals()?;
+            self.render()?;
+        }
         // A foreground-window change may mean an app entered or exited full-screen mode.
         self.update_fullscreen()
     }
@@ -3931,13 +4337,23 @@ impl App {
     /// shows it again when it no longer does.
     /// Creates or removes the menu bar to match the settings.
     fn apply_menu_bar_setting(&mut self) {
+        let widgets = MenuBarWidgets {
+            search: self.config.menu_bar_search,
+            task_view: self.config.menu_bar_task_view,
+            widgets: self.config.menu_bar_widgets,
+            bluetooth: self.config.menu_bar_bluetooth,
+            battery_percent: self.config.menu_bar_battery_percent,
+            island_style: self.config.menu_bar_island_style,
+        };
         if !self.config.menu_bar {
             self.menubar = None;
         } else if self.menubar.is_none() {
             self.menubar = MenuBar::create(
                 &self.gfx,
                 self.config.ai_usage,
+                self.config.menu_bar_music,
                 self.config.menu_bar_auto_hide,
+                widgets,
             )
             .inspect_err(|error| eprintln!("muelle: barra superior: {error:#}"))
             .ok();
@@ -3946,16 +4362,48 @@ impl App {
             let applied = bar
                 .set_auto_hide(self.config.menu_bar_auto_hide)
                 .and_then(|()| bar.set_usage_enabled(&self.gfx, self.config.ai_usage))
+                .and_then(|()| bar.set_media_enabled(&self.gfx, self.config.menu_bar_music))
+                .and_then(|()| bar.set_widgets(&self.gfx, widgets))
                 .and_then(|()| {
                     let covered = primary_monitor()
                         .is_some_and(|monitor| tracker::foreground_is_fullscreen(monitor.screen));
                     bar.set_visible(!covered)
+                })
+                .and_then(|()| {
+                    bar.set_accessories_enabled(&self.gfx, self.config.accessory_battery)
                 });
             if let Err(error) = applied {
                 eprintln!("muelle: barra superior: {error:#}");
             }
         }
         self.apply_edge_settings();
+    }
+
+    /// The screen edge chosen in Settings.
+    fn position(&self) -> DockEdge {
+        match self.config.dock_position {
+            DockPosition::Bottom => DockEdge::Bottom,
+            DockPosition::Left => DockEdge::Left,
+            DockPosition::Right => DockEdge::Right,
+        }
+    }
+
+    /// How much of `screen`'s top the menu bar keeps, for a dock on a side
+    /// edge to start below it. Zero on the bottom edge (not needed there),
+    /// when the bar is off or hides itself, and on other displays (the bar
+    /// is on the primary one).
+    fn menu_bar_inset(&self, screen: RECT, edge: DockEdge) -> i32 {
+        if !edge.is_vertical() {
+            return 0;
+        }
+        // From the settings, not the live bar: at startup the dock is placed
+        // before the bar exists, and it must not move once the bar appears.
+        if !self.config.menu_bar || self.config.menu_bar_auto_hide {
+            return 0;
+        }
+        primary_monitor()
+            .filter(|primary| primary.screen == screen)
+            .map_or(0, |primary| MenuBar::strip_height(primary.scale))
     }
 
     fn dock_monitor(&self) -> Option<Monitor> {
@@ -3979,7 +4427,7 @@ impl App {
             // One display already has the dock's own reveal strip.
             screens.clear();
         }
-        edge_watch::set_dock_monitors(screens);
+        edge_watch::set_dock_monitors(screens, self.position());
         let enabled = watch_dock || (self.menubar.is_some() && self.config.menu_bar_auto_hide);
         if enabled && self.edge_watch.is_none() {
             self.edge_watch = EdgeWatch::start(self.visual)
@@ -3996,6 +4444,14 @@ impl App {
     }
 
     fn edge_changed(&mut self) -> Result<()> {
+        // Explorer can recreate a secondary taskbar while the dock is running.
+        // Check on monitor entry so it is transparent before the edge dwell.
+        if self.config.auto_hide
+            && self.taskbar_worker.is_none()
+            && taskbar::needs_visibility_repair()
+        {
+            self.request_taskbar(false)?;
+        }
         let (target, wait) = edge_watch::pending();
         let on_dock_edge = matches!(target, Some(EdgeTarget::Dock(screen))
             if self.stage.as_ref().is_some_and(|stage| stage.key.screen == screen));
@@ -4078,7 +4534,7 @@ impl App {
         if self
             .stage
             .as_ref()
-            .is_some_and(|stage| point.x >= stage.edge_zone.left && point.x < stage.edge_zone.right)
+            .is_some_and(|stage| stage.spans_reveal(point))
         {
             return self.on_mouse_move();
         }
@@ -4151,7 +4607,11 @@ impl App {
             }
         });
         if let Some(bar) = &mut self.menubar {
-            bar.set_visible(!bar_fullscreen)?;
+            // An auxiliary bar failure must not strand a hidden dock.
+            if let Err(error) = bar.set_visible(!bar_fullscreen) {
+                crate::recovery::graphics_error(&error);
+                muelle_shell::log::line(&format!("visibilidad de la barra superior: {error:#}"));
+            }
         }
         // Windows sometimes omits the shell event when a full-screen app
         // closes or switches desktops. Poll only while our UI is hidden.
@@ -4215,15 +4675,27 @@ impl App {
         // The app roster can stay identical while its windows change z-order.
         // Refresh their order so the next dock activation selects the actual
         // most recently used window rather than a stale group leader.
-        self.read_windows();
+        let attention_changed = self.read_windows();
         #[cfg(feature = "recover-browser-z-order")]
         tracker::recover_browser_z_order(&self.windows, foreground);
-        self.update_fullscreen()
+        self.update_fullscreen()?;
+        if attention_changed {
+            self.sync_attention_visuals()?;
+            self.render()?;
+        }
+        Ok(())
     }
 
-    fn read_windows(&mut self) {
+    fn read_windows(&mut self) -> bool {
         self.windows = self.tracker.list();
         self.preview_order.update(&self.windows);
+        let pruned = self
+            .attention
+            .retain(|hwnd| self.windows.iter().any(|window| window.hwnd == hwnd));
+        self.attention.acknowledge(active_attention_window(
+            &self.windows,
+            tracker::foreground_window(),
+        )) || pruned
     }
 
     fn on_appbar_notice(&mut self, notice: usize) -> Result<()> {
@@ -4268,6 +4740,7 @@ pub(crate) fn with_app_then(what: &str, action: impl FnOnce(&mut App) -> Result<
         match app.as_mut().map(action) {
             Some(Ok(outside)) => outside,
             Some(Err(error)) => {
+                crate::recovery::graphics_error(&error);
                 muelle_shell::log::line(&format!("{what}: {error:#}"));
                 None
             }
@@ -4343,9 +4816,60 @@ pub fn menu_bar_clicked(x: f32, y: f32) {
     });
 }
 
+pub fn menu_bar_volume_press(x: f32, y: f32) {
+    with_app("volumen", |app| {
+        if let Some(bar) = &mut app.menubar {
+            bar.press_volume(&app.gfx, x, y)?;
+        }
+        Ok(())
+    });
+}
+
+pub fn menu_bar_scrolled(point: POINT, delta: i16) -> bool {
+    with_app_value("desplazar uso de IA", |app| match &mut app.menubar {
+        Some(bar) => bar.scroll_usage_at(point, delta),
+        None => Ok(false),
+    })
+}
+
+pub fn menu_bar_volume_release(x: Option<f32>) -> bool {
+    with_app_value("volumen", |app| match &mut app.menubar {
+        Some(bar) => bar.release_volume(x),
+        None => Ok(false),
+    })
+}
+
+pub fn menu_bar_volume_flush() {
+    with_app("volumen", |app| match &mut app.menubar {
+        Some(bar) => bar.flush_volume(),
+        None => Ok(()),
+    });
+}
+
 pub fn menu_bar_media_changed() {
     with_app("reproducción", |app| match &mut app.menubar {
         Some(bar) => bar.media_changed(&app.gfx),
+        None => Ok(()),
+    });
+}
+
+pub fn menu_bar_audio_changed() {
+    with_app("audio", |app| match &mut app.menubar {
+        Some(bar) => bar.audio_changed(&app.gfx),
+        None => Ok(()),
+    });
+}
+
+pub fn menu_bar_accessories_changed() {
+    with_app("accesorios", |app| match &mut app.menubar {
+        Some(bar) => bar.accessories_changed(&app.gfx),
+        None => Ok(()),
+    });
+}
+
+pub fn menu_bar_accessories_reset() {
+    with_app("reanudar accesorios", |app| match &mut app.menubar {
+        Some(bar) => bar.restart_accessories(&app.gfx),
         None => Ok(()),
     });
 }
@@ -4544,20 +5068,24 @@ pub fn menu_bar_tick() {
     });
 }
 
-pub fn drag_enter(files: Vec<String>, x: i32, _y: i32) -> DROPEFFECT {
-    with_app_value("arrastre de archivos", |app| app.on_drag_enter(files, x))
+pub fn drag_enter(files: Vec<String>, x: i32, y: i32) -> DROPEFFECT {
+    with_app_value("arrastre de archivos", |app| {
+        app.on_drag_enter(files, POINT { x, y })
+    })
 }
 
-pub fn drag_over(x: i32, _y: i32) -> DROPEFFECT {
-    with_app_value("arrastre de archivos", |app| app.on_drag_over(x))
+pub fn drag_over(x: i32, y: i32) -> DROPEFFECT {
+    with_app_value("arrastre de archivos", |app| {
+        app.on_drag_over(POINT { x, y })
+    })
 }
 
 pub fn drag_leave() {
     with_app("arrastre de archivos", App::on_drag_leave);
 }
 
-pub fn drop_files(x: i32, _y: i32) -> DROPEFFECT {
-    with_app_value("soltar archivos", |app| app.on_drop(x))
+pub fn drop_files(x: i32, y: i32) -> DROPEFFECT {
+    with_app_value("soltar archivos", |app| app.on_drop(POINT { x, y }))
 }
 
 /// Checks the recycle bin on a background thread by scanning each drive
@@ -4691,6 +5219,21 @@ fn run_outside(outside: Outside) {
             }
             menu_bar_refresh();
         }
+        Outside::EndTask(target) => {
+            // Captured kernel handles are Send; no HWND or PID is resolved
+            // again after the menu. Never wait on an unresponsive UI thread.
+            let started = thread::Builder::new()
+                .name("muelle-end-task".into())
+                .spawn(move || {
+                    if let Err(error) = target.terminate() {
+                        muelle_shell::log::line(&format!("finalizar tarea: {error}"));
+                        shell_work::notify_end_task_failed();
+                    }
+                });
+            if started.is_err() {
+                shell_work::notify_end_task_failed();
+            }
+        }
         Outside::Menu(request) => {
             let owner = HWND(MAIN_WINDOW.load(Ordering::Relaxed) as *mut _);
             with_app("abrir menú", |app| {
@@ -4703,6 +5246,7 @@ fn run_outside(outside: Outside) {
                 &request.items,
                 request.anchor,
                 request.dark,
+                request.placement,
             );
             with_app("menú cerrado", App::after_menu);
             if let Some(command) = chosen {
@@ -4714,13 +5258,14 @@ fn run_outside(outside: Outside) {
         Outside::FolderMenu {
             folder,
             anchor,
+            placement,
             dark,
         } => {
             with_app("abrir carpeta de accesos directos", |app| {
                 app.menu_open = true;
                 app.render()
             });
-            let chosen = folder_menu::show(main_window(), &folder, anchor, dark);
+            let chosen = folder_menu::show(main_window(), &folder, anchor, dark, placement);
             with_app("menú cerrado", App::after_menu);
             if let Some(path) = chosen {
                 submit(ShellAction::Open { id: path });
@@ -4731,6 +5276,9 @@ fn run_outside(outside: Outside) {
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
+        HEALTH_CHECK => with_app("estado del dispositivo gráfico", |app| {
+            app.gfx.check_device()
+        }),
         WM_MOUSEACTIVATE => {
             let mouse = ((l.0 >> 16) & 0xFFFF) as u32;
             let activate = matches!(mouse, WM_LBUTTONDOWN | WM_MBUTTONDOWN)
@@ -4774,6 +5322,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         DROP_RUN => with_app_then("soltar archivos", |app| Ok(app.pending_drop.take())),
         WM_RBUTTONUP => with_app_then("menú", App::on_right_click),
         BIN_STATE => with_app("papelera", |app| app.set_bin_full(w.0 != 0)),
+        TASKBAR_PREFS_CHANGED => {
+            with_app("preferencias de badges", App::taskbar_preferences_changed)
+        }
         BIN_CHANGED => {
             // SAFETY: `hwnd` is this live window on its owning UI thread.
             unsafe { SetTimer(Some(hwnd), BIN_TIMER, BIN_DELAY_MS, None) };
@@ -4787,7 +5338,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
                 });
             }
             // SAFETY: `hwnd` is our window; scheduling the same timer resets it.
-            unsafe { SetTimer(Some(hwnd), REFRESH_TIMER, REFRESH_DELAY_MS, None) };
+            unsafe {
+                SetTimer(Some(hwnd), REFRESH_TIMER, REFRESH_DELAY_MS, None);
+                if msg == WM_DISPLAYCHANGE && hwnd == main_window() {
+                    // Let Explorer settle and create any new secondary taskbars.
+                    SetTimer(Some(hwnd), TASKBAR_TIMER, TASKBAR_DELAY_MS, None);
+                }
+            }
         }
         // On battery or charging, or energy saver turned on or off: glass may
         // have to become solid, or the other way round.
@@ -4947,10 +5504,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             HSHELL_LANGUAGE => menu_bar_refresh(),
             code => {
                 if code == HSHELL_FLASH {
-                    with_app("aviso de atención", |app| {
-                        app.on_attention(l.0);
-                        Ok(())
-                    });
+                    with_app("aviso de atención", |app| app.on_attention(l.0));
+                } else if code == HSHELL_WINDOWDESTROYED {
+                    with_app("ventana cerrada", |app| app.forget_attention(l.0));
                 }
                 // SAFETY: `hwnd` is this live window on its owning UI thread.
                 unsafe { SetTimer(Some(hwnd), SYNC_TIMER, SYNC_DELAY_MS, None) };
@@ -5023,7 +5579,7 @@ fn message_loop() {
 pub fn run() -> Result<()> {
     let startup = Instant::now();
     muelle_shell::log::line(concat!("inicio, versión ", env!("CARGO_PKG_VERSION")));
-    let gfx = Gfx::new()?;
+    let gfx = Gfx::new()?.with_error_handler(crate::recovery::graphics_error);
     // SAFETY: The thread is already a single-threaded COM apartment (see
     // `main`); OLE adds drag and drop on top of it and is released at the end.
     unsafe { OleInitialize(None)? };
@@ -5102,8 +5658,11 @@ pub fn run() -> Result<()> {
             _bin_watch: BinWatch::register(input, BIN_CHANGED),
             _saver_watch: power::SaverWatch::new(input.0 as isize),
             pin_watch: muelle_shell::pins::watch(visual.0 as isize, PINS_CHANGED),
+            badge_watch: status::watch_taskbar_settings(visual.0 as isize, TASKBAR_PREFS_CHANGED),
+            attention: Attention::default(),
+            attention_enabled: status::taskbar_badges_enabled(),
             assets: HashMap::new(),
-            assets_for: (0.0, false, 0),
+            assets_for: (0.0, false, 0, DockEdge::Bottom),
             placeholder: None,
             remove_label: None,
             config,
@@ -5163,7 +5722,7 @@ pub fn run() -> Result<()> {
         let _ = SetConsoleCtrlHandler(Some(on_console_ctrl), true);
 
         // Apps uninstalled while Muelle was closed leave the dock.
-        if app.prune_missing_pins() {
+        if app.prune_missing_apps() {
             save_settings(&app.roster, &app.config);
         }
         // Pins and unpins made on the Windows taskbar while Muelle was closed.
@@ -5264,6 +5823,150 @@ pub fn run() -> Result<()> {
         let _ = worker.join();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod attention_tests {
+    use super::*;
+
+    #[test]
+    fn attention_reaches_apps_groups_and_minimized_thumbnails_without_clearing_other_windows() {
+        let windows = [
+            TrackedWindow {
+                hwnd: 7,
+                app_id: "chat".into(),
+                minimized: true,
+            },
+            TrackedWindow {
+                hwnd: 8,
+                app_id: "chat".into(),
+                minimized: false,
+            },
+        ];
+        let mut attention = Attention::default();
+        attention.request(7, 2);
+        let app = Entry {
+            kind: ItemKind::Icon,
+            id: Some("chat".into()),
+            role: Role::App,
+            running: true,
+            members: Vec::new(),
+        };
+        let group = Entry {
+            id: Some("group:chat".into()),
+            role: Role::Group,
+            members: vec!["chat".into()],
+            ..app.clone()
+        };
+        let thumbnail = Entry {
+            id: Some(window_id(7)),
+            role: Role::Window,
+            ..app.clone()
+        };
+        assert!(entry_has_attention(&attention, &windows, &app));
+        assert!(entry_has_attention(&attention, &windows, &group));
+        assert!(entry_has_attention(&attention, &windows, &thumbnail));
+        assert_eq!(active_attention_window(&windows, 7), 0);
+        attention.acknowledge(active_attention_window(&windows, 8));
+        assert!(entry_has_attention(&attention, &windows, &app));
+        attention.acknowledge(7);
+        assert!(!entry_has_attention(&attention, &windows, &group));
+    }
+
+    #[test]
+    #[ignore = "Requires Explorer's shell hooks; uses only off-screen test-owned windows"]
+    fn native_flash_request_produces_the_shell_event_used_by_dock_badges() -> Result<()> {
+        use std::time::Duration;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            DeregisterShellHookWindow, DestroyWindow, FLASHW_STOP, FLASHW_TRAY, FLASHWINFO,
+            FlashWindowEx, SW_SHOWNOACTIVATE, ShowWindow, WS_EX_APPWINDOW, WS_OVERLAPPEDWINDOW,
+        };
+        struct Window(HWND);
+        impl Drop for Window {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = DeregisterShellHookWindow(self.0);
+                    let _ = DestroyWindow(self.0);
+                }
+            }
+        }
+        let receiver = Window(unsafe {
+            CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                w!("STATIC"),
+                w!("Muelle badge receiver test"),
+                WS_POPUP,
+                -32000,
+                -32000,
+                80,
+                40,
+                None,
+                None,
+                None,
+                None,
+            )?
+        });
+        let source = Window(unsafe {
+            CreateWindowExW(
+                WS_EX_APPWINDOW | WS_EX_NOACTIVATE,
+                w!("STATIC"),
+                w!("Muelle native attention test"),
+                WS_OVERLAPPEDWINDOW,
+                -32000,
+                -32000,
+                160,
+                120,
+                None,
+                None,
+                None,
+                None,
+            )?
+        });
+        let message = unsafe {
+            RegisterShellHookWindow(receiver.0).ok()?;
+            let _ = ShowWindow(source.0, SW_SHOWNOACTIVATE);
+            RegisterWindowMessageW(w!("SHELLHOOK"))
+        };
+        let pump = |duration: Duration| {
+            let until = Instant::now() + duration;
+            let mut found = false;
+            while Instant::now() < until {
+                let mut event = MSG::default();
+                while unsafe { PeekMessageW(&mut event, None, 0, 0, PM_REMOVE) }.as_bool() {
+                    found |= event.hwnd == receiver.0
+                        && event.message == message
+                        && event.wParam.0 == HSHELL_FLASH
+                        && event.lParam.0 == source.0.0 as isize;
+                    unsafe {
+                        DispatchMessageW(&event);
+                    }
+                }
+                if found {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            found
+        };
+        pump(Duration::from_millis(350));
+        let mut info = FLASHWINFO {
+            cbSize: size_of::<FLASHWINFO>() as u32,
+            hwnd: source.0,
+            dwFlags: FLASHW_TRAY,
+            uCount: 2,
+            dwTimeout: 100,
+        };
+        unsafe {
+            let _ = FlashWindowEx(&info);
+        }
+        let found = pump(Duration::from_secs(2));
+        info.dwFlags = FLASHW_STOP;
+        unsafe {
+            let _ = FlashWindowEx(&info);
+        }
+        assert!(found, "Explorer did not publish the native attention event");
+        Ok(())
+    }
 }
 
 #[cfg(test)]

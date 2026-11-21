@@ -56,9 +56,14 @@ pub struct Config {
     pub magnification: bool,
     /// Side of the icon under the cursor, in logical pixels.
     pub magnified_size: u32,
+    /// The screen edge the dock sits on. Bottom by default, as on macOS;
+    /// never the top, which belongs to the menu bar.
+    pub dock_position: DockPosition,
     /// Genie effect when minimizing. On by default; while enabled, the dock
     /// turns off the system's own window transitions (see plan, "Efecto genio").
     pub genie: bool,
+    /// How long the genie takes (issue #27). `Normal` is the original speed.
+    pub genie_speed: GenieSpeed,
     /// Minimized windows get a live thumbnail in the right section of the
     /// dock. Off by default: they go into their app's icon instead.
     pub show_minimized: bool,
@@ -68,6 +73,23 @@ pub struct Config {
     pub menu_bar_auto_hide: bool,
     /// Show supported AI providers' plan usage in the menu bar.
     pub ai_usage: bool,
+    /// Show what is playing (title, controls) in the menu bar. With this and
+    /// `ai_usage` off there is no island at all (issue #28).
+    pub menu_bar_music: bool,
+    /// Visual style and placement of the music and AI usage island in the menu bar.
+    pub menu_bar_island_style: IslandStyle,
+    /// Opt-in peripheral monitoring. Off means no accessory reader or queries.
+    pub accessory_battery: bool,
+    /// Show search button in the menu bar (`None` follows Windows taskbar setting).
+    pub menu_bar_search: Option<bool>,
+    /// Show Task View button in the menu bar (`None` follows Windows taskbar setting).
+    pub menu_bar_task_view: Option<bool>,
+    /// Show Widgets button in the menu bar (`None` follows Windows taskbar setting).
+    pub menu_bar_widgets: Option<bool>,
+    /// Show Bluetooth button in the menu bar.
+    pub menu_bar_bluetooth: bool,
+    /// Show battery percentage in the menu bar (`None` follows Windows setting).
+    pub menu_bar_battery_percent: Option<bool>,
     /// The dot under apps that have windows open.
     pub show_indicators: bool,
     /// The section of recently used apps that are not pinned.
@@ -122,6 +144,56 @@ pub enum NotificationPosition {
 pub struct DockGroup {
     pub id: String,
     pub apps: Vec<String>,
+}
+
+/// Speed of the genie. Three steps, not a slider: a duration in milliseconds
+/// would ask the user to guess, and these three cover what anyone asked for.
+/// The screen edge the dock sits on: the three macOS offers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockPosition {
+    Left,
+    Right,
+    /// Also what an unknown value from a newer version reads as (serde
+    /// needs this fallback last).
+    #[default]
+    #[serde(other)]
+    Bottom,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GenieSpeed {
+    Fast,
+    Faster,
+    /// The original 0.5 s, close to the macOS Dock. Also what an unknown
+    /// value from a newer version reads as (serde needs it last).
+    #[default]
+    #[serde(other)]
+    Normal,
+}
+
+impl GenieSpeed {
+    /// How long one genie flight lasts, minimizing or restoring.
+    #[must_use]
+    pub fn seconds(self) -> f32 {
+        match self {
+            Self::Normal => 0.5,
+            Self::Fast => 0.35,
+            Self::Faster => 0.25,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IslandStyle {
+    /// Compact rounded bubble placed next to the right-side status indicators.
+    Bubble,
+    /// Centered curved notch hanging from the top of the menu bar.
+    #[default]
+    #[serde(other)]
+    Notch,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,12 +251,22 @@ impl Default for Config {
             auto_hide: false,
             icon_size: 48,
             magnification: true,
+            dock_position: DockPosition::Bottom,
             magnified_size: 77,
             genie: true,
+            genie_speed: GenieSpeed::Normal,
             show_minimized: false,
             menu_bar: true,
             menu_bar_auto_hide: false,
             ai_usage: true,
+            menu_bar_music: true,
+            menu_bar_island_style: IslandStyle::Notch,
+            accessory_battery: false,
+            menu_bar_search: None,
+            menu_bar_task_view: None,
+            menu_bar_widgets: None,
+            menu_bar_bluetooth: false,
+            menu_bar_battery_percent: None,
             show_indicators: true,
             show_recents: true,
             bounce_on_open: true,
@@ -380,6 +462,24 @@ mod tests {
     }
 
     #[test]
+    fn accessory_monitoring_is_opt_in_and_its_preference_round_trips() -> Result<(), ConfigError> {
+        let path = scratch("accessory-monitoring");
+        assert!(!Config::default().accessory_battery);
+        for enabled in [true, false] {
+            let saved = update_preferences(
+                &path,
+                serde_json::Map::from_iter([("accessoryBattery".into(), enabled.into())]),
+            )?;
+            assert_eq!(saved.accessory_battery, enabled);
+            assert_eq!(
+                load(&path)?.map(|config| config.accessory_battery),
+                Some(enabled)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn settings_patch_keeps_the_dock_groups() -> Result<(), ConfigError> {
         let path = scratch("settings-patch-groups");
         let group = DockGroup {
@@ -438,6 +538,8 @@ mod tests {
         // Files from before automatic updates get them, like new installs.
         assert!(config.auto_update);
         assert!(config.ai_usage);
+        assert!(config.menu_bar_music);
+        assert!(!config.accessory_battery);
         assert!(!config.show_minimized);
     }
 
@@ -569,6 +671,30 @@ mod tests {
     #[test]
     fn genie_should_be_on_by_default() {
         assert!(Config::default().genie);
+        assert_eq!(Config::default().genie_speed, GenieSpeed::Normal);
+    }
+
+    #[test]
+    fn the_dock_stays_at_the_bottom_unless_moved() {
+        for json in [r#"{}"#, r#"{"dockPosition":"top"}"#] {
+            let config: Config = serde_json::from_str(json).unwrap_or_default();
+            assert_eq!(config.dock_position, DockPosition::Bottom);
+        }
+        let left: Config = serde_json::from_str(r#"{"dockPosition":"left"}"#).unwrap_or_default();
+        assert_eq!(left.dock_position, DockPosition::Left);
+    }
+
+    #[test]
+    fn genie_speed_keeps_the_original_speed_unless_chosen() {
+        // Files from before the setting, and values from newer versions.
+        for json in [r#"{}"#, r#"{"genieSpeed":"warp"}"#] {
+            let config: Config = serde_json::from_str(json).unwrap_or_default();
+            assert_eq!(config.genie_speed, GenieSpeed::Normal);
+        }
+        let fast: Config = serde_json::from_str(r#"{"genieSpeed":"faster"}"#).unwrap_or_default();
+        assert_eq!(fast.genie_speed, GenieSpeed::Faster);
+        assert!(GenieSpeed::Faster.seconds() < GenieSpeed::Fast.seconds());
+        assert!(GenieSpeed::Fast.seconds() < GenieSpeed::Normal.seconds());
     }
 
     #[test]

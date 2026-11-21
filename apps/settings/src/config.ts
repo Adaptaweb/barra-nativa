@@ -2,6 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type Language = "auto" | "es" | "en" | "fr";
 export type NotificationPosition = "top-right" | "bottom-right";
+export type IslandStyle = "notch" | "bubble";
+export type GenieSpeed = "normal" | "fast" | "faster";
+export type DockPosition = "left" | "bottom" | "right";
 
 /** Mirrors `muelle_config::Config`. */
 export interface Config {
@@ -12,12 +15,22 @@ export interface Config {
   iconSize: number;
   magnification: boolean;
   magnifiedSize: number;
+  dockPosition: DockPosition;
   genie: boolean;
+  genieSpeed: GenieSpeed;
   showMinimized: boolean;
   showPreviewCloseButton: boolean;
   menuBar: boolean;
   menuBarAutoHide: boolean;
   aiUsage: boolean;
+  menuBarMusic: boolean;
+  menuBarIslandStyle: IslandStyle;
+  accessoryBattery: boolean;
+  menuBarSearch: boolean | null;
+  menuBarTaskView: boolean | null;
+  menuBarWidgets: boolean | null;
+  menuBarBluetooth: boolean;
+  menuBarBatteryPercent: boolean | null;
   showIndicators: boolean;
   showRecents: boolean;
   bounceOnOpen: boolean;
@@ -59,4 +72,10 @@ export interface UpdateInfo {
 /** Resolves to the newer version available, or null when up to date. */
 export const checkUpdate = () => invoke<UpdateInfo | null>("check_update");
 export const openReleaseNotes = (url: string) => invoke<void>("open_release_notes", { url });
+/** Fixed project URL, opened only when the user asks. */
+export const openRepository = () => invoke<void>("open_repository");
+let wallpaperRequest: Promise<string | null> | undefined;
+/** One bounded native read per Settings process, including React StrictMode. */
+export const loadWallpaperPreview = () =>
+  wallpaperRequest ??= invoke<string | null>("wallpaper_preview").catch(() => null);
 export const installUpdate = () => invoke<void>("install_update");

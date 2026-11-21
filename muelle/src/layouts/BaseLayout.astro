@@ -1,7 +1,7 @@
 ---
 import { Font } from "astro:assets";
 import IconSprite from "@/components/ui/IconSprite.astro";
-import { site } from "@/data/site";
+import { author, organization, site } from "@/data/site";
 import "@/styles/global.css";
 
 interface Props {
@@ -11,37 +11,68 @@ interface Props {
   noindex?: boolean;
   /** The product schema describes the app, so only the home page carries it. */
   product?: boolean;
+  /** Extra JSON-LD nodes for this page, joined into the site graph. */
+  schema?: Record<string, unknown>[];
 }
 
-const { title, description, noindex = false, product = true } = Astro.props;
+const { title, description, noindex = false, product = true, schema: pageSchema = [] } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site ?? site.url);
 const ogImage = site.ogImage ? new URL(site.ogImage, site.url).href : null;
 
-const author = {
+const home = new URL("/", site.url).href;
+
+const person = {
+  "@type": "Person",
+  "@id": author.id,
+  name: author.name,
+  alternateName: author.shortName,
+  jobTitle: author.role,
+  url: author.profile,
+  homeLocation: { "@type": "Place", name: author.location },
+  sameAs: [author.github, author.x, author.linkedin, author.website],
+  memberOf: { "@id": organization.id },
+};
+
+const publisher = {
   "@type": "Organization",
-  name: "Crafter Station",
-  url: "https://github.com/crafter-station",
+  "@id": organization.id,
+  name: organization.name,
+  url: organization.url,
+  description: organization.description,
+  sameAs: [organization.github],
+};
+
+const website = {
+  "@type": "WebSite",
+  "@id": `${home}#website`,
+  name: site.name,
+  url: home,
+  inLanguage: "en",
+  author: { "@id": author.id },
+  publisher: { "@id": organization.id },
 };
 
 // Lets Google show the product as an app result: name, price, platform, source.
-const schema = noindex || !product
+const app = !product
   ? null
   : {
-      "@context": "https://schema.org",
       "@type": "SoftwareApplication",
+      "@id": `${home}#app`,
       name: site.name,
       applicationCategory: "UtilitiesApplication",
       applicationSubCategory: "Desktop enhancement",
       operatingSystem: "Windows 10, Windows 11",
       softwareRequirements: "Windows 10 version 1903 or later, or Windows 11; 64-bit",
       description: site.description,
-      url: new URL("/", site.url).href,
+      url: home,
       downloadUrl: site.download,
       softwareVersion: site.version,
       license: `${site.repository}/blob/main/LICENSE`,
       codeRepository: site.repository,
-      author,
-      publisher: author,
+      isPartOf: { "@id": `${home}#website` },
+      author: { "@id": author.id },
+      publisher: { "@id": organization.id },
+      maintainer: { "@id": author.id },
       inLanguage: "en",
       isAccessibleForFree: true,
       featureList: [
@@ -58,6 +89,13 @@ const schema = noindex || !product
       offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
       ...(ogImage && { screenshot: ogImage }),
     };
+
+const schema = noindex
+  ? null
+  : {
+      "@context": "https://schema.org",
+      "@graph": [website, person, publisher, ...(app ? [app] : []), ...pageSchema],
+    };
 ---
 
 <!doctype html>
@@ -66,8 +104,10 @@ const schema = noindex || !product
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
+    <meta name="google-site-verification" content="MNGdMnCWivH5Bkg6WwcT-K_uSRLYkw1-dVJltkWgFPc" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    <meta name="author" content={author.name} />
     <meta
       name="robots"
       content={noindex

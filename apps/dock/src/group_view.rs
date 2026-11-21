@@ -7,6 +7,7 @@
 use std::time::Instant;
 
 use anyhow::Result;
+use muelle_core::frame::DockEdge;
 use muelle_shell::{system::animations_enabled, tracker};
 use windows::{
     UI::{
@@ -42,7 +43,7 @@ use windows_numerics::{Vector2, Vector3};
 use crate::{
     app,
     gfx::{Gfx, Ink},
-    scene::Theme,
+    scene::{AttentionBadge, Theme},
 };
 
 const TIMER: usize = 1;
@@ -87,6 +88,8 @@ pub struct Placement {
     /// The group's icon on screen.
     pub anchor: RECT,
     pub screen: RECT,
+    /// The screen edge the dock is on: the group opens away from it.
+    pub edge: DockEdge,
     pub scale: f32,
     /// Side of the apps' icons, in pixels.
     pub icon: f32,
@@ -115,7 +118,17 @@ struct GroupLayout {
 }
 
 impl GroupLayout {
-    fn new(screen: RECT, anchor: RECT, scale: f32, icon: f32, count: usize) -> Self {
+    fn new(
+        screen: RECT,
+        anchor: RECT,
+        edge: DockEdge,
+        scale: f32,
+        icon: f32,
+        count: usize,
+    ) -> Self {
+        if edge.is_vertical() {
+            return Self::beside(screen, anchor, edge, scale, icon, count);
+        }
         let center = (anchor.left + anchor.right) as f32 / 2.0;
         let bottom = anchor.top as f32 - LIFT * scale;
         let pitch = icon + FAN_SPACING * scale;
@@ -175,11 +188,68 @@ impl GroupLayout {
     /// Rows of cells on a panel centered over the group. Apps that would
     /// not fit on the screen are left out (it takes a hundred or so).
     fn grid(screen: RECT, center: f32, bottom: f32, scale: f32, icon: f32, count: usize) -> Self {
+        let usable = (
+            (screen.right - screen.left) as f32 - 2.0 * MARGIN * scale,
+            bottom - screen.top as f32 - MARGIN * scale,
+        );
+        Self::grid_in(scale, icon, count, usable, |width, height| {
+            let left = (center - width / 2.0).round().clamp(
+                screen.left as f32,
+                (screen.right as f32 - width).max(screen.left as f32),
+            );
+            (left, (bottom - height).round().max(screen.top as f32))
+        })
+    }
+
+    /// On a side dock, the same grid beside the group, centred on it and
+    /// away from the screen edge (a fan is a column: it has no side).
+    fn beside(
+        screen: RECT,
+        anchor: RECT,
+        edge: DockEdge,
+        scale: f32,
+        icon: f32,
+        count: usize,
+    ) -> Self {
+        let gap = LIFT * scale;
+        let margin = MARGIN * scale;
+        let middle = (anchor.top + anchor.bottom) as f32 / 2.0;
+        let (start, end) = if edge == DockEdge::Left {
+            (anchor.right as f32 + gap, screen.right as f32 - margin)
+        } else {
+            (screen.left as f32 + margin, anchor.left as f32 - gap)
+        };
+        let usable = (
+            end - start,
+            (screen.bottom - screen.top) as f32 - 2.0 * margin,
+        );
+        Self::grid_in(scale, icon, count, usable, |width, height| {
+            let left = if edge == DockEdge::Left {
+                start
+            } else {
+                end - width
+            };
+            let top = (middle - height / 2.0).round().clamp(
+                screen.top as f32,
+                (screen.bottom as f32 - height).max(screen.top as f32),
+            );
+            (left.round(), top)
+        })
+    }
+
+    /// The grid's cells for `count` apps within `usable` (width, height),
+    /// the panel placed where `place` (its size) says.
+    fn grid_in(
+        scale: f32,
+        icon: f32,
+        count: usize,
+        usable: (f32, f32),
+        place: impl Fn(f32, f32) -> (f32, f32),
+    ) -> Self {
         let pad = GRID_PADDING * scale;
         let cell_width = (icon * 1.8).max(GRID_CELL_MIN * scale).round();
         let cell_height = (icon + (2.0 * GRID_ICON_TOP + GRID_TEXT) * scale).round();
-        let usable_width = (screen.right - screen.left) as f32 - 2.0 * MARGIN * scale;
-        let usable_height = bottom - screen.top as f32 - MARGIN * scale;
+        let (usable_width, usable_height) = usable;
         let max_columns = (((usable_width - 2.0 * pad) / cell_width).floor() as usize).max(1);
         let max_rows = (((usable_height - 2.0 * pad) / cell_height).floor() as usize).max(1);
         let columns = ((count as f32).sqrt().ceil() as usize)
@@ -189,11 +259,7 @@ impl GroupLayout {
         let rows = shown.div_ceil(columns).max(1);
         let width = 2.0 * pad + columns as f32 * cell_width;
         let height = 2.0 * pad + rows as f32 * cell_height;
-        let left = (center - width / 2.0).round().clamp(
-            screen.left as f32,
-            (screen.right as f32 - width).max(screen.left as f32),
-        );
-        let top = (bottom - height).round().max(screen.top as f32);
+        let (left, top) = place(width, height);
         let bounds = RECT {
             left: left as i32,
             top: top as i32,
@@ -263,6 +329,7 @@ const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
 struct ItemVisual {
     root: ContainerVisual,
     highlight: SpriteVisual,
+    attention: Option<AttentionBadge>,
 }
 
 pub struct GroupView {
@@ -278,13 +345,19 @@ pub struct GroupView {
     targets: Vec<RECT>,
     panel: Option<ContainerVisual>,
     anchor: RECT,
+    edge: DockEdge,
     scale: f32,
+    theme: Theme,
     opened: Instant,
     animated: bool,
     /// The app pressed, and where the pointer was on screen.
     pressed: Option<(usize, POINT)>,
     mouse_was_down: bool,
     foreground: isize,
+    /// The app lit when the unfolded view was last drawn. Once unfolded, only
+    /// that changes what it shows, so a tick that finds it the same touches
+    /// nothing: no composition batch and no DWM work while the view rests.
+    drawn: Option<Option<usize>>,
 }
 
 impl GroupView {
@@ -297,6 +370,7 @@ impl GroupView {
         let layout = GroupLayout::new(
             place.screen,
             place.anchor,
+            place.edge,
             place.scale,
             place.icon,
             items.len(),
@@ -339,8 +413,11 @@ impl GroupView {
             targets: Vec::new(),
             panel: None,
             anchor: place.anchor,
+            edge: place.edge,
             scale: place.scale,
+            theme: place.theme,
             opened: Instant::now(),
+            drawn: None,
             animated: animations_enabled(),
             pressed: None,
             mouse_was_down: false,
@@ -386,6 +463,37 @@ impl GroupView {
     /// The group's apps as they were when it opened.
     pub fn apps(&self) -> &[String] {
         &self.ids
+    }
+
+    pub fn set_attention(&mut self, gfx: &Gfx, pending: impl Fn(&str) -> bool) -> Result<()> {
+        for ((id, item), rect) in self
+            .ids
+            .iter()
+            .zip(&mut self.visuals)
+            .zip(&self.layout.icons)
+        {
+            let on = pending(id);
+            if on && item.attention.is_none() {
+                let badge = AttentionBadge::new(gfx, self.theme)?;
+                item.root.Children()?.InsertAtTop(&badge.visual)?;
+                item.attention = Some(badge);
+            }
+            if let Some(badge) = &mut item.attention {
+                badge.set_visible(on)?;
+                badge.place(
+                    muelle_core::layout::Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: (rect.right - rect.left) as f32,
+                        height: (rect.bottom - rect.top) as f32,
+                    },
+                    self.scale,
+                    1.0,
+                    true,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     fn build(&mut self, gfx: &Gfx, items: &[GroupItem], theme: Theme) -> Result<()> {
@@ -490,6 +598,7 @@ impl GroupView {
             self.visuals.push(ItemVisual {
                 root: app,
                 highlight,
+                attention: None,
             });
             self.targets.push(target);
         }
@@ -509,22 +618,51 @@ impl GroupView {
             ((self.anchor.left + self.anchor.right) / 2 - self.layout.bounds.left) as f32,
             (self.anchor.top - self.layout.bounds.top) as f32,
         );
-        let mut moving = false;
+        // The last app starts unfolding last; the panel fades in with the first.
+        let last_start = self.visuals.len().saturating_sub(1) as f32 * STAGGER_SECONDS;
+        let moving = self.animated && elapsed < last_start + OPEN_SECONDS;
+        if moving || self.drawn != Some(lit) {
+            self.draw(elapsed, start, lit)?;
+        }
+        self.drawn = (!moving).then_some(lit);
+        // Quick while unfolding; then just often enough to follow the pointer.
+        // SAFETY: Our own timer; setting it again replaces it.
+        unsafe {
+            SetTimer(
+                Some(self.hwnd),
+                TIMER,
+                if moving || self.pressed.is_some() {
+                    16
+                } else {
+                    50
+                },
+                None,
+            )
+        };
+        Ok(())
+    }
+
+    fn draw(&self, elapsed: f32, start: (f32, f32), lit: Option<usize>) -> Result<()> {
         for (index, (visual, icon)) in self.visuals.iter().zip(&self.layout.icons).enumerate() {
             let progress = if self.animated {
                 ((elapsed - index as f32 * STAGGER_SECONDS) / OPEN_SECONDS).clamp(0.0, 1.0)
             } else {
                 1.0
             };
-            moving |= progress < 1.0;
             let eased = 1.0 - (1.0 - progress).powi(3);
             let side = (icon.right - icon.left) as f32;
             let (left, top) = (icon.left as f32, icon.top as f32);
-            // The fan comes out of the group's icon; the grid rises a little.
+            // The fan comes out of the group's icon; the grid comes a little
+            // way out of the dock.
+            let rise = 24.0 * self.scale;
             let (from_x, from_y) = if self.layout.fan {
                 (start.0 - side / 2.0, start.1 - side)
             } else {
-                (left, top + 24.0 * self.scale)
+                match self.edge {
+                    DockEdge::Bottom => (left, top + rise),
+                    DockEdge::Left => (left - rise, top),
+                    DockEdge::Right => (left + rise, top),
+                }
             };
             visual.root.SetOffset(v3(
                 from_x + (left - from_x) * eased,
@@ -543,20 +681,6 @@ impl GroupView {
             };
             panel.SetOpacity(1.0 - (1.0 - progress).powi(3))?;
         }
-        // Quick while unfolding; then just often enough to follow the pointer.
-        // SAFETY: Our own timer; setting it again replaces it.
-        unsafe {
-            SetTimer(
-                Some(self.hwnd),
-                TIMER,
-                if moving || self.pressed.is_some() {
-                    16
-                } else {
-                    50
-                },
-                None,
-            )
-        };
         Ok(())
     }
 
@@ -858,7 +982,7 @@ mod tests {
 
     #[test]
     fn a_few_apps_should_unfold_as_a_fan_going_up_from_the_group() {
-        let layout = GroupLayout::new(SCREEN, anchor(900), 1.0, 48.0, 4);
+        let layout = GroupLayout::new(SCREEN, anchor(900), DockEdge::Bottom, 1.0, 48.0, 4);
         assert!(layout.fan);
         assert!(layout.bounds.bottom <= anchor(900).top);
         let tops: Vec<i32> = layout.icons.iter().map(|icon| icon.top).collect();
@@ -871,7 +995,7 @@ mod tests {
 
     #[test]
     fn many_apps_or_a_short_screen_should_unfold_as_a_grid() {
-        assert!(!GroupLayout::new(SCREEN, anchor(900), 1.0, 48.0, 30).fan);
+        assert!(!GroupLayout::new(SCREEN, anchor(900), DockEdge::Bottom, 1.0, 48.0, 30).fan);
         let short = RECT {
             bottom: 400,
             ..SCREEN
@@ -881,7 +1005,7 @@ mod tests {
             bottom: 388,
             ..anchor(900)
         };
-        assert!(!GroupLayout::new(short, low, 1.0, 48.0, 8).fan);
+        assert!(!GroupLayout::new(short, low, DockEdge::Bottom, 1.0, 48.0, 8).fan);
     }
 
     #[test]
@@ -889,7 +1013,14 @@ mod tests {
         for scale in [1.0, 1.5, 2.0] {
             for left in [0, 900, 1872] {
                 for count in [1, 3, 10, 40] {
-                    let layout = GroupLayout::new(SCREEN, anchor(left), scale, 48.0 * scale, count);
+                    let layout = GroupLayout::new(
+                        SCREEN,
+                        anchor(left),
+                        DockEdge::Bottom,
+                        scale,
+                        48.0 * scale,
+                        count,
+                    );
                     let bounds = layout.bounds;
                     assert!(bounds.left >= SCREEN.left && bounds.right <= SCREEN.right);
                     assert!(bounds.top >= SCREEN.top && bounds.bottom <= anchor(left).top);
@@ -904,8 +1035,44 @@ mod tests {
     }
 
     #[test]
+    fn on_a_side_dock_the_group_opens_beside_it_and_on_screen() {
+        for (edge, icon) in [
+            (
+                DockEdge::Left,
+                RECT {
+                    left: 14,
+                    top: 500,
+                    right: 62,
+                    bottom: 548,
+                },
+            ),
+            (
+                DockEdge::Right,
+                RECT {
+                    left: 1858,
+                    top: 500,
+                    right: 1906,
+                    bottom: 548,
+                },
+            ),
+        ] {
+            for count in [2, 9, 60] {
+                let layout = GroupLayout::new(SCREEN, icon, edge, 1.25, 60.0, count);
+                let bounds = layout.bounds;
+                assert!(!layout.fan);
+                assert!(bounds.top >= SCREEN.top && bounds.bottom <= SCREEN.bottom);
+                if edge == DockEdge::Left {
+                    assert!(bounds.left >= icon.right && bounds.right <= SCREEN.right);
+                } else {
+                    assert!(bounds.right <= icon.left && bounds.left >= SCREEN.left);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn grid_cells_should_not_overlap() {
-        let layout = GroupLayout::new(SCREEN, anchor(900), 1.0, 48.0, 23);
+        let layout = GroupLayout::new(SCREEN, anchor(900), DockEdge::Bottom, 1.0, 48.0, 23);
         assert_eq!(layout.cells.len(), 23);
         for (index, cell) in layout.cells.iter().enumerate() {
             let center = POINT {

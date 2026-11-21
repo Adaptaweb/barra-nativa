@@ -1,7 +1,7 @@
 //! Muelle: a macOS-style dock for Windows 11.
 //!
 //! Usage:
-//! - `muelle`                     starts the dock (does nothing if already running)
+//! - `muelle`                     starts or recovers the dock
 //! - `muelle --quit`              closes the running dock
 //! - `muelle --restore`           restores the Windows taskbar
 //! - `muelle --autostart on|off`  enables or disables startup with Windows
@@ -11,6 +11,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accessories;
 mod app;
 mod assets;
 mod drop;
@@ -26,6 +27,7 @@ mod menu;
 mod menubar;
 mod multi_window_view;
 mod notification_banner;
+mod recovery;
 mod scene;
 mod shell_work;
 mod strings;
@@ -40,6 +42,7 @@ use windows::{
     Win32::{
         Foundation::{ERROR_ALREADY_EXISTS, GetLastError},
         System::{
+            Diagnostics::Debug::{SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, SetErrorMode},
             Threading::CreateMutexW,
             WinRT::{
                 CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
@@ -48,10 +51,15 @@ use windows::{
         },
         UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext},
     },
-    core::w,
+    core::{Owned, w},
 };
 
 fn main() -> Result<()> {
+    // Suppress system modal error dialogs (missing DLLs, missing ordinals in 3rd-party shell extensions).
+    // SAFETY: Affects process-level error mode without side effects on memory or concurrency.
+    unsafe {
+        let _ = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+    }
     let args: Vec<String> = env::args().skip(1).collect();
     match args
         .iter()
@@ -59,7 +67,8 @@ fn main() -> Result<()> {
         .collect::<Vec<_>>()
         .as_slice()
     {
-        [] => run_dock(),
+        [] => run_dock(false),
+        [recovery::RECOVERED_FLAG] => run_dock(true),
         ["--quit"] => {
             app::request_quit();
             Ok(())
@@ -76,6 +85,9 @@ fn main() -> Result<()> {
         ["--autostart", "off"] => Ok(autostart::set(None)?),
         [guard::FLAG, pid] => guard::run(pid.parse().context("pid no válido")?),
         ["--usage-worker"] => usage::worker_main(),
+        [accessories::FLAG] => accessories::worker_main(None),
+        [accessories::FLAG, visibility] => accessories::worker_main(Some(visibility)),
+        [accessories::USB_FLAG] => accessories::usb_worker_main(),
         [shell_work::FLAG] => shell_work::worker_main(),
         ["notify", rest @ ..] | ["--notify", rest @ ..] => handle_notify_cli(rest),
         _ => bail!("uso: muelle [--quit | --restore | --autostart on|off | notify]"),
@@ -139,22 +151,26 @@ fn handle_notify_cli(args: &[&str]) -> Result<()> {
     }
 }
 
-fn run_dock() -> Result<()> {
+fn run_dock(recovered: bool) -> Result<()> {
     // SAFETY: The static name is valid; the handle is released when the process exits.
-    let _single = unsafe { CreateMutexW(None, false, w!("Local\\Muelle.Dock"))? };
+    let _single = unsafe { Owned::new(CreateMutexW(None, false, w!("Local\\Muelle.Dock"))?) };
     // SAFETY: Reads the thread's last error immediately after the call.
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-        eprintln!("muelle: ya hay un dock en marcha");
+        guard::recover_existing()?;
         return Ok(());
     }
 
+    recovery::configure(recovered);
     let startup = std::time::Instant::now();
     muelle_shell::log::line(concat!(
         "proceso iniciado, versión ",
         env!("CARGO_PKG_VERSION")
     ));
+    // Keep the recovery channel alive through startup errors and final cleanup.
+    let _recovery_event = guard::spawn()?;
     let result = initialize_dock();
     if let Err(error) = &result {
+        recovery::graphics_error(error);
         muelle_shell::log::line(&format!(
             "el dock falló tras {} ms desde el inicio del proceso: {error:#}",
             startup.elapsed().as_millis()
@@ -166,9 +182,10 @@ fn run_dock() -> Result<()> {
 }
 
 fn initialize_dock() -> Result<()> {
-    // SAFETY: Sets DPI awareness and initializes the dispatcher before creating windows.
+    // SAFETY: Sets DPI awareness (if not already locked by the application manifest)
+    // and initializes the dispatcher before creating windows.
     let _queue = unsafe {
-        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         // The compositor requires a dispatcher queue on its thread; this also
         // initializes COM, which icon extraction requires.
         CreateDispatcherQueueController(DispatcherQueueOptions {
@@ -178,8 +195,6 @@ fn initialize_dock() -> Result<()> {
         })?
     };
 
-    // Start the watchdog first so it can restore the taskbar if anything fails later.
-    guard::spawn()?;
     // Moves the `Run` autostart of 0.1.9-0.1.10 to the logon task, off the UI thread.
     let _ = std::thread::Builder::new()
         .name("muelle-autostart".into())

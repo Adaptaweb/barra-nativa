@@ -40,6 +40,12 @@
 //! Many DWM thumbnails instead of a snapshot were measured and rejected: DWM
 //! drops frames beyond about 16 of them (plan section 8).
 //!
+//! On a dock at the left or right edge the genie runs the same way, in a
+//! frame turned a quarter ([`Turn`]): the window flows "down" into the slot
+//! in that frame, which the overlay shows turned toward the dock. The copy
+//! of the window is turned to match on the capture worker. A pure rotation,
+//! never a mirror, so its pixels stay as they were.
+//!
 //! Everything lives on a transparent overlay window that exists only while
 //! the animation runs. The system's own minimize animation must already be
 //! off for the window (see `App::calm_windows`): it starts before the dock
@@ -56,7 +62,10 @@ use std::{
 };
 
 use anyhow::Result;
-use muelle_core::genie::{Edges, Genie};
+use muelle_core::{
+    frame::DockEdge,
+    genie::{Edges, Genie},
+};
 use muelle_shell::{icons::IconImage, screen, tracker};
 use windows::{
     Foundation::TimeSpan,
@@ -81,11 +90,10 @@ use windows::{
     },
     core::{HSTRING, Interface, h, w},
 };
-use windows_numerics::{Matrix3x2, Vector2};
+use windows_numerics::{Matrix3x2, Matrix4x4, Vector2};
 
 use crate::gfx::Gfx;
 
-const DURATION_SECONDS: f32 = 0.5;
 /// Screen rows per strip: the edge of the funnel steps by at most a few pixels.
 const STRIP_ROWS: u32 = 3;
 const MAX_STRIPS: u32 = 400;
@@ -131,9 +139,11 @@ impl Drop for CapturePermit {
 /// Half the resolution in each direction: a quarter of the memory, and the
 /// softness does not show in a half-second animation.
 pub struct Snapshot {
+    /// Turned for the dock's edge at the time (see [`Turn`]).
     image: IconImage,
     /// Where the window was, in screen coordinates.
     window: RECT,
+    edge: DockEdge,
 }
 
 impl Snapshot {
@@ -141,6 +151,117 @@ impl Snapshot {
     pub fn aspect(&self) -> f32 {
         let window = self.window;
         (window.right - window.left) as f32 / (window.bottom - window.top).max(1) as f32
+    }
+}
+
+/// The genie's frame on a dock at the left or right edge: the overlay
+/// (`width` x `height` screen pixels) turned a quarter, so the window flows
+/// toward the dock as it flows down toward a bottom dock.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Turn {
+    edge: DockEdge,
+    width: f32,
+    height: f32,
+}
+
+impl Turn {
+    fn new(edge: DockEdge, screen: RECT) -> Self {
+        Self {
+            edge,
+            width: (screen.right - screen.left) as f32,
+            height: (screen.bottom - screen.top) as f32,
+        }
+    }
+
+    /// The frame's size: the overlay's, turned on the sides.
+    fn size(self) -> (f32, f32) {
+        if self.edge.is_vertical() {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        }
+    }
+
+    /// Overlay-local edges in the frame.
+    fn edges(self, local: Edges) -> Edges {
+        match self.edge {
+            DockEdge::Bottom => local,
+            // Frame x runs down the screen, frame y toward the left edge.
+            DockEdge::Left => Edges {
+                left: local.top,
+                right: local.bottom,
+                top: self.width - local.right,
+                bottom: self.width - local.left,
+            },
+            // Frame x runs up the screen, frame y toward the right edge.
+            DockEdge::Right => Edges {
+                left: self.height - local.bottom,
+                right: self.height - local.top,
+                top: local.left,
+                bottom: local.right,
+            },
+        }
+    }
+
+    /// The frame shown in the overlay (row vectors, as Composition).
+    fn matrix(self) -> Option<Matrix4x4> {
+        let (m11, m12, m21, m22, m41, m42) = match self.edge {
+            DockEdge::Bottom => return None,
+            DockEdge::Left => (0.0, 1.0, -1.0, 0.0, self.width, 0.0),
+            DockEdge::Right => (0.0, -1.0, 1.0, 0.0, 0.0, self.height),
+        };
+        Some(Matrix4x4 {
+            M11: m11,
+            M12: m12,
+            M21: m21,
+            M22: m22,
+            M33: 1.0,
+            M41: m41,
+            M42: m42,
+            M44: 1.0,
+            ..Matrix4x4::default()
+        })
+    }
+
+    /// Turns the overlay's root into the frame. Its size becomes the
+    /// frame's, or the clip at the slot would cut the turned strips off.
+    fn apply(self, root: &ContainerVisual) -> Result<()> {
+        if let Some(matrix) = self.matrix() {
+            let (width, height) = self.size();
+            root.SetRelativeSizeAdjustment(Vector2 { X: 0.0, Y: 0.0 })?;
+            root.SetSize(Vector2 {
+                X: width,
+                Y: height,
+            })?;
+            root.SetTransformMatrix(matrix)?;
+        }
+        Ok(())
+    }
+
+    /// A copy of the window as it reads in the frame.
+    fn image(self, image: IconImage) -> IconImage {
+        if !self.edge.is_vertical() {
+            return image;
+        }
+        let (w, h) = (image.width as usize, image.height as usize);
+        let mut bgra = vec![0u8; w * h * 4];
+        // In the frame the image is `h` wide and `w` tall.
+        for fy in 0..w {
+            for fx in 0..h {
+                let (x, y) = match self.edge {
+                    DockEdge::Left => (w - 1 - fy, fx),
+                    _ => (fy, h - 1 - fx),
+                };
+                let from = (y * w + x) * 4;
+                let to = (fy * h + fx) * 4;
+                bgra[to..to + 4].copy_from_slice(&image.bgra[from..from + 4]);
+            }
+        }
+        IconImage {
+            width: image.height,
+            height: image.width,
+            bgra,
+        }
     }
 }
 
@@ -180,6 +301,8 @@ pub struct Flight {
     /// The window being minimized or restored.
     pub hwnd: isize,
     created_at: Instant,
+    /// How long the flight lasts (Settings → Genie speed).
+    seconds: f32,
     foreground: isize,
     overlay: HWND,
     /// The window under the overlay that holds a minimize's stand-in.
@@ -189,6 +312,9 @@ pub struct Flight {
     root: ContainerVisual,
     /// The monitor the overlay covers.
     screen: RECT,
+    /// The frame the genie runs in, and the window's screen rectangle.
+    turn: Turn,
+    source: RECT,
     genie: Genie,
     /// The dock slot is known (a minimize learns it a little after it starts).
     aimed: bool,
@@ -354,8 +480,8 @@ fn cut(
         .collect()
 }
 
-/// Hands the flight to the compositor: every strip follows `genie` for
-/// `DURATION_SECONDS`, into the slot or (`reverse`) out of it.
+/// Hands the flight to the compositor: every strip follows `genie` for the
+/// flight's duration, into the slot or (`reverse`) out of it.
 ///
 /// The expressions are `Genie::frame` written for the compositor: a strip's
 /// top is its resting row plus `shift`, its bottom stops at the slot, and its
@@ -421,14 +547,20 @@ fn bind(
 }
 
 /// Starts the flight bound by [`bind`]: the compositor animates `bend` and
-/// `shift` for `DURATION_SECONDS` at the display's refresh rate.
-fn launch(gfx: &Gfx, genie: &Genie, drive: &CompositionPropertySet, reverse: bool) -> Result<()> {
+/// `shift` for `seconds` at the display's refresh rate.
+fn launch(
+    gfx: &Gfx,
+    genie: &Genie,
+    drive: &CompositionPropertySet,
+    reverse: bool,
+    seconds: f32,
+) -> Result<()> {
     let compositor = &gfx.compositor;
     let travel = (genie.slot.bottom - genie.window.top).max(0.0);
     let at = |progress: f32| if reverse { 1.0 - progress } else { progress };
     let linear = compositor.CreateLinearEasingFunction()?;
     let duration = TimeSpan {
-        Duration: (DURATION_SECONDS * 1e7) as i64,
+        Duration: (seconds * 1e7) as i64,
     };
     let animate = |name: &HSTRING, curve: fn(f32) -> f32, amount: f32| -> Result<()> {
         let animation = compositor.CreateScalarKeyFrameAnimation()?;
@@ -450,8 +582,8 @@ fn launch(gfx: &Gfx, genie: &Genie, drive: &CompositionPropertySet, reverse: boo
 }
 
 /// Nothing is drawn below the slot: strips vanish as they enter it.
-fn clip_at_slot(gfx: &Gfx, root: &ContainerVisual, genie: &Genie, screen: RECT) -> Result<()> {
-    let below = (screen.bottom - screen.top) as f32 - genie.slot.bottom;
+fn clip_at_slot(gfx: &Gfx, root: &ContainerVisual, genie: &Genie, turn: Turn) -> Result<()> {
+    let below = turn.size().1 - genie.slot.bottom;
     let clip = gfx
         .compositor
         .CreateInsetClipWithInsets(0.0, 0.0, 0.0, below.max(0.0))?;
@@ -477,7 +609,16 @@ impl Flight {
     /// thumbnail goes; `frame` is the part that showed on screen, which the
     /// genie copies and flies (the work area for a maximized window, so no
     /// strip of the menu bar or desktop around it comes along).
-    pub fn start(gfx: &Gfx, hwnd: isize, from: RECT, frame: RECT, screen: RECT) -> Option<Self> {
+    pub fn start(
+        gfx: &Gfx,
+        hwnd: isize,
+        from: RECT,
+        frame: RECT,
+        screen: RECT,
+        seconds: f32,
+        edge: DockEdge,
+    ) -> Option<Self> {
+        let turn = Turn::new(edge, screen);
         // A timed-out GDI call cannot be cancelled safely. Keep at most one
         // outstanding copy, including a worker whose overlay was abandoned.
         let capture_permit = CapturePermit::acquire()?;
@@ -497,6 +638,14 @@ impl Flight {
             }
             return None;
         };
+        if turn.apply(&root).is_err() {
+            // SAFETY: Our own windows, destroyed once.
+            unsafe {
+                let _ = DestroyWindow(stand);
+                let _ = DestroyWindow(overlay);
+            }
+            return None;
+        }
         // SAFETY: Both are the live windows created above; they are destroyed
         // here on failure, or by `Drop`.
         let thumbnail = unsafe {
@@ -543,9 +692,12 @@ impl Flight {
             .name("muelle-capture".into())
             .spawn(move || {
                 let _permit = capture_permit;
-                let shot = screen::capture(visible).map(|image| Captured {
-                    restore: halved(&image),
-                    image,
+                let shot = screen::capture(visible).map(|image| {
+                    let image = turn.image(image);
+                    Captured {
+                        restore: halved(&image),
+                        image,
+                    }
                 });
                 let _ = sender.send(shot);
             });
@@ -558,16 +710,19 @@ impl Flight {
             }
             return None;
         }
-        let window = local(visible, screen);
+        let window = turn.edges(local(visible, screen));
         Some(Self {
             hwnd,
             created_at: Instant::now(),
+            seconds,
             foreground: tracker::foreground_window(),
             overlay,
             stand: Some(stand),
             _target: target,
             root,
             screen,
+            turn,
+            source: visible,
             // Until `aim`, the slot is the window itself.
             genie: Genie {
                 window,
@@ -595,23 +750,30 @@ impl Flight {
         snapshot: &Snapshot,
         slot: RECT,
         screen: RECT,
+        seconds: f32,
+        edge: DockEdge,
     ) -> Option<Self> {
-        let window = intersect(snapshot.window, screen);
-        if is_empty(window) {
+        // A copy turned for another edge (the dock moved meanwhile) would
+        // fly sideways: the window just comes back.
+        let source = intersect(snapshot.window, screen);
+        if is_empty(source) || snapshot.edge != edge {
             return None;
         }
+        let turn = Turn::new(edge, screen);
         let (overlay, target, root) = create_overlay(gfx, screen)?;
-        let height = (window.bottom - window.top) as u32;
         let genie = Genie {
-            window: local(window, screen),
-            slot: local(slot, screen),
+            window: turn.edges(local(source, screen)),
+            slot: turn.edges(local(slot, screen)),
         };
+        let height = (genie.window.bottom - genie.window.top) as u32;
         let image = &snapshot.image;
         let size = (image.width as f32, image.height as f32);
-        let drive = clip_at_slot(gfx, &root, &genie, screen)
+        let drive = turn
+            .apply(&root)
+            .and_then(|()| clip_at_slot(gfx, &root, &genie, turn))
             .and_then(|()| cut(gfx, &root, image, height))
             .and_then(|pieces| bind(gfx, &genie, &pieces, size, true))
-            .and_then(|drive| launch(gfx, &genie, &drive, true).map(|()| drive));
+            .and_then(|drive| launch(gfx, &genie, &drive, true, seconds).map(|()| drive));
         let Ok(drive) = drive else {
             // SAFETY: Our own window, destroyed once.
             unsafe {
@@ -622,12 +784,15 @@ impl Flight {
         let flight = Self {
             hwnd,
             created_at: Instant::now(),
+            seconds,
             foreground: tracker::foreground_window(),
             overlay,
             stand: None,
             _target: target,
             root,
             screen,
+            turn,
+            source,
             genie,
             aimed: true,
             phase: Phase::Flying {
@@ -703,7 +868,7 @@ impl Flight {
                         *stand_in = None;
                     }
                 }
-                let t = now.saturating_duration_since(*start).as_secs_f32() / DURATION_SECONDS;
+                let t = now.saturating_duration_since(*start).as_secs_f32() / self.seconds;
                 if t < 1.0 {
                     return true;
                 }
@@ -721,11 +886,11 @@ impl Flight {
 
     /// Gives a minimize its dock slot (a screen rectangle).
     pub fn aim(&mut self, gfx: &Gfx, slot: RECT) {
-        self.genie.slot = local(slot, self.screen);
+        self.genie.slot = self.turn.edges(local(slot, self.screen));
         self.aimed = true;
         // Without the clip the flight still works; strips would only show a
         // little below the slot.
-        let _ = clip_at_slot(gfx, &self.root, &self.genie, self.screen);
+        let _ = clip_at_slot(gfx, &self.root, &self.genie, self.turn);
     }
 
     /// Puts the flight right under `dock` in the z-order, so a window flying
@@ -753,11 +918,11 @@ impl Flight {
         activation_is_current(self.restoring, self.foreground, self.hwnd, foreground)
     }
 
-    /// Width of the flying window divided by its height.
+    /// Width of the flying window divided by its height, on screen.
     #[must_use]
     pub fn aspect(&self) -> f32 {
-        let window = self.genie.window;
-        (window.right - window.left) / (window.bottom - window.top).max(1.0)
+        let window = self.source;
+        (window.right - window.left) as f32 / (window.bottom - window.top).max(1) as f32
     }
 
     /// `true`, once, when the real window has to be restored: the restore
@@ -770,9 +935,12 @@ impl Flight {
     /// The snapshot of a window that has just been minimized, to restore it
     /// with the genie later.
     pub fn take_snapshot_for_restore(&mut self) -> Option<Snapshot> {
-        self.captured
-            .take()
-            .map(|(image, window)| Snapshot { image, window })
+        let edge = self.turn.edge;
+        self.captured.take().map(|(image, window)| Snapshot {
+            image,
+            window,
+            edge,
+        })
     }
 
     /// Opacity (0..=255) of the dock's own thumbnail for this window: it
@@ -781,7 +949,7 @@ impl Flight {
         let Phase::Flying { start, .. } = &self.phase else {
             return 0;
         };
-        let elapsed = now.saturating_duration_since(*start).as_secs_f32() / DURATION_SECONDS;
+        let elapsed = now.saturating_duration_since(*start).as_secs_f32() / self.seconds;
         let t = if self.restoring {
             1.0 - elapsed
         } else {
@@ -794,17 +962,11 @@ impl Flight {
     /// genie and starts it.
     fn take_off(&mut self, gfx: &Gfx, captured: Captured) -> Result<CompositionPropertySet> {
         let Captured { image, restore } = captured;
-        let edges = self.genie.window;
-        let window = RECT {
-            left: edges.left as i32 + self.screen.left,
-            top: edges.top as i32 + self.screen.top,
-            right: edges.right as i32 + self.screen.left,
-            bottom: edges.bottom as i32 + self.screen.top,
-        };
+        let window = self.source;
         let pieces = cut(gfx, &self.root, &image, image.height)?;
         let size = (image.width as f32, image.height as f32);
         let drive = bind(gfx, &self.genie, &pieces, size, false)?;
-        launch(gfx, &self.genie, &drive, false)?;
+        launch(gfx, &self.genie, &drive, false, self.seconds)?;
         self.captured = Some((restore, window));
         Ok(drive)
     }
@@ -846,6 +1008,76 @@ impl Drop for Flight {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn edges(left: f32, top: f32, right: f32, bottom: f32) -> Edges {
+        Edges {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    /// The frame shown through `matrix` puts every point back where it was
+    /// on screen, and the slot (at the dock) is "below" the window in it.
+    #[test]
+    fn a_turned_frame_maps_back_to_the_screen_and_flows_toward_the_dock() {
+        let screen = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let window = edges(600.0, 200.0, 1400.0, 800.0);
+        for (edge, slot) in [
+            (DockEdge::Left, edges(20.0, 500.0, 70.0, 550.0)),
+            (DockEdge::Right, edges(1850.0, 500.0, 1900.0, 550.0)),
+        ] {
+            let turn = Turn::new(edge, screen);
+            let m = turn.matrix().unwrap_or_default();
+            let show =
+                |x: f32, y: f32| (x * m.M11 + y * m.M21 + m.M41, x * m.M12 + y * m.M22 + m.M42);
+            let frame = turn.edges(window);
+            // Two opposite corners land on two opposite corners of the window.
+            let corners = [show(frame.left, frame.top), show(frame.right, frame.bottom)];
+            for (x, y) in corners {
+                assert!(x == window.left || x == window.right, "{edge:?} {x}");
+                assert!(y == window.top || y == window.bottom, "{edge:?} {y}");
+            }
+            let slot = turn.edges(slot);
+            assert!(
+                slot.top > frame.bottom,
+                "{edge:?}: the slot is beyond the window"
+            );
+            let (width, height) = turn.size();
+            assert!(frame.right <= width && slot.bottom <= height);
+        }
+    }
+
+    #[test]
+    fn a_turned_copy_keeps_every_pixel_once() {
+        // 3x2 image, each pixel's blue channel its index.
+        let image = IconImage {
+            width: 3,
+            height: 2,
+            bgra: (0..6u8).flat_map(|i| [i, 0, 0, 255]).collect(),
+        };
+        let screen = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        for edge in [DockEdge::Left, DockEdge::Right] {
+            let turned = Turn::new(edge, screen).image(image.clone());
+            assert_eq!((turned.width, turned.height), (2, 3));
+            let mut seen: Vec<u8> = turned.bgra.chunks(4).map(|px| px[0]).collect();
+            seen.sort_unstable();
+            assert_eq!(seen, vec![0, 1, 2, 3, 4, 5]);
+        }
+        let same = Turn::new(DockEdge::Bottom, screen).image(image.clone());
+        assert_eq!(same, image);
+    }
 
     #[test]
     fn minimizing_keeps_its_capture_when_focus_passes_to_the_next_window() {
@@ -955,8 +1187,16 @@ mod native_tests {
             right: 250,
             bottom: 170,
         };
-        let mut flight = Flight::start(&gfx, source.0.0 as isize, from, from, screen)
-            .ok_or_else(|| anyhow::anyhow!("could not create the native animation"))?;
+        let mut flight = Flight::start(
+            &gfx,
+            source.0.0 as isize,
+            from,
+            from,
+            screen,
+            0.5,
+            DockEdge::Bottom,
+        )
+        .ok_or_else(|| anyhow::anyhow!("could not create the native animation"))?;
         let overlay = flight.overlay;
         let stand = flight.stand;
         let unrelated = if flight.foreground != 123 { 123 } else { 124 };

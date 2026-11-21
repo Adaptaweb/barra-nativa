@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::Result;
+use muelle_core::frame::DockEdge;
 use windows::Win32::{
     Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
     System::Threading::GetCurrentThreadId,
@@ -47,7 +48,10 @@ pub enum Reveal {
 struct Edges {
     window: isize,
     top: Option<RECT>,
-    bottoms: Vec<RECT>,
+    /// The displays a hidden dock can be revealed on, and the edge it sits on.
+    screens: Vec<RECT>,
+    dock_edge: DockEdge,
+    pointer_screen: Option<RECT>,
     target: Option<Target>,
     entered: Option<Instant>,
 }
@@ -55,32 +59,41 @@ struct Edges {
 static EDGES: Mutex<Edges> = Mutex::new(Edges {
     window: 0,
     top: None,
-    bottoms: Vec::new(),
+    screens: Vec::new(),
+    dock_edge: DockEdge::Bottom,
+    pointer_screen: None,
     target: None,
     entered: None,
 });
 
 impl Edges {
-    fn at(&self, point: POINT) -> Option<Target> {
-        let within_x = |rect: RECT| point.x >= rect.left && point.x < rect.right;
-        if self.top.is_some_and(|screen| {
-            within_x(screen) && (screen.top..screen.top + EDGE_DEPTH).contains(&point.y)
+    fn at(&self, point: POINT, screen: Option<RECT>) -> Option<Target> {
+        if self.top.is_some_and(|top| {
+            (top.left..top.right).contains(&point.x)
+                && (top.top..top.top + EDGE_DEPTH).contains(&point.y)
         }) {
             return Some(Target::MenuBar);
         }
-        self.bottoms
-            .iter()
-            .copied()
-            .find(|&screen| {
-                within_x(screen) && (screen.bottom - EDGE_DEPTH..screen.bottom).contains(&point.y)
+        // The menu bar, checked first, keeps the top corners.
+        screen
+            .filter(|screen| match self.dock_edge {
+                DockEdge::Bottom => point.y >= screen.bottom - EDGE_DEPTH,
+                DockEdge::Left => point.x < screen.left + EDGE_DEPTH,
+                DockEdge::Right => point.x >= screen.right - EDGE_DEPTH,
             })
             .map(Target::Dock)
     }
 
     fn observe(&mut self, point: POINT, now: Instant) -> bool {
-        let target = self.at(point);
+        let screen = self.screens.iter().copied().find(|screen| {
+            (screen.left..screen.right).contains(&point.x)
+                && (screen.top..screen.bottom).contains(&point.y)
+        });
+        let changed_screen = self.pointer_screen != screen;
+        self.pointer_screen = screen;
+        let target = self.at(point, screen);
         if target == self.target {
-            return false;
+            return changed_screen;
         }
         self.target = target;
         self.entered = target.map(|_| now);
@@ -97,14 +110,15 @@ impl Edges {
         }
     }
 
-    fn set_bottoms(&mut self, bottoms: Vec<RECT>) {
+    fn set_screens(&mut self, screens: Vec<RECT>, edge: DockEdge) {
         if let Some(Target::Dock(screen)) = self.target
-            && !bottoms.contains(&screen)
+            && (!screens.contains(&screen) || edge != self.dock_edge)
         {
             self.target = None;
             self.entered = None;
         }
-        self.bottoms = bottoms;
+        self.screens = screens;
+        self.dock_edge = edge;
     }
 
     fn dwell(&mut self, point: POINT, now: Instant) -> Reveal {
@@ -130,8 +144,9 @@ pub fn set_menu_bar(top: Option<RECT>) {
     lock().set_top(top);
 }
 
-pub fn set_dock_monitors(bottoms: Vec<RECT>) {
-    lock().set_bottoms(bottoms);
+/// The displays a hidden dock can come out on, from `edge` of each.
+pub fn set_dock_monitors(screens: Vec<RECT>, edge: DockEdge) {
+    lock().set_screens(screens, edge);
 }
 
 pub fn poll(point: POINT) -> Reveal {
@@ -208,6 +223,7 @@ impl Drop for EdgeWatch {
         {
             let mut edges = lock();
             edges.window = 0;
+            edges.pointer_screen = None;
             edges.target = None;
             edges.entered = None;
         }
@@ -299,6 +315,37 @@ mod tests {
     }
 
     #[test]
+    fn a_side_dock_comes_out_of_its_side_and_the_menu_bar_keeps_the_corner() {
+        let screen = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let mut edges = Edges::default();
+        edges.set_top(Some(RECT {
+            bottom: 35,
+            ..screen
+        }));
+        edges.set_screens(vec![screen], DockEdge::Left);
+        assert_eq!(
+            edges.at(POINT { x: 0, y: 500 }, Some(screen)),
+            Some(Target::Dock(screen))
+        );
+        assert_eq!(edges.at(POINT { x: 900, y: 1079 }, Some(screen)), None);
+        assert_eq!(
+            edges.at(POINT { x: 0, y: 0 }, Some(screen)),
+            Some(Target::MenuBar)
+        );
+        edges.set_screens(vec![screen], DockEdge::Right);
+        assert_eq!(
+            edges.at(POINT { x: 1919, y: 500 }, Some(screen)),
+            Some(Target::Dock(screen))
+        );
+        assert_eq!(edges.at(POINT { x: 0, y: 500 }, Some(screen)), None);
+    }
+
+    #[test]
     fn menu_bar_reveals_sooner_without_changing_dock_switching_delay() {
         let start = Instant::now();
         let screen = RECT {
@@ -311,7 +358,7 @@ mod tests {
         let bottom = POINT { x: 700, y: 1079 };
         let mut edges = Edges::default();
         edges.set_top(Some(screen));
-        edges.set_bottoms(vec![screen]);
+        edges.set_screens(vec![screen], DockEdge::Bottom);
         edges.observe(top, start);
         assert!(matches!(
             edges.dwell(top, start + MENU_DWELL),
@@ -364,7 +411,7 @@ mod tests {
             bottom: 824,
         };
         let mut edges = Edges::default();
-        edges.set_bottoms(vec![primary, secondary]);
+        edges.set_screens(vec![primary, secondary], DockEdge::Bottom);
         let start = Instant::now();
         let left = POINT { x: -700, y: 823 };
         let right = POINT { x: 700, y: 1079 };
@@ -374,19 +421,44 @@ mod tests {
         assert!(
             matches!(edges.dwell(left, start + DWELL * 2), Reveal::Ready(Target::Dock(screen)) if screen == secondary)
         );
-        edges.set_bottoms(vec![primary]);
+        edges.set_screens(vec![primary], DockEdge::Bottom);
         assert!(matches!(edges.dwell(left, start + DWELL * 3), Reveal::Idle));
+    }
+
+    #[test]
+    fn monitor_entry_notifies_before_the_pointer_reaches_the_edge() {
+        let primary = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let secondary = RECT {
+            left: 1920,
+            right: 3840,
+            ..primary
+        };
+        let mut edges = Edges::default();
+        edges.set_screens(vec![primary, secondary], DockEdge::Bottom);
+        let now = Instant::now();
+        assert!(edges.observe(POINT { x: 700, y: 500 }, now));
+        assert!(edges.observe(POINT { x: 2500, y: 500 }, now));
+        assert_eq!(edges.target, None);
+        assert!(!edges.observe(POINT { x: 2600, y: 500 }, now));
     }
 
     #[test]
     fn pending_reveal_cancels_when_the_pointer_crosses_the_edge() {
         let mut edges = Edges::default();
-        edges.set_bottoms(vec![RECT {
-            left: 0,
-            top: -900,
-            right: 1600,
-            bottom: 0,
-        }]);
+        edges.set_screens(
+            vec![RECT {
+                left: 0,
+                top: -900,
+                right: 1600,
+                bottom: 0,
+            }],
+            DockEdge::Bottom,
+        );
         let start = Instant::now();
         assert!(edges.observe(POINT { x: 800, y: -1 }, start));
         assert!(matches!(

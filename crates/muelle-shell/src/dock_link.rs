@@ -111,3 +111,34 @@ pub fn post_notification(payload: &NotificationPayload) -> bool {
         ok.0 != 0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_notification_payload_roundtrip() {
+        let payload = NotificationPayload {
+            app_id: "com.example.app".into(),
+            app_name: "Example App".into(),
+            title: "Hello World".into(),
+            body: "Notification body content with special chars: 🚀 <&>".into(),
+            icon_path: Some("C:\\path\\to\\icon.png".into()),
+            duration_secs: 10,
+        };
+        let encoded = payload.encode();
+        let decoded = NotificationPayload::decode(&encoded).expect("should decode valid json");
+        assert_eq!(decoded.app_id, payload.app_id);
+        assert_eq!(decoded.app_name, payload.app_name);
+        assert_eq!(decoded.title, payload.title);
+        assert_eq!(decoded.body, payload.body);
+        assert_eq!(decoded.icon_path, payload.icon_path);
+        assert_eq!(decoded.duration_secs, payload.duration_secs);
+    }
+
+    #[test]
+    fn test_notification_payload_invalid_json() {
+        assert!(NotificationPayload::decode("not valid json").is_none());
+        assert!(NotificationPayload::decode("").is_none());
+    }
+}

@@ -5,9 +5,9 @@ PackageLocale: en-US
 Publisher: Crafter Station
 PublisherUrl: https://github.com/crafter-station
 PublisherSupportUrl: https://github.com/crafter-station/Muelle/issues
-PrivacyUrl: https://muellee.vercel.app/privacy
+PrivacyUrl: https://muelle.crafter.run/privacy
 PackageName: Muelle
-PackageUrl: https://muellee.vercel.app
+PackageUrl: https://muelle.crafter.run
 License: MIT
 LicenseUrl: https://github.com/crafter-station/Muelle/blob/main/LICENSE
 ShortDescription: The macOS Dock, made for Windows 11.

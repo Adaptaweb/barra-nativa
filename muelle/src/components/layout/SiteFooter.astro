@@ -4,7 +4,7 @@ import logo from "@/assets/brand/muelle-logo.webp";
 import Container from "@/components/layout/Container.astro";
 import Icon from "@/components/ui/Icon.astro";
 import { footerGroups } from "@/data/navigation";
-import { site } from "@/data/site";
+import { author, organization, site } from "@/data/site";
 ---
 
 <footer class="mt-[100px] border-t border-line">
@@ -46,7 +46,10 @@ import { site } from "@/data/site";
 
     <div class="mt-12 flex flex-wrap justify-between gap-3 border-t border-line pt-5 text-[13px] text-mute">
       <span>© 2026 {site.name}. Independent project; not affiliated with Apple, Microsoft or the listed AI providers.</span>
-      <span class="font-mono text-[11px] tracking-[0.08em] uppercase">Built in Rust</span>
+      <span>
+        Made by <a href={author.profile} class="text-fg underline-offset-4 hover:text-signal hover:underline">{author.shortName}</a>{' '}at <a href={organization.url} class="text-fg underline-offset-4 hover:text-signal hover:underline">{organization.name}</a>.
+        Open source, built in Rust.
+      </span>
     </div>
   </Container>
 </footer>

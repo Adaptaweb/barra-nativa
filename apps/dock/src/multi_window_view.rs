@@ -4,6 +4,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use muelle_core::frame::DockEdge;
 use muelle_shell::{system::animations_enabled, tracker};
 use windows::{
     UI::{
@@ -56,11 +57,21 @@ struct MultiWindowLayout {
     bounds: RECT,
     cards: Vec<RECT>,
     per_page: usize,
+    /// The screen edge the dock is on: the view opens away from it.
+    edge: DockEdge,
 }
 
 impl MultiWindowLayout {
-    fn new(screen: RECT, anchor: RECT, scale: f32, count: usize) -> Self {
-        let available = ((screen.right - screen.left) as f32 - 32.0 * scale).max(1.0);
+    fn new(screen: RECT, anchor: RECT, edge: DockEdge, scale: f32, count: usize) -> Self {
+        let gap = (10.0 * scale) as i32;
+        // On a side dock the row of previews sits beside the icon, in the
+        // width left between the dock and the far side of the screen.
+        let room = match edge {
+            DockEdge::Bottom => screen.right - screen.left,
+            DockEdge::Left => screen.right - anchor.right - gap,
+            DockEdge::Right => anchor.left - gap - screen.left,
+        };
+        let available = (room as f32 - 32.0 * scale).max(1.0);
         let per_page = (((available - 2.0 * PADDING * scale) / ((CARD_WIDTH + GAP) * scale))
             as usize)
             .clamp(1, 5);
@@ -72,9 +83,17 @@ impl MultiWindowLayout {
             + shown.saturating_sub(1) as f32 * GAP * scale)
             .ceil() as i32;
         let height = ((2.0 * PADDING + header + CARD_HEIGHT + ARC) * scale).ceil() as i32;
-        let left = ((anchor.left + (anchor.right - anchor.left) / 2) - width / 2)
-            .clamp(screen.left, (screen.right - width).max(screen.left));
-        let top = (anchor.top - height - (10.0 * scale) as i32).max(screen.top);
+        let middle_y = (anchor.top + (anchor.bottom - anchor.top) / 2) - height / 2;
+        let beside_top = middle_y.clamp(screen.top, (screen.bottom - height).max(screen.top));
+        let (left, top) = match edge {
+            DockEdge::Bottom => (
+                ((anchor.left + (anchor.right - anchor.left) / 2) - width / 2)
+                    .clamp(screen.left, (screen.right - width).max(screen.left)),
+                (anchor.top - height - gap).max(screen.top),
+            ),
+            DockEdge::Left => ((anchor.right + gap).min(screen.right - width), beside_top),
+            DockEdge::Right => ((anchor.left - gap - width).max(screen.left), beside_top),
+        };
         let cards = (0..shown)
             .map(|index| {
                 let across = if shown > 1 {
@@ -101,6 +120,7 @@ impl MultiWindowLayout {
             },
             cards,
             per_page,
+            edge,
         }
     }
 
@@ -131,17 +151,23 @@ impl MultiWindowLayout {
         if contains(self.bounds, point) || contains(anchor, point) {
             return true;
         }
-        // A bridge just above the source icon lets the pointer reach the view
-        // without keeping the popup open over unrelated applications.
-        contains(
-            RECT {
-                left: anchor.left,
-                right: anchor.right,
+        // A bridge between the source icon and the view lets the pointer reach
+        // it without keeping the popup open over unrelated applications.
+        let bridge = match self.edge {
+            DockEdge::Bottom => RECT {
                 top: self.bounds.bottom.min(anchor.top),
-                bottom: anchor.bottom,
+                ..anchor
             },
-            point,
-        )
+            DockEdge::Left => RECT {
+                right: self.bounds.left.max(anchor.right),
+                ..anchor
+            },
+            DockEdge::Right => RECT {
+                left: self.bounds.right.min(anchor.left),
+                ..anchor
+            },
+        };
+        contains(bridge, point)
     }
 }
 
@@ -185,6 +211,18 @@ pub struct MultiWindowView {
     close_pressed: Option<usize>,
     mouse_was_down: bool,
     foreground: isize,
+    /// The card lit when the opened view was last drawn. Once open, only that
+    /// changes what it shows, so a tick that finds it the same touches
+    /// nothing: no composition batch and no DWM work while the view rests.
+    drawn: Option<Option<usize>>,
+}
+
+/// Where the view opens: the app's icon and display, and the screen edge
+/// the dock is on.
+pub struct Anchor {
+    pub icon: RECT,
+    pub screen: RECT,
+    pub edge: DockEdge,
 }
 
 impl MultiWindowView {
@@ -193,8 +231,7 @@ impl MultiWindowView {
         gfx: &Gfx,
         app_id: String,
         windows: Vec<isize>,
-        anchor: RECT,
-        screen: RECT,
+        at: &Anchor,
         scale: f32,
         theme: Theme,
         show_close: bool,
@@ -231,14 +268,15 @@ impl MultiWindowView {
             hwnd,
             target: None,
             thumbnails: Thumbnails::new(hwnd),
-            layout: MultiWindowLayout::new(screen, anchor, scale, windows.len()),
+            layout: MultiWindowLayout::new(at.screen, at.icon, at.edge, scale, windows.len()),
             windows,
-            anchor,
+            anchor: at.icon,
             scale,
             theme,
             page: 0,
             cards: Vec::new(),
             opened: Instant::now(),
+            drawn: None,
             animated: animations_enabled(),
             left_at: None,
             pressed: None,
@@ -440,7 +478,8 @@ impl MultiWindowView {
                 card.Children()?.InsertAtTop(&btn_visual)?;
 
                 let tip_text = text().close_window.replace('&', "");
-                let tip_label = gfx.label_brush(&tip_text, self.scale, self.theme.light)?;
+                let tip_label =
+                    gfx.label_brush(&tip_text, self.scale, self.theme.light, self.layout.edge)?;
                 let tip_visual = c.CreateSpriteVisual()?;
                 tip_visual.SetBrush(&tip_label.brush)?;
                 tip_visual.SetSize(Vector2 {
@@ -479,6 +518,7 @@ impl MultiWindowView {
             target.SetRoot(&root)?;
         }
         self.opened = Instant::now();
+        self.drawn = None;
         Ok(())
     }
 
@@ -497,14 +537,28 @@ impl MultiWindowView {
         } else {
             None
         };
+        if progress >= 1.0 && self.drawn == Some(hovered) && self.close_hovered == close_hovered {
+            return Ok(());
+        }
         self.close_hovered = close_hovered;
         let center = (self.anchor.left + (self.anchor.right - self.anchor.left) / 2
             - self.layout.bounds.left) as f32;
+        let travel = (1.0 - eased) * 36.0 * self.scale;
         for (index, (card, rect)) in self.cards.iter().zip(&self.layout.cards).enumerate() {
             let width = (rect.right - rect.left) as f32;
-            let start_x = center - width / 2.0;
-            let x = start_x + (rect.left as f32 - start_x) * eased;
-            let y = rect.top as f32 + (1.0 - eased) * 36.0 * self.scale;
+            // Above a bottom dock the cards fan out of the icon and rise; beside
+            // a side dock they slide out of it.
+            let (x, y) = match self.layout.edge {
+                DockEdge::Bottom => {
+                    let start_x = center - width / 2.0;
+                    (
+                        start_x + (rect.left as f32 - start_x) * eased,
+                        rect.top as f32 + travel,
+                    )
+                }
+                DockEdge::Left => (rect.left as f32 - travel, rect.top as f32),
+                DockEdge::Right => (rect.left as f32 + travel, rect.top as f32),
+            };
             card.root.SetOffset(Vector3 { X: x, Y: y, Z: 0.0 })?;
             card.root.SetOpacity(eased)?;
             card.highlight
@@ -539,6 +593,7 @@ impl MultiWindowView {
                 );
             }
         }
+        self.drawn = (progress >= 1.0).then_some(hovered);
         // Run quickly only during the opening view animation. Nothing is polled
         // when the popup is closed, and thumbnail pixels are maintained by DWM.
         unsafe {
@@ -645,7 +700,13 @@ impl MultiWindowView {
             right: self.layout.bounds.right,
             bottom: self.layout.bounds.bottom,
         };
-        self.layout = MultiWindowLayout::new(screen, self.anchor, self.scale, self.windows.len());
+        self.layout = MultiWindowLayout::new(
+            screen,
+            self.anchor,
+            self.layout.edge,
+            self.scale,
+            self.windows.len(),
+        );
         let bounds = self.layout.bounds;
         unsafe {
             SetWindowPos(
@@ -790,17 +851,20 @@ mod tests {
                 &gfx,
                 "test".into(),
                 windows.clone(),
-                RECT {
-                    left: 280,
-                    top: 600,
-                    right: 340,
-                    bottom: 670,
-                },
-                RECT {
-                    left: 0,
-                    top: 0,
-                    right: 640,
-                    bottom: 720,
+                &Anchor {
+                    icon: RECT {
+                        left: 280,
+                        top: 600,
+                        right: 340,
+                        bottom: 670,
+                    },
+                    screen: RECT {
+                        left: 0,
+                        top: 0,
+                        right: 640,
+                        bottom: 720,
+                    },
+                    edge: DockEdge::Bottom,
                 },
                 1.0,
                 theme,
@@ -874,7 +938,7 @@ mod tests {
                     right: left + 60,
                     bottom: 1020,
                 };
-                let layout = MultiWindowLayout::new(screen, anchor, scale, 12);
+                let layout = MultiWindowLayout::new(screen, anchor, DockEdge::Bottom, scale, 12);
                 assert!(layout.bounds.left >= screen.left && layout.bounds.right <= screen.right);
                 for rect in &layout.cards {
                     assert!(
@@ -885,6 +949,50 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn beside_a_side_dock_the_previews_open_inward_and_keep_a_bridge() {
+        let screen = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        for (edge, anchor) in [
+            (
+                DockEdge::Left,
+                RECT {
+                    left: 14,
+                    top: 480,
+                    right: 74,
+                    bottom: 540,
+                },
+            ),
+            (
+                DockEdge::Right,
+                RECT {
+                    left: 1846,
+                    top: 480,
+                    right: 1906,
+                    bottom: 540,
+                },
+            ),
+        ] {
+            let layout = MultiWindowLayout::new(screen, anchor, edge, 1.25, 7);
+            let bounds = layout.bounds;
+            assert!(bounds.left >= screen.left && bounds.right <= screen.right);
+            assert!(bounds.top >= screen.top && bounds.bottom <= screen.bottom);
+            let gap_x = if edge == DockEdge::Left {
+                assert!(bounds.left >= anchor.right);
+                (anchor.right + bounds.left) / 2
+            } else {
+                assert!(bounds.right <= anchor.left);
+                (bounds.right + anchor.left) / 2
+            };
+            assert!(layout.keeps_open(anchor, POINT { x: gap_x, y: 510 }));
+            assert!(!layout.keeps_open(anchor, POINT { x: gap_x, y: 40 }));
         }
     }
 
@@ -904,6 +1012,7 @@ mod tests {
                 bottom: 1080,
             },
             anchor,
+            DockEdge::Bottom,
             1.0,
             2,
         );
@@ -938,6 +1047,7 @@ mod tests {
                 right: 660,
                 bottom: 730,
             },
+            DockEdge::Bottom,
             1.0,
             20,
         );

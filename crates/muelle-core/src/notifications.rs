@@ -371,4 +371,120 @@ mod tests {
         assert_eq!(br0.y, 32.0 + 1048.0 - BANNER_MARGIN - BANNER_HEIGHT);
         assert_eq!(br1.y, br0.y - BANNER_HEIGHT - BANNER_GAP);
     }
+
+    #[test]
+    fn test_burst_of_notifications() {
+        let mut queue = NotificationQueue::new();
+        let count = 25;
+        let mut ids = Vec::new();
+
+        for i in 0..count {
+            let app = if i % 2 == 0 { "app_a" } else { "app_b" };
+            let id = queue
+                .push(
+                    app.into(),
+                    format!("App {app}"),
+                    format!("Title {i}"),
+                    format!("Body {i}"),
+                    None,
+                    None,
+                    5000,
+                    false,
+                    false,
+                )
+                .expect("should push notification");
+            ids.push(id);
+        }
+
+        // Only MAX_VISIBLE_BANNERS (3) are visible at a time
+        assert_eq!(queue.visible_items().len(), MAX_VISIBLE_BANNERS);
+        assert_eq!(queue.visible_items()[0].id, ids[0]);
+        assert_eq!(queue.visible_items()[1].id, ids[1]);
+        assert_eq!(queue.visible_items()[2].id, ids[2]);
+
+        // Badge counts accumulate correctly across all 25 notifications
+        assert_eq!(queue.badge_count("app_a"), 13);
+        assert_eq!(queue.badge_count("app_b"), 12);
+
+        // Dismissing the first 3 reveals the next 3
+        for id in &ids[..3] {
+            queue.dismiss(*id);
+        }
+        assert_eq!(queue.visible_items().len(), MAX_VISIBLE_BANNERS);
+        assert_eq!(queue.visible_items()[0].id, ids[3]);
+        assert_eq!(queue.visible_items()[1].id, ids[4]);
+        assert_eq!(queue.visible_items()[2].id, ids[5]);
+    }
+
+    #[test]
+    fn test_app_exit_notification_dismissal() {
+        let mut queue = NotificationQueue::new();
+        queue.push(
+            "app_x".into(),
+            "App X".into(),
+            "T1".into(),
+            "B1".into(),
+            None,
+            None,
+            5000,
+            false,
+            false,
+        );
+        queue.push(
+            "app_y".into(),
+            "App Y".into(),
+            "T2".into(),
+            "B2".into(),
+            None,
+            None,
+            5000,
+            false,
+            false,
+        );
+        queue.push(
+            "app_x".into(),
+            "App X".into(),
+            "T3".into(),
+            "B3".into(),
+            None,
+            None,
+            5000,
+            false,
+            false,
+        );
+
+        assert_eq!(queue.badge_count("app_x"), 2);
+        assert_eq!(queue.badge_count("app_y"), 1);
+
+        // App X exits: remove all notifications for app_x and clear its badge
+        let removed = queue.dismiss_for_app("app_x");
+        assert_eq!(removed.len(), 2);
+        queue.clear_badge("app_x");
+
+        assert_eq!(queue.badge_count("app_x"), 0);
+        assert_eq!(queue.badge_count("app_y"), 1);
+        assert_eq!(queue.visible_items().len(), 1);
+        assert_eq!(queue.visible_items()[0].app_id, "app_y");
+    }
+
+    #[test]
+    fn test_banner_close_button_geometry() {
+        let banner = Rect {
+            x: 100.0,
+            y: 50.0,
+            width: BANNER_WIDTH,
+            height: BANNER_HEIGHT,
+        };
+        let close_1x = banner_close_button_bounds(banner, 1.0);
+        assert_eq!(close_1x.width, 20.0);
+        assert_eq!(close_1x.height, 20.0);
+        assert_eq!(close_1x.x, BANNER_WIDTH - 20.0 - 8.0);
+        assert_eq!(close_1x.y, 8.0);
+
+        let close_2x = banner_close_button_bounds(banner, 2.0);
+        assert_eq!(close_2x.width, 40.0);
+        assert_eq!(close_2x.height, 40.0);
+        assert_eq!(close_2x.x, BANNER_WIDTH - 40.0 - 16.0);
+        assert_eq!(close_2x.y, 16.0);
+    }
 }

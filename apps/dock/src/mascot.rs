@@ -12,6 +12,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use muelle_core::frame::DockEdge;
 use muelle_shell::icons::IconImage;
 use windows::{
     Foundation::TimeSpan,
@@ -30,7 +31,7 @@ use windows::{
     },
     core::{HSTRING, Interface, h, w},
 };
-use windows_numerics::{Vector2, Vector3};
+use windows_numerics::{Matrix4x4, Vector2, Vector3};
 
 use crate::gfx::Gfx;
 
@@ -299,8 +300,58 @@ pub enum Place {
     /// Below a point of the menu bar's island: `x` is the centre, `top` the
     /// bar's bottom edge.
     Under { x: i32, top: i32 },
-    /// Walking on an edge (the top of the dock): `top` is the edge.
-    Along { left: i32, right: i32, top: i32 },
+    /// Walking on the dock's inner rim. `left..right` is the span along the
+    /// dock and `top` the rim (screen y on a bottom dock; the screen x of its
+    /// inner side on a left or right one, where the crab walks up the wall).
+    Along {
+        left: i32,
+        right: i32,
+        top: i32,
+        edge: DockEdge,
+    },
+}
+
+/// The act is choreographed upright, in a "scene" `width` long and `height`
+/// tall with the rim at the bottom; on a side dock the window holds it
+/// turned a quarter (a pure rotation, so the sprites are never mirrored).
+#[derive(Clone, Copy)]
+struct Turn {
+    edge: DockEdge,
+    width: f32,
+    height: f32,
+}
+
+impl Turn {
+    /// Scene point of a point in the window.
+    fn to_scene(self, x: f32, y: f32) -> (f32, f32) {
+        match self.edge {
+            DockEdge::Bottom => (x, y),
+            // Head toward the screen's inside: right on a left dock...
+            DockEdge::Left => (y, self.height - x),
+            // ...left on a right dock, walking from the bottom up.
+            DockEdge::Right => (self.width - y, x),
+        }
+    }
+
+    /// The scene's transform into the window (row vectors, as Composition).
+    fn matrix(self) -> Option<Matrix4x4> {
+        let (m11, m12, m21, m22, m41, m42) = match self.edge {
+            DockEdge::Bottom => return None,
+            DockEdge::Left => (0.0, 1.0, -1.0, 0.0, self.height, 0.0),
+            DockEdge::Right => (0.0, -1.0, 1.0, 0.0, 0.0, self.width),
+        };
+        Some(Matrix4x4 {
+            M11: m11,
+            M12: m12,
+            M21: m21,
+            M22: m22,
+            M33: 1.0,
+            M41: m41,
+            M42: m42,
+            M44: 1.0,
+            ..Matrix4x4::default()
+        })
+    }
 }
 
 /// One act, in seconds and cells, independent of the screen.
@@ -443,6 +494,8 @@ pub struct Mascot {
     started: Instant,
     /// The window's top-left corner on screen, and the crab's size.
     origin: POINT,
+    /// How the upright scene sits in the window.
+    turn: Turn,
     crab: (f32, f32),
     crab_top: f32,
     cell: f32,
@@ -487,8 +540,13 @@ impl Mascot {
                     headroom,
                 )
             }
-            Place::Along { left, right, top } => {
-                // Feet one cell into the edge, as if standing on its rim.
+            // Feet one cell into the rim, as if standing on it.
+            Place::Along {
+                left,
+                right,
+                top,
+                edge: DockEdge::Bottom,
+            } => {
                 let bottom = top + cell as i32;
                 (
                     RECT {
@@ -500,9 +558,41 @@ impl Mascot {
                     headroom,
                 )
             }
+            Place::Along {
+                left: start,
+                right: end,
+                top: rim,
+                edge,
+            } => {
+                let feet = if edge == DockEdge::Left {
+                    rim - cell as i32
+                } else {
+                    rim + cell as i32 - height as i32
+                };
+                (
+                    RECT {
+                        left: feet,
+                        top: start,
+                        right: feet + height as i32,
+                        bottom: end,
+                    },
+                    headroom,
+                )
+            }
         };
-        let width = (rect.right - rect.left) as f32;
-        let script = Script::new(act, width, crab.0);
+        let turn = match place {
+            Place::Along { edge, .. } if edge.is_vertical() => Turn {
+                edge,
+                width: (rect.bottom - rect.top) as f32,
+                height,
+            },
+            _ => Turn {
+                edge: DockEdge::Bottom,
+                width: (rect.right - rect.left) as f32,
+                height: (rect.bottom - rect.top) as f32,
+            },
+        };
+        let script = Script::new(act, turn.width, crab.0);
 
         let hwnd = create_window(rect)?;
         let built = || -> Result<(DesktopWindowTarget, ContainerVisual, SpriteVisual)> {
@@ -513,6 +603,9 @@ impl Mascot {
                     .CreateDesktopWindowTarget(hwnd, true)?
             };
             let (root, reaction, poke_heart) = choreograph(gfx, &script, crab, crab_top, cell)?;
+            if let Some(matrix) = turn.matrix() {
+                root.SetTransformMatrix(matrix)?;
+            }
             target.SetRoot(&root)?;
             Ok((target, reaction, poke_heart))
         };
@@ -541,6 +634,7 @@ impl Mascot {
                 x: rect.left,
                 y: rect.top,
             },
+            turn,
             crab,
             crab_top,
             cell,
@@ -566,9 +660,13 @@ impl Mascot {
         {
             return;
         }
-        let left = self.origin.x as f32 + self.script.x_at(t);
-        let top = self.origin.y as f32 + self.crab_top;
-        let (x, y) = (point.x as f32, point.y as f32);
+        // Compared in the upright scene, whichever way the window holds it.
+        let left = self.script.x_at(t);
+        let top = self.crab_top;
+        let (x, y) = self.turn.to_scene(
+            (point.x - self.origin.x) as f32,
+            (point.y - self.origin.y) as f32,
+        );
         if x < left
             || x >= left + self.crab.0
             || y < top - 3.0 * self.cell
@@ -931,5 +1029,35 @@ mod tests {
             react(&gfx, &reaction, &heart, 2.0, 28.0)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod turn_tests {
+    use super::*;
+
+    /// The scene's rim (bottom) lands on the dock side of the window, and
+    /// `to_scene` undoes the window transform.
+    #[test]
+    fn a_turned_scene_stands_on_the_dock_and_maps_back() {
+        for edge in [DockEdge::Left, DockEdge::Right] {
+            let turn = Turn {
+                edge,
+                width: 600.0,
+                height: 80.0,
+            };
+            let m = turn.matrix().unwrap_or_default();
+            let to_window =
+                |x: f32, y: f32| (x * m.M11 + y * m.M21 + m.M41, x * m.M12 + y * m.M22 + m.M42);
+            // Feet (scene bottom) at the dock: left side of a left dock's
+            // window, right side of a right dock's.
+            let (feet_x, _) = to_window(300.0, 80.0);
+            assert_eq!(feet_x, if edge == DockEdge::Left { 0.0 } else { 80.0 });
+            for (x, y) in [(0.0, 0.0), (123.0, 40.0), (600.0, 80.0)] {
+                let (wx, wy) = to_window(x, y);
+                let (sx, sy) = turn.to_scene(wx, wy);
+                assert!((sx - x).abs() < 1e-3 && (sy - y).abs() < 1e-3, "{edge:?}");
+            }
+        }
     }
 }

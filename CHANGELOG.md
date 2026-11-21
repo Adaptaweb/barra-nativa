@@ -25,15 +25,6 @@ copia la sección de la versión que se publica a la release de GitHub.
   automatically re-layout when windows close, and close the popup when all
   windows have closed.
 - New setting in Settings → Windows: "Show close button on previews" (on by default).
-- The menu bar now follows Windows' Battery percentage setting, showing the
-  charge next to the battery icon when enabled. Preference changes apply
-  without restarting Muelle, through registry notifications rather than polling.
-- Fixed icons remaining over the desktop after dragging an app out of a dock
-  group. Drag tracking now recovers missed pointer messages without taking
-  focus, stops on release or Escape, and rejects late clicks after cancellation.
-- Grouping now requires dropping over the target icon vertically as well as
-  horizontally. Recovered or collapsed groups no longer duplicate pinned apps
-  in recent apps.
 
 ### Español
 
@@ -54,6 +45,292 @@ copia la sección de la versión que se publica a la release de GitHub.
   emergente cuando no quedan más ventanas abiertas.
 - Nuevo ajuste en Ajustes → Ventanas: «Mostrar botón de cerrar en previsualizaciones»
   (activado por defecto).
+
+## [0.1.18]
+
+### English
+- A folder or window picker left open no longer re-sends its unchanged visuals
+  to the compositor every 50–60 ms: once open, it redraws only when the item
+  under the pointer changes, so Windows does no composition work while it rests.
+- Fixed island popup edge cases: AI cards stay within the display at high DPI,
+  with clipped scrolling and reachable buttons. Volume drags cancel safely when
+  the layout changes; audio-only updates reuse current system/provider data.
+  Popups without room for their trigger close, repeated refresh clicks are
+  disabled while busy, and failed media reads no longer retain the previous song.
+  Scrolling reuses GPU visuals without extra idle polling or quota requests.
+- Music now shows circular Windows media artwork in the island and its popup,
+  with a bundled offline fallback. The popup adds system volume and mute controls;
+  the thumb and percentage respond immediately, with coalesced audio writes and
+  retained visuals. Audio events avoid unrelated system queries and full redraws
+  for percentage-only changes. Release/cancellation does not steal app focus.
+- Dock and island-style previews use the current monitor's wallpaper when available.
+  Notch/bubble illustrations have clearer content and unobstructed selection marks. Nested
+  options and sliders have fewer icons, and the GitHub star is filled yellow.
+- Settings now illustrate Dock placement, island styles and Genie speeds, with
+  native keyboard-selectable options, clearer icons and shorter descriptions.
+  A permanent sidebar link opens Muelle on GitHub to explore and star the project.
+- Settings → Dock → Position on screen: Left, Bottom or Right, as on macOS.
+  Bottom stays the default. On a side the dock runs top to bottom below the
+  menu bar, icons grow and show their names inward, menus, groups and window
+  previews open beside the icon, the genie flies sideways into the dock, a
+  hidden dock comes out of its side edge (on any display), and maximized
+  windows end beside it. No top position: that edge belongs to the menu bar.
+- Separated manual SignPath test builds from public releases and updater output.
+  Signature verification now records Windows' detailed result and the file hash,
+  checks the expected signer, and keeps strict integrity checks in both modes.
+  Test-certificate trust is temporary and restricted to GitHub-hosted runners.
+- Settings → Menu bar → Show what's playing (issue #28). The music half of
+  the island could not be turned off; now it can, and with AI usage off too
+  the menu bar shows no island at all. Off, Muelle also stops following media
+  sessions. On by default, as before.
+- Added "End task" beside "Quit" in a running app's context menu, including apps
+  inside dock groups (issue #26). Force termination runs outside the UI thread
+  against process handles captured for that menu. Explorer, critical/shared hosts
+  and inaccessible processes are excluded; cancelling the menu changes nothing.
+- Hardened "End task" against windows closed or added while its menu is open,
+  including independent windows outside the dock's current desktop. All selected
+  processes are checked before termination; an outdated selection is refused
+  instead of ending a background process or partially applying the request.
+- Settings → Windows → Genie speed (issue #27): Normal, Fast or Faster.
+  Normal is the speed the genie always had (0.5 s, close to the macOS Dock)
+  and stays the default; Fast takes 0.35 s and Faster 0.25 s, minimizing and
+  restoring alike. The change applies to the next window at once.
+- Added a persistent red attention badge for apps that request attention through
+  Windows, including grouped apps and minimized-window thumbnails (issue #22,
+  first stage). It clears on window activation/closure and follows Windows' badge
+  preference live. Updates reuse visuals without rebuilding the dock, additional
+  polling, notification-content access, or invented unread-message counts.
+- Fixed (issue #25): an uninstalled app could stay in Recent Apps with no way
+  to remove it. Recent apps that no longer exist now leave the dock on their
+  own, as pinned ones already did, and clicking one that was just uninstalled
+  removes it instead of failing. A recent app's menu also has "Remove from
+  Dock", to dismiss it while recent apps stay on; it comes back the next time
+  you open and close it.
+- Fixed: a Logitech mouse on a receiver (reported with a G305 on its LIGHTSPEED
+  receiver) did not show its battery in the menu bar, or showed it only for a
+  moment. The mouse sleeps a few seconds after it stops moving and then does not
+  answer, and every check dropped it. A device behind a receiver now keeps its
+  last reading for 30 minutes while it sleeps, as Logitech's own tools do, and
+  each request waits longer for a reply over the radio. Unplugging the
+  receiver still removes it at once.
+- OpenCode shows only measured Go quotas and their reset times, including the
+  monthly window. Zen's local spending estimate and balance link are removed,
+  together with the history queries and bundled SQLite dependency. A Zen-only
+  connection shows no OpenCode indicator; missing quota data never becomes 0%.
+- Fixed OpenCode Go account discovery: read its `opencode-go` credential, respect
+  `XDG_DATA_HOME`, and fall back from an empty environment key to the saved login.
+  Only saved Go keys or an explicit environment key are used for quota requests;
+  saved Zen keys are not queried.
+- Fixed a blocking "Ordinal 381 Not Found" system dialog when launching applications
+  with Uninstall Tool (`utshellext.dll`) or other third-party shell extensions installed
+  (issue #23). `muelle.exe` now embeds an application manifest declaring a dependency on
+  `Microsoft.Windows.Common-Controls` 6.0.0.0 (along with PerMonitorV2 DPI awareness and
+  Windows 10/11 compatibility), enabling shell extensions to resolve modern ComCtl32 exports
+  such as `LoadIconWithScaleDown`.
+- Process-level error mode now suppresses critical-error and file-not-found system message
+  boxes (`SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX`) across the dock, the one-shot
+  shell worker, and application launch, and `ShellExecuteExW` requests `SEE_MASK_FLAG_NO_UI`.
+  Faulty or incompatible shell extensions no longer block or delay application opening;
+  mandatory UAC elevation prompts remain visible.
+
+### Español
+
+- Una carpeta o un selector de ventanas abierto ya no reenvía al compositor sus
+  visuales sin cambios cada 50–60 ms: una vez abierto, solo se redibuja cuando
+  cambia el elemento bajo el puntero, así que Windows no compone nada mientras reposa.
+- Corregidos casos límite de los popups: las tarjetas de IA caben en la pantalla
+  con escala alta, con desplazamiento y botones limitados al área visible. El
+  arrastre de volumen se cancela si cambia su posición; los cambios de audio
+  reutilizan los datos del sistema y proveedores. Los popups sin espacio para
+  su acceso se cierran, actualizar se desactiva mientras está ocupado y los
+  errores de lectura multimedia no conservan la pista anterior. Desplazar la
+  lista reutiliza visuales GPU, sin sondeo en reposo ni consultas de cuota extra.
+- La isla y el popup de música muestran la carátula circular de Windows, con
+  una imagen incluida como respaldo. El popup incorpora volumen del sistema y
+  silencio: tirador y porcentaje responden al instante, reutilizando sus visuales
+  y agrupando las escrituras de audio. Los cambios de porcentaje evitan consultas
+  ajenas al audio y redibujar la barra. El arrastre no roba el foco.
+- Las previews del Dock y de estilos de isla usan el fondo del monitor actual.
+  Muesca y burbuja tienen contenido más claro y la marca de selección queda fuera
+  de la imagen. Si el fondo no está disponible, mantienen el fondo ilustrado.
+  Se quitan iconos de subopciones y sliders; la estrella de GitHub es amarilla.
+- Ajustes incorpora vistas de la posición del Dock, los estilos de isla y la
+  velocidad del genio, con selección por teclado, iconos y textos más breves.
+  Un enlace fijo al pie del sidebar abre Muelle en GitHub para conocer y apoyar
+  el proyecto con una estrella.
+- Ajustes → Dock → Posición en la pantalla: Izquierda, Abajo o Derecha, como
+  en macOS. Abajo sigue siendo la predeterminada. En un lateral el dock va de
+  arriba abajo bajo la barra superior, los iconos crecen y muestran su nombre
+  hacia dentro, los menús, grupos y vistas previas se abren junto al icono, el
+  genio vuela de lado hacia el dock, el dock oculto sale por su borde lateral
+  (en cualquier pantalla) y las ventanas maximizadas terminan a su lado. No hay
+  posición arriba: ese borde es de la barra superior.
+- Separadas las pruebas manuales de SignPath de las releases y el actualizador.
+  La verificación registra el detalle de Windows y el hash, comprueba el firmante
+  previsto y exige firmas válidas en ambos modos. La confianza del certificado
+  de prueba es temporal y se limita a runners alojados de GitHub.
+- Ajustes → Barra superior → Mostrar lo que se reproduce (issue #28). La parte
+  de música de la isla no se podía apagar; ahora sí, y si también desactivas el
+  uso de IA la barra superior no muestra ninguna isla. Apagado, Muelle deja
+  además de seguir las sesiones multimedia. Activado por defecto, como antes.
+- Añadido «Finalizar tarea» junto a «Salir» en el menú de una app abierta, también
+  dentro de grupos del dock (issue #26). La finalización forzada se ejecuta fuera
+  del hilo de interfaz y usa los procesos capturados para ese menú. Se excluyen
+  Explorer, procesos críticos/hosts compartidos y procesos sin permisos; cancelar
+  el menú no realiza ninguna acción.
+- Reforzado «Finalizar tarea» si se cierran o aparecen ventanas mientras el menú
+  sigue abierto, también fuera del escritorio que muestra el dock. Se comprueban
+  todos los procesos antes de finalizar: una selección antigua se rechaza en vez
+  de terminar un proceso en segundo plano o aplicar parcialmente la petición.
+- Ajustes → Ventanas → Velocidad del genio (issue #27): Normal, Rápida o Muy
+  rápida. Normal es la velocidad de siempre (0,5 s, cercana al Dock de macOS)
+  y sigue siendo la predeterminada; Rápida dura 0,35 s y Muy rápida 0,25 s,
+  tanto al minimizar como al restaurar. Se aplica al instante a la siguiente
+  ventana.
+- Añadido un badge rojo persistente para las apps que solicitan atención mediante
+  Windows, también en grupos y miniaturas minimizadas (issue #22, primera etapa).
+  Se quita al activar/cerrar la ventana y sigue en caliente la preferencia de
+  badges de Windows. Se reutilizan los visuales sin reconstruir el dock, sin
+  sondeos adicionales, sin leer mensajes y sin inventar contadores de no leídos.
+- Corregido (issue #25): una app desinstalada podía quedarse en Apps recientes
+  sin forma de quitarla. Las apps recientes que ya no existen salen solas del
+  dock, como ya pasaba con las fijadas, y al hacer clic en una recién
+  desinstalada se quita en vez de fallar. El menú de una app reciente tiene
+  además «Quitar del Dock» para descartarla sin desactivar las recientes;
+  vuelve la próxima vez que la abras y la cierres.
+- Corregido: un ratón Logitech con receptor (reportado con un G305 y su receptor
+  LIGHTSPEED) no mostraba su batería en la barra superior, o solo un momento. El
+  ratón se duerme a los pocos segundos de no moverlo y entonces no responde, y
+  cada comprobación lo quitaba. Un dispositivo tras receptor conserva ahora su
+  última lectura 30 minutos mientras duerme, como las herramientas de Logitech, y
+  cada petición espera más la respuesta por radio. Quitar el
+  receptor lo sigue borrando al instante.
+- Corregido un diálogo de error bloqueante ("No se encuentra el ordinal 381") al abrir
+  aplicaciones con Uninstall Tool (`utshellext.dll`) u otras extensiones del shell de
+  terceros instaladas (issue #23). `muelle.exe` ahora incrusta un manifiesto de aplicación
+  que declara la dependencia de `Microsoft.Windows.Common-Controls` 6.0.0.0 (junto con
+  reconocimiento DPI PerMonitorV2 y compatibilidad con Windows 10/11), permitiendo a las
+  extensiones resolver funciones modernas de ComCtl32 como `LoadIconWithScaleDown`.
+- El modo de error del proceso ahora suprime los cuadros de diálogo de errores críticos
+  del sistema (`SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX`) en el dock, el proceso
+  auxiliar del shell y el lanzador, y `ShellExecuteExW` usa `SEE_MASK_FLAG_NO_UI`. Las
+  extensiones del shell defectuosas o incompatibles ya no bloquean ni retrasan la apertura
+  de aplicaciones; las solicitudes de elevación UAC se mantienen visibles.
+- WinGet manifests now use `/S` for both unattended modes and declare the
+  Visual C++ x64 and WebView2 runtime dependencies. This addresses first-install
+  UI and missing-runtime risks; Microsoft installation revalidation is pending.
+
+### Español
+
+- Corregida la detección de cuentas OpenCode Go: se lee la credencial `opencode-go`,
+  se respeta `XDG_DATA_HOME` y una variable de clave vacía permite usar la sesión
+  guardada. Las consultas usan únicamente la clave guardada de Go o una clave
+  explícita de entorno; no se consulta con claves guardadas de Zen.
+- OpenCode muestra solo cuotas medidas de Go y sus reinicios, incluido el mes.
+  Se retiran el gasto local de Zen y el enlace al saldo, las consultas al historial
+  y la dependencia SQLite. Una conexión solo Zen no muestra el indicador de
+  OpenCode; la ausencia de cuotas nunca se convierte en 0 %.
+- Los manifiestos de WinGet usan `/S` en ambos modos desatendidos y declaran
+  las dependencias de Visual C++ x64 y WebView2. Se corrigen riesgos de interfaz
+  en la primera instalación y de runtimes ausentes; falta revalidar con Microsoft.
+
+## [0.1.17]
+
+### English
+
+- Added Google Search Console ownership verification to the website.
+- Automated WinGet manifest generation and submission for the first package and
+  future stable releases, with manual retries, native validation, final installer
+  checksum checks, duplicate detection and explicit missing-token failures.
+- Added bounded graphics-device recovery and recovery of an existing dock when
+  Muelle is opened again. The watchdog closes the old instance before restarting;
+  a blocked recovery close has an eight-second deadline. Repeated device loss
+  within the first minute after recovery stops automatic restarts and restores
+  the Windows taskbar. Graphics health reuses the existing watchdog heartbeat.
+- An error updating the top bar no longer prevents the dock from refreshing or
+  returning after full-screen mode.
+- Added read-only USB adapters for SteelSeries Nova 5/5X and more Nova 7/7P
+  variants, Logitech G PRO X 2 (Centurion), selected G PRO/G533 HID++ variants,
+  HyperX Cloud Alpha Wireless and Kingston Cloud II Wireless. Voltage-only and
+  discrete readings remain unknown; HP/DTS Cloud II revisions with a reported
+  connection-query side effect are excluded. Physical validation is pending.
+- Added Logitech Lightspeed and selected Nano receiver IDs, including the G305's
+  C53F, and HID++ Battery Status 1000 reads. Short and long report collections are
+  now queried together once per receiver. The 60-second interval and opt-in
+  setting remain; physical validation of the expanded coverage is pending.
+- Fixed three Clippy violations in the accessory diagnostic's serialization tests.
+  Tag releases now run the full CI checks before building and signing the installer.
+
+### Español
+
+- Añadida la verificación de propiedad de Google Search Console en la web.
+- Automatizada la generación y el envío de manifiestos de WinGet para la primera
+  publicación y las próximas releases estables, con reintentos manuales, validación
+  nativa, comprobación del hash final, detección de duplicados y error si falta el token.
+- Añadida recuperación limitada ante pérdida del dispositivo gráfico y al abrir
+  Muelle de nuevo cuando ya existe una instancia. El guardián cierra la anterior
+  antes de reiniciarla; si el cierre de recuperación se bloquea, tiene un plazo de
+  ocho segundos. Un nuevo fallo gráfico durante el primer minuto tras recuperar
+  detiene los reinicios automáticos y devuelve la barra de Windows. La revisión
+  gráfica aprovecha la comprobación de salud que ya hacía el guardián.
+- Un error al actualizar la barra superior ya no impide actualizar el dock ni
+  hacerlo reaparecer al salir de pantalla completa.
+- Añadidos adaptadores USB de lectura para SteelSeries Nova 5/5X y más variantes
+  Nova 7/7P, Logitech G PRO X 2 (Centurion), variantes G PRO/G533 HID++, HyperX
+  Cloud Alpha Wireless y Cloud II Wireless Kingston. Voltajes y niveles discretos
+  siguen sin porcentaje; se excluyen revisiones HP/DTS de Cloud II cuya consulta
+  de conexión tiene un efecto secundario documentado. Falta validación física.
+- Añadidos receptores Logitech Lightspeed y Nano identificados, incluido C53F del
+  G305, y lectura de batería HID++ 1000. Las colecciones de informes cortos y largos
+  se consultan juntas una sola vez por receptor. Se mantienen los 60 segundos y
+  la activación opcional; la ampliación queda pendiente de validación física.
+- Corregidos tres errores de Clippy en las pruebas de serialización del diagnóstico
+  de accesorios. Las releases por etiqueta ejecutan ahora todos los controles de CI
+  antes de compilar y firmar el instalador.
+
+## [0.1.16]
+
+### English
+
+- Initial automatic USB battery adapters for allowlisted Logitech Unifying/Bolt
+  receivers and SteelSeries Nova 7 variants. Queries run in disposable processes,
+  pause with the hidden menu bar and use a 60-second interval with error backoff.
+  Approximate levels stay unknown. Physical validation is still pending; radio
+  link changes may take until the next query to appear.
+- Optional mouse/headset battery indicators in Settings → Menu bar, off by default.
+  Enabling them detects connected accessories automatically; missing battery data
+  displays a dash. Disabling them stops the isolated reader and all accessory
+  queries. The landing's Settings demo includes the switch and inline indicators.
+  Hardware compatibility still needs validation.
+- The menu bar now follows Windows' Battery percentage setting, showing the
+  charge next to the battery icon when enabled. Preference changes apply
+  without restarting Muelle, through registry notifications rather than polling.
+- Fixed icons remaining over the desktop after dragging an app out of a dock
+  group. Drag tracking now recovers missed pointer messages without taking
+  focus, stops on release or Escape, and rejects late clicks after cancellation.
+- Grouping now requires dropping over the target icon vertically as well as
+  horizontally. Recovered or collapsed groups no longer duplicate pinned apps
+  in recent apps.
+- Fixed (issue #15): the Recycle Bin could keep its full icon after being
+  emptied, even after restarting Muelle. Right after a change, Explorer may
+  still draw the previous state, and that icon was cached for the day under
+  the other state. The empty and full icons now come from where Windows names
+  them (`DefaultIcon`, including an icon you chose in Desktop icon settings),
+  and wrongly cached ones are replaced on their own.
+
+### Español
+
+- Adaptadores USB iniciales para receptores Logitech Unifying/Bolt y variantes
+  SteelSeries Nova 7 identificadas. Consultas en procesos desechables, pausadas
+  con la barra oculta, con intervalo de 60 segundos y espera tras errores.
+  Los niveles aproximados siguen sin porcentaje. Falta validación física; los
+  cambios del enlace radio pueden tardar hasta la consulta siguiente.
+- Indicadores opcionales de batería del ratón y auriculares en Ajustes → Barra
+  superior, desactivados por defecto. Al activarlos se detectan los accesorios
+  conectados automáticamente; un guion indica batería no disponible. Desactivarlos
+  termina el lector aislado y todas las consultas de accesorios. La demo de Ajustes
+  de la landing incluye el interruptor y los indicadores en la barra.
+  La compatibilidad con hardware real queda pendiente de validar.
 - La barra superior respeta la opción Porcentaje de batería de Windows y
   muestra la carga junto al icono cuando está activada. Los cambios se aplican
   sin reiniciar Muelle, mediante notificaciones del registro, sin sondeo.
@@ -63,6 +340,12 @@ copia la sección de la versión que se publica a la release de GitHub.
   una cancelación.
 - Agrupar requiere soltar sobre el icono también en vertical. Recuperar o
   reducir un grupo ya no duplica apps fijadas en las apps recientes.
+- Corregido (issue #15): la Papelera podía seguir con el icono de llena tras
+  vaciarla, incluso al reiniciar Muelle. Justo después de un cambio, Explorer
+  puede dibujar aún el estado anterior, y ese icono se guardaba en caché todo
+  el día bajo el otro estado. Los iconos de vacía y llena se leen ahora de
+  donde Windows los define (`DefaultIcon`, incluido un icono elegido en la
+  configuración de iconos del escritorio), y los guardados mal se reemplazan solos.
 
 ## [0.1.15]
 

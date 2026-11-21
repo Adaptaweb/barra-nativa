@@ -14,11 +14,12 @@
 //! Status items, right to left as on a Mac: clock, control center, search,
 //! network, volume, battery, then Task View and Widgets. Search, Task View and
 //! Widgets appear only if the user has them on the Windows taskbar. Network
-//! and volume changes arrive as `STATUS_CHANGED`; nothing polls.
+//! and volume changes arrive through separate notifications; nothing polls.
 
 use anyhow::Result;
-use muelle_config::Language;
+use muelle_config::{IslandStyle, Language};
 use muelle_shell::{
+    accessories::{Kind as AccessoryKind, Snapshot as AccessorySnapshot},
     appbar::{AppBar, Edge},
     launcher,
     status::{self, AudioWatch, Network, NetworkWatch, Privacy, TaskbarButtons, Volume},
@@ -26,7 +27,10 @@ use muelle_shell::{
     watch::RegistryWatch,
 };
 use std::{
-    sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 use windows::{
@@ -34,8 +38,9 @@ use windows::{
     UI::{
         Color,
         Composition::{
-            CompositionBatchTypes, CompositionBrush, CompositionScopedBatch, Compositor,
-            ContainerVisual, Desktop::DesktopWindowTarget, SpriteVisual, VisualCollection,
+            CompositionBatchTypes, CompositionBrush, CompositionRoundedRectangleGeometry,
+            CompositionScopedBatch, CompositionSurfaceBrush, Compositor, ContainerVisual,
+            Desktop::DesktopWindowTarget, ShapeVisual, SpriteVisual, VisualCollection,
         },
     },
     Win32::{
@@ -45,16 +50,19 @@ use windows::{
             LibraryLoader::GetModuleHandleW, SystemInformation::GetLocalTime,
             WinRT::Composition::ICompositorDesktopInterop,
         },
-        UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent},
+        UI::Input::KeyboardAndMouse::{
+            GetCapture, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
+        },
         UI::WindowsAndMessaging::{
             CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, HHOOK,
             HWND_TOPMOST, IDC_ARROW, KillTimer, LoadCursorW, MSLLHOOKSTRUCT,
             PBT_POWERSETTINGCHANGE, PostMessageW, RegisterClassW, SWP_HIDEWINDOW, SWP_NOACTIVATE,
             SWP_SHOWWINDOW, SetCursor, SetTimer, SetWindowPos, SetWindowsHookExW,
-            UnhookWindowsHookEx, WH_MOUSE_LL, WM_APP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-            WM_MOUSEMOVE, WM_NCHITTEST, WM_RBUTTONDOWN, WM_SETCURSOR, WM_SETTINGCHANGE,
-            WM_TIMECHANGE, WM_TIMER, WM_XBUTTONDOWN, WNDCLASSW, WS_EX_NOACTIVATE,
-            WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+            UnhookWindowsHookEx, WH_MOUSE_LL, WM_APP, WM_CAPTURECHANGED, WM_LBUTTONDOWN,
+            WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST,
+            WM_RBUTTONDOWN, WM_SETCURSOR, WM_SETTINGCHANGE, WM_TIMECHANGE, WM_TIMER,
+            WM_XBUTTONDOWN, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
+            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
     core::{BOOL, Interface, h, w},
@@ -62,7 +70,7 @@ use windows::{
 use windows_numerics::{Vector2, Vector3};
 
 use crate::{
-    app, edge_watch,
+    accessories, app, edge_watch,
     gfx::{Gfx, Ink, LabelBrush},
     mascot,
     media::{self, Control as MediaControl, Track},
@@ -81,6 +89,11 @@ const ITEM_GAP: f32 = 16.0;
 const HIT_SLOP: f32 = 7.0;
 
 const MEDIA_CHANGED: u32 = WM_APP + 28;
+const VOLUME_CAPTURE_LOST: u32 = WM_APP + 31;
+const AUDIO_CHANGED: u32 = WM_APP + 32;
+const AUDIO_TICK: u32 = WM_APP + 33;
+const VOLUME_TIMER: usize = 4;
+const ACCESSORIES_CHANGED: u32 = WM_APP + 30;
 
 const CLOCK_TIMER: usize = 1;
 const POINTER_TIMER: usize = 2;
@@ -94,6 +107,10 @@ const HIDE_ANIMATION_DONE: u32 = WM_APP + 29;
 const ISLAND_SINGLE_WIDTH: f32 = 145.0;
 const ISLAND_EXPANDED_WIDTH: f32 = 440.0;
 const ISLAND_ROW_HEIGHT: f32 = 118.0;
+const BUBBLE_VERTICAL_INSET: f32 = 2.5;
+const BUBBLE_MUSIC_WIDTH: f32 = 164.0;
+const BUBBLE_PROVIDER_WIDTH: f32 = 62.0;
+const BUBBLE_USAGE_PADDING: f32 = 16.0;
 const PANEL_GAP: f32 = 5.0;
 const PANEL_RADIUS: f32 = 18.0;
 const PANEL_SHADOW_MARGIN: f32 = 20.0;
@@ -101,7 +118,7 @@ const WM_POWERBROADCAST: u32 = 0x0218;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 /// AppBar notifications need a message id; the bar ignores them.
 const APPBAR_CALLBACK: u32 = WM_APP + 20;
-/// Posted by the network and audio watches.
+/// Posted by the network watch; audio uses its own coalesced notification.
 const STATUS_CHANGED: u32 = WM_APP + 21;
 /// Posted by the bar to itself to update from the message loop.
 const TICK: u32 = WM_APP + 22;
@@ -114,6 +131,7 @@ const REGISTRY_CHANGED: u32 = WM_APP + 25;
 const SPI_SETWORKAREA: usize = 0x002F;
 /// A `TICK` is already posted.
 static TICK_PENDING: AtomicBool = AtomicBool::new(false);
+static AUDIO_TICK_PENDING: AtomicBool = AtomicBool::new(false);
 static TRIGGERS_LEFT: AtomicI32 = AtomicI32::new(0);
 static TRIGGERS_RIGHT: AtomicI32 = AtomicI32::new(0);
 static PANEL_LEFT: AtomicI32 = AtomicI32::new(0);
@@ -124,9 +142,7 @@ static PANEL_BOTTOM: AtomicI32 = AtomicI32::new(0);
 /// The hook exists only while the island is expanded.
 static ISLAND_HOOK_WINDOW: AtomicIsize = AtomicIsize::new(0);
 /// Segoe Fluent Icons code points.
-mod glyph {
-    pub const WIFI: [char; 4] = ['\u{E872}', '\u{E873}', '\u{E874}', '\u{E701}'];
-    pub const WIFI_FULL: char = '\u{E701}';
+pub(crate) mod glyph {
     pub const ETHERNET: char = '\u{E839}';
     pub const OFFLINE: char = '\u{F384}';
     pub const VOLUME: [char; 4] = ['\u{E992}', '\u{E993}', '\u{E994}', '\u{E995}'];
@@ -139,10 +155,14 @@ mod glyph {
     pub const MICROPHONE: char = '\u{E720}';
     pub const CAMERA: char = '\u{E722}';
     pub const FOCUS: char = '\u{E708}';
+    pub const MOUSE: char = '\u{E962}';
+    pub const HEADSET: char = '\u{E95B}';
+    pub const BLUETOOTH: char = '\u{E702}';
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
+    AccessoryIndicator,
     QuickSettings,
     Notifications,
     ToggleDnd,
@@ -154,6 +174,30 @@ enum Action {
     InputLanguage,
     Microphone,
     Camera,
+    Bluetooth,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MenuBarWidgets {
+    pub search: Option<bool>,
+    pub task_view: Option<bool>,
+    pub widgets: Option<bool>,
+    pub bluetooth: bool,
+    pub battery_percent: Option<bool>,
+    pub island_style: IslandStyle,
+}
+
+impl Default for MenuBarWidgets {
+    fn default() -> Self {
+        Self {
+            search: None,
+            task_view: None,
+            widgets: None,
+            bluetooth: true,
+            battery_percent: None,
+            island_style: IslandStyle::Notch,
+        }
+    }
 }
 
 /// Network, volume and taskbar buttons, read only when Windows reports a change.
@@ -169,6 +213,7 @@ struct Status {
 /// What the bar was last drawn for.
 #[derive(Clone, PartialEq)]
 struct Look {
+    accessories: [Option<AccessoryReading>; 2],
     language: Language,
     screen: RECT,
     scale: f32,
@@ -181,6 +226,7 @@ struct Look {
     input: Option<String>,
     battery: Option<Battery>,
     status: Status,
+    widgets: MenuBarWidgets,
     usage: Snapshot,
     usage_enabled: bool,
     active_providers: ActiveProviders,
@@ -189,12 +235,47 @@ struct Look {
     track: Option<Track>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AccessoryReading {
+    kind: AccessoryKind,
+    percent: Option<u8>,
+}
+
+// Compare only visible readings: unrelated names/devices do not redraw the bar.
+fn accessory_readings(snapshot: &AccessorySnapshot) -> [Option<AccessoryReading>; 2] {
+    snapshot.compact().map(|device| {
+        device.map(|device| AccessoryReading {
+            kind: device.kind,
+            percent: device.percent,
+        })
+    })
+}
+
 impl Look {
-    fn panel_height(&self) -> f32 {
+    fn panel_content_height(&self) -> f32 {
         match self.panel {
-            Some(Island::Music) => 136.0,
-            Some(Island::Usage) => 74.0 + self.active_providers.count() as f32 * ISLAND_ROW_HEIGHT,
+            Some(Island::Music) => 184.0,
+            Some(Island::Usage) => {
+                74.0 + Provider::ALL
+                    .into_iter()
+                    .filter(|provider| self.active_providers.has(*provider))
+                    .map(|provider| usage_row_height(self.usage.get(provider)))
+                    .sum::<f32>()
+            }
             None => 0.0,
+        }
+    }
+
+    fn panel_height(&self) -> f32 {
+        let natural = self.panel_content_height();
+        if self.panel == Some(Island::Usage) {
+            let available = (self.screen.bottom - self.screen.top) as f32 / self.scale
+                - HEIGHT
+                - PANEL_GAP
+                - PANEL_SHADOW_MARGIN;
+            natural.min(available.max(0.0))
+        } else {
+            natural
         }
     }
 }
@@ -205,7 +286,7 @@ enum Island {
     Usage,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq)]
 struct Span {
     left: f32,
     right: f32,
@@ -221,12 +302,27 @@ impl Span {
 enum IslandAction {
     Toggle(Island),
     Media(MediaControl),
+    Volume(Span),
+    Mute,
     Refresh,
+    ScrollUsage(i8),
 }
 
+#[derive(Clone, Copy)]
 struct IslandHit {
     bounds: (f32, f32, f32, f32),
     action: IslandAction,
+}
+
+/// A retained, clipped body. Wheel/arrow input only changes its transform and
+/// arrow opacity; no quota queries or redraws.
+struct UsageViewport {
+    content: ContainerVisual,
+    maximum: f32,
+    scale: f32,
+    bounds: (f32, f32, f32, f32),
+    up: SpriteVisual,
+    down: SpriteVisual,
 }
 
 impl IslandHit {
@@ -241,6 +337,58 @@ struct ExitAnimation {
     completed: i64,
 }
 
+/// Only these retained visuals move during a volume gesture. Album artwork,
+/// track labels and the rest of the menu bar keep their existing visual tree.
+struct VolumeControls {
+    fill: CompositionRoundedRectangleGeometry,
+    knob: ShapeVisual,
+    value: SpriteVisual,
+    geometry: IslandGeometry,
+    left: f32,
+    width: f32,
+    position_percent: Option<u8>,
+    label_percent: u8,
+}
+
+impl VolumeControls {
+    fn move_to(&mut self, percent: u8) -> Result<()> {
+        if self.position_percent == Some(percent) {
+            return Ok(());
+        }
+        let px = |v| self.geometry.px(v);
+        let filled = self.width * f32::from(percent) / 100.0;
+        self.fill.SetSize(Vector2::new(filled, px(4.0)))?;
+        self.fill
+            .SetCornerRadius(Vector2::new(px(2.0).min(filled / 2.0), px(2.0)))?;
+        self.knob.SetOffset(Vector3::new(
+            self.left + filled - px(5.0),
+            px(160.0) - px(5.0),
+            0.0,
+        ))?;
+        self.position_percent = Some(percent);
+        Ok(())
+    }
+
+    fn paint(&mut self, gfx: &Gfx, percent: u8) -> Result<()> {
+        self.move_to(percent)?;
+        if self.label_percent != percent {
+            let label = gfx.text_brush_sized(
+                &format!("{percent}%"),
+                self.geometry.scale,
+                10.5,
+                false,
+                self.geometry.ink(),
+            )?;
+            self.value
+                .SetBrush(&label.brush.cast::<CompositionBrush>()?)?;
+            self.value
+                .SetSize(Vector2::new(label.width, label.height))?;
+            self.label_percent = percent;
+        }
+        Ok(())
+    }
+}
+
 impl Drop for ExitAnimation {
     fn drop(&mut self) {
         let _ = self.batch.RemoveCompleted(self.completed);
@@ -248,6 +396,9 @@ impl Drop for ExitAnimation {
 }
 
 pub struct MenuBar {
+    accessories: Option<accessories::Monitor>,
+    accessories_enabled: bool,
+    accessory_retry_at: Instant,
     hwnd: HWND,
     _target: DesktopWindowTarget,
     /// Stable parent: content refreshes must not restart reveal animations.
@@ -267,12 +418,26 @@ pub struct MenuBar {
     /// Where the full bar goes on screen.
     bounds: RECT,
     status: Status,
+    widgets: MenuBarWidgets,
     usage: Option<UsageMonitor>,
     /// Where each provider sits in the closed island, as screen x.
     usage_anchors: Vec<(Provider, i32)>,
     /// A moment for the crab, waiting for the dock (see `take_cue`).
     cue: Option<(mascot::Act, i32)>,
     media: Option<media::Watch>,
+    /// "Show what is playing": off, nothing listens to media sessions.
+    media_enabled: bool,
+    cover: Option<(
+        Option<Arc<muelle_shell::icons::IconImage>>,
+        CompositionSurfaceBrush,
+    )>,
+    volume_drag: Option<Span>,
+    pending_volume: Option<u8>,
+    volume_target: Option<u8>,
+    volume_controls: Option<VolumeControls>,
+    usage_scroll: f32,
+    usage_viewport: Option<UsageViewport>,
+    suppress_volume_release: bool,
     panel: Option<Island>,
     visual_height: i32,
     triggers_span: Span,
@@ -292,11 +457,16 @@ pub struct MenuBar {
 
 unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
-        WM_LBUTTONDOWN => launcher::note_menu_bar_press(),
+        WM_LBUTTONDOWN => {
+            launcher::note_menu_bar_press();
+            app::menu_bar_volume_press((l.0 & 0xFFFF) as i16 as f32, (l.0 >> 16) as i16 as f32);
+        }
         WM_LBUTTONUP => {
             let x = (l.0 & 0xFFFF) as i16;
             let y = (l.0 >> 16) as i16;
-            app::menu_bar_clicked(f32::from(x), f32::from(y));
+            if !app::menu_bar_volume_release(Some(f32::from(x))) {
+                app::menu_bar_clicked(f32::from(x), f32::from(y));
+            }
         }
         WM_MOUSEMOVE => {
             let x = (l.0 & 0xFFFF) as i16;
@@ -304,12 +474,48 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
             app::menu_bar_pointer_moved(f32::from(x), f32::from(y));
         }
         WM_MOUSELEAVE => app::menu_bar_check_pointer(),
+        WM_MOUSEWHEEL => {
+            let delta = (w.0 >> 16) as u16 as i16;
+            let point = POINT {
+                x: (l.0 & 0xFFFF) as i16 as i32,
+                y: (l.0 >> 16) as i16 as i32,
+            };
+            if app::menu_bar_scrolled(point, delta) {
+                return LRESULT(0);
+            }
+            return unsafe { DefWindowProcW(hwnd, msg, w, l) };
+        }
         WM_TIMER if w.0 == POINTER_TIMER => app::menu_bar_check_pointer(),
+        WM_TIMER if w.0 == VOLUME_TIMER => app::menu_bar_volume_flush(),
+        WM_CAPTURECHANGED => {
+            // Avoid reentering the app borrow inside Set/ReleaseCapture.
+            unsafe {
+                let _ = PostMessageW(Some(hwnd), VOLUME_CAPTURE_LOST, WPARAM(0), LPARAM(0));
+            }
+        }
+        VOLUME_CAPTURE_LOST => {
+            // A delayed notification must not cancel a newer drag.
+            if unsafe { GetCapture() } != hwnd {
+                app::menu_bar_volume_release(None);
+            }
+        }
         WM_TIMER if w.0 == HIDE_ANIMATION_TIMER => app::menu_bar_finish_hide(None),
         HIDE_ANIMATION_DONE => app::menu_bar_finish_hide(Some(w.0)),
         DISMISS_ISLAND => app::menu_bar_dismiss_island(),
         REGISTRY_CHANGED => app::menu_bar_registry_changed(),
+        ACCESSORIES_CHANGED => app::menu_bar_accessories_changed(),
         MEDIA_CHANGED => app::menu_bar_media_changed(),
+        AUDIO_CHANGED => {
+            if !AUDIO_TICK_PENDING.swap(true, Ordering::Relaxed) {
+                unsafe {
+                    let _ = PostMessageW(Some(hwnd), AUDIO_TICK, WPARAM(0), LPARAM(0));
+                }
+            }
+        }
+        AUDIO_TICK => {
+            AUDIO_TICK_PENDING.store(false, Ordering::Relaxed);
+            app::menu_bar_audio_changed();
+        }
         WM_SETCURSOR => {
             // SAFETY: Keep the standard arrow throughout the bar and popups.
             if let Ok(arrow) = unsafe { LoadCursorW(None, IDC_ARROW) } {
@@ -341,6 +547,9 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         // WM_TIMECHANGE: the clock or time zone was changed.
         WM_TIMER | WM_POWERBROADCAST | WM_TIMECHANGE | STATUS_CHANGED | USAGE_CHANGED
         | WM_SETTINGCHANGE => {
+            if msg == WM_POWERBROADCAST && matches!(w.0, 7 | 18) {
+                app::menu_bar_accessories_reset();
+            }
             if msg == WM_POWERBROADCAST && w.0 == PBT_POWERSETTINGCHANGE as usize {
                 // SAFETY: Windows owns the setting payload for this message.
                 unsafe {
@@ -448,6 +657,27 @@ pub(crate) fn add_rounded_box(
     fill: Color,
     border: Option<Color>,
 ) -> Result<()> {
+    retained_rounded_box(
+        compositor, layers, x, y, width, height, radius, fill, border,
+    )
+    .map(|_| ())
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Same rectangle/color inputs as add_rounded_box; retain geometry for small UI updates"
+)]
+fn retained_rounded_box(
+    compositor: &Compositor,
+    layers: &VisualCollection,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    radius: f32,
+    fill: Color,
+    border: Option<Color>,
+) -> Result<(ShapeVisual, CompositionRoundedRectangleGeometry)> {
     let geometry = compositor.CreateRoundedRectangleGeometry()?;
     let inset = if border.is_some() { 0.5 } else { 0.0 };
     geometry.SetOffset(Vector2 { X: inset, Y: inset })?;
@@ -477,7 +707,7 @@ pub(crate) fn add_rounded_box(
     })?;
     visual.Shapes()?.Append(&shape)?;
     layers.InsertAtTop(&visual)?;
-    Ok(())
+    Ok((visual, geometry))
 }
 
 #[expect(
@@ -706,7 +936,7 @@ fn draw_usage_row(
                 0.7,
             )?;
         }
-        if let Some(secondary) = usage.windows.get(1) {
+        for (index, secondary) in usage.windows.iter().skip(1).enumerate() {
             add_visual(
                 c,
                 layers,
@@ -717,7 +947,7 @@ fn draw_usage_row(
                 })?
                 .cast()?,
                 left + px(14.0),
-                y + px(83.0),
+                y + px(83.0 + index as f32 * 26.0),
                 width - px(28.0),
                 px(1.0),
             )?;
@@ -726,7 +956,7 @@ fn draw_usage_row(
                 layers,
                 &format!("{} · {}%", secondary.title(), secondary.used_percent),
                 left + px(14.0),
-                y + px(87.0),
+                y + px(87.0 + index as f32 * 26.0),
                 scale,
                 11.5,
                 true,
@@ -739,7 +969,7 @@ fn draw_usage_row(
                     layers,
                     &format!("{} {reset}", text.usage_resets),
                     right - px(14.0),
-                    y + px(87.0),
+                    y + px(87.0 + index as f32 * 26.0),
                     scale,
                     11.5,
                     false,
@@ -770,35 +1000,18 @@ fn draw_usage_row(
     Ok(())
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Text placement needs its coordinates and typography at the call site"
-)]
-fn add_text(
-    gfx: &Gfx,
-    layers: &VisualCollection,
-    value: &str,
-    x: f32,
-    y: f32,
-    scale: f32,
-    bold: bool,
-    ink: Ink,
-) -> Result<LabelBrush> {
-    let label = gfx.text_brush(value, scale, bold, ink)?;
-    add_visual(
-        &gfx.compositor,
-        layers,
-        &label.brush.cast()?,
-        x,
-        y,
-        label.width,
-        label.height,
-    )?;
-    Ok(label)
+fn usage_row_height(usage: &ProviderUsage) -> f32 {
+    ISLAND_ROW_HEIGHT + usage.windows.len().saturating_sub(2) as f32 * 26.0
 }
 
 impl MenuBar {
-    pub fn create(gfx: &Gfx, usage_enabled: bool, auto_hide: bool) -> Result<Self> {
+    pub fn create(
+        gfx: &Gfx,
+        usage_enabled: bool,
+        media_enabled: bool,
+        auto_hide: bool,
+        widgets: MenuBarWidgets,
+    ) -> Result<Self> {
         let class = w!("MuelleMenuBar");
         // SAFETY: Standard class registration and window creation on the UI
         // thread; the window is destroyed in `Drop`.
@@ -848,6 +1061,9 @@ impl MenuBar {
         let surface = gfx.compositor.CreateContainerVisual()?;
         target.SetRoot(&surface)?;
         let mut bar = Self {
+            accessories: None,
+            accessories_enabled: false,
+            accessory_retry_at: Instant::now() + Duration::from_secs(60),
             hwnd,
             _target: target,
             surface,
@@ -869,10 +1085,22 @@ impl MenuBar {
                 privacy: Privacy::default(),
                 battery_percentage: false,
             },
+            widgets,
             usage: usage_enabled.then(|| UsageMonitor::new(hwnd.0 as isize, USAGE_CHANGED)),
             usage_anchors: Vec::new(),
             cue: None,
-            media: media::Watch::start(hwnd, MEDIA_CHANGED),
+            media: media_enabled
+                .then(|| media::Watch::start(hwnd, MEDIA_CHANGED))
+                .flatten(),
+            media_enabled,
+            cover: None,
+            volume_drag: None,
+            pending_volume: None,
+            volume_target: None,
+            volume_controls: None,
+            usage_scroll: 0.0,
+            usage_viewport: None,
+            suppress_volume_release: false,
             panel: None,
             visual_height: 0,
             triggers_span: Span::default(),
@@ -883,8 +1111,9 @@ impl MenuBar {
             privacy_watch: status::watch_privacy(hwnd.0 as isize, REGISTRY_CHANGED),
             settings_watch: status::watch_taskbar_settings(hwnd.0 as isize, REGISTRY_CHANGED),
             _saver_watch: muelle_shell::power::SaverWatch::new(hwnd.0 as isize),
-            audio: AudioWatch::new(hwnd.0 as isize, STATUS_CHANGED),
+            audio: AudioWatch::new(hwnd.0 as isize, AUDIO_CHANGED),
         };
+        AUDIO_TICK_PENDING.store(false, Ordering::Relaxed);
         bar.update_status();
         bar.refresh(gfx)?;
         bar.schedule_next_minute();
@@ -900,7 +1129,16 @@ impl MenuBar {
     }
 
     /// Hidden while an app is full screen.
+    /// How tall the bar is at `scale`: the strip it keeps at the top of the
+    /// primary display unless it hides itself. A side dock starts below it.
+    pub fn strip_height(scale: f32) -> i32 {
+        (HEIGHT * scale).round() as i32
+    }
+
     pub fn set_visible(&mut self, visible: bool) -> Result<()> {
+        if !visible {
+            self.release_volume(None)?;
+        }
         if self.visible == visible {
             return Ok(());
         }
@@ -929,8 +1167,70 @@ impl MenuBar {
         self.refresh(gfx)
     }
 
+    /// Shows or hides what is playing. Off, the media watch stops too, so
+    /// nothing follows playback changes.
+    pub fn set_media_enabled(&mut self, gfx: &Gfx, enabled: bool) -> Result<()> {
+        if self.media_enabled == enabled {
+            return Ok(());
+        }
+        self.media_enabled = enabled;
+        self.media = enabled
+            .then(|| media::Watch::start(self.hwnd, MEDIA_CHANGED))
+            .flatten();
+        self.refresh(gfx)
+    }
+
+    pub fn set_accessories_enabled(&mut self, gfx: &Gfx, enabled: bool) -> Result<()> {
+        if self.accessories_enabled == enabled {
+            return Ok(());
+        }
+        self.accessories_enabled = enabled;
+        if enabled {
+            self.restart_accessories(gfx)
+        } else {
+            self.accessories = None;
+            self.refresh(gfx)
+        }
+    }
+
+    pub fn accessories_changed(&mut self, gfx: &Gfx) -> Result<()> {
+        if self.accessories_enabled && self.visible && (!self.auto_hide || self.revealed) {
+            self.refresh(gfx)?;
+        }
+        Ok(())
+    }
+
+    pub fn restart_accessories(&mut self, gfx: &Gfx) -> Result<()> {
+        // Resume/audio notifications and the minute tick must never start a
+        // disabled reader, including after a previously enabled one failed.
+        if !self.accessories_enabled {
+            return Ok(());
+        }
+        self.accessory_retry_at = Instant::now() + Duration::from_secs(60);
+        self.accessories = None;
+        self.accessories = accessories::Monitor::new(
+            self.hwnd.0 as isize,
+            ACCESSORIES_CHANGED,
+            self.visible && (!self.auto_hide || self.revealed),
+        )
+        .inspect_err(|error| eprintln!("muelle: accesorios: {error:#}"))
+        .ok();
+        self.refresh(gfx)
+    }
+
+    pub fn set_widgets(&mut self, gfx: &Gfx, widgets: MenuBarWidgets) -> Result<()> {
+        if self.widgets == widgets {
+            return Ok(());
+        }
+        self.widgets = widgets;
+        self.refresh(gfx)
+    }
+
     /// The pointer reached the top edge or left the bar.
     pub fn hover(&mut self, gfx: &Gfx, inside: bool) -> Result<()> {
+        if self.volume_drag.is_some() && !inside {
+            return Ok(());
+        }
         if !inside && self.panel.take().is_some() {
             self.refresh(gfx)?;
         }
@@ -1086,6 +1386,12 @@ impl MenuBar {
     /// A leave notification can already be queued when the hidden window is
     /// shown. Check the pointer rather than hiding a newly revealed bar on it.
     pub fn check_pointer(&mut self, gfx: &Gfx) -> Result<()> {
+        if self.panel.is_some() {
+            // SAFETY: Read-only Escape state; checked only while a popup is open.
+            if unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x1B) } < 0 {
+                return self.dismiss_island(gfx);
+            }
+        }
         let mut point = POINT::default();
         // SAFETY: Read-only cursor query in the same DPI context as `bounds`.
         unsafe { GetCursorPos(&mut point)? };
@@ -1094,6 +1400,25 @@ impl MenuBar {
 
     fn pointer_left_at(&mut self, gfx: &Gfx, point: POINT) -> Result<()> {
         let x = (point.x - self.bounds.left) as f32;
+        if let Some(span) = self.volume_drag {
+            self.queue_volume(span, x);
+            // A nonactivating background window may not receive mouse-up
+            // outside its visible bounds. Reuse the existing popup pointer
+            // check to finish the gesture without ever stealing app focus.
+            let pressed = unsafe {
+                use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
+                let primary = if GetSystemMetrics(SM_SWAPBUTTON) == 0 {
+                    0x01
+                } else {
+                    0x02
+                };
+                windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(primary) < 0
+            };
+            if pressed {
+                return self.paint_volume_preview(gfx);
+            }
+            self.release_volume(Some(x))?;
+        }
         let within_bar = point.x >= self.bounds.left
             && point.x < self.bounds.right
             && point.y >= self.bounds.top
@@ -1115,6 +1440,10 @@ impl MenuBar {
 
     /// Leaving the island sideways still stays inside the full-width bar window.
     pub fn pointer_moved(&mut self, gfx: &Gfx, x: f32, y: f32) -> Result<()> {
+        if let Some(span) = self.volume_drag {
+            self.queue_volume(span, x);
+            return self.paint_volume_preview(gfx);
+        }
         let span = if y < (self.bounds.bottom - self.bounds.top) as f32 {
             self.triggers_span
         } else {
@@ -1127,6 +1456,7 @@ impl MenuBar {
     }
 
     pub fn dismiss_island(&mut self, gfx: &Gfx) -> Result<()> {
+        self.release_volume(None)?;
         if self.panel.take().is_some() {
             self.refresh(gfx)?;
         }
@@ -1146,6 +1476,9 @@ impl MenuBar {
             self.exit_animation = None;
         }
         let on_screen = self.visible && (!hidden || self.hide_until.is_some());
+        if let Some(monitor) = &self.accessories {
+            monitor.set_visible(on_screen && !hidden);
+        }
         if !on_screen {
             // Keep the hidden tree transparent. Restoring opacity here races
             // HWND hiding and flashes its last opaque frame on the next show.
@@ -1178,7 +1511,7 @@ impl MenuBar {
                 self.visual_height,
                 SWP_NOACTIVATE | show,
             )?;
-            if on_screen && self.auto_hide {
+            if on_screen && (self.auto_hide || self.panel.is_some()) {
                 // TrackMouseEvent may report a leave immediately after showing
                 // a window. Check real geometry while revealed, including if
                 // no further WM_MOUSEMOVE reaches this window.
@@ -1253,8 +1586,59 @@ impl MenuBar {
 
     pub fn tick(&mut self, gfx: &Gfx) -> Result<()> {
         self.update_status();
+        let audio_changed = self
+            .audio
+            .as_ref()
+            .is_some_and(AudioWatch::take_default_changed);
+        let retry_due = Instant::now() >= self.accessory_retry_at
+            && self.accessories.as_ref().is_none_or(|monitor| {
+                monitor.snapshot().state == muelle_shell::accessories::State::Unavailable
+            });
+        if self.accessories_enabled && (audio_changed || retry_due) {
+            self.restart_accessories(gfx)?;
+        }
         self.schedule_next_minute();
         self.refresh(gfx)
+    }
+
+    /// Ordinary audio notifications do not requery network, registry, providers
+    /// or clock. A default-device change still restarts enabled accessories.
+    pub fn audio_changed(&mut self, gfx: &Gfx) -> Result<()> {
+        let volume = self.audio.as_mut().and_then(AudioWatch::volume);
+        if self
+            .audio
+            .as_ref()
+            .is_some_and(AudioWatch::take_default_changed)
+            && self.accessories_enabled
+        {
+            self.status.volume = volume;
+            self.restart_accessories(gfx)?;
+        }
+        self.apply_volume_reading(gfx, volume)
+    }
+
+    fn apply_volume_reading(&mut self, gfx: &Gfx, volume: Option<Volume>) -> Result<()> {
+        self.status.volume = volume;
+        if let Some(look) = &self.look
+            && same_volume_indicator(look.status.volume, volume)
+        {
+            if let Some(volume) = volume
+                && let Some(controls) = &mut self.volume_controls
+            {
+                controls.paint(gfx, self.volume_target.unwrap_or(volume.percent))?;
+            }
+            if let Some(look) = &mut self.look {
+                look.status.volume = volume;
+            }
+            return Ok(());
+        }
+        // Availability, mute and speaker-glyph changes affect layout, but do
+        // not justify a new provider/process or system-status scan either.
+        let Some(mut look) = self.look.clone() else {
+            return self.refresh(gfx);
+        };
+        look.status.volume = volume;
+        self.apply_look(gfx, look)
     }
 
     fn update_status(&mut self) {
@@ -1312,6 +1696,17 @@ impl MenuBar {
                     }
                     return Ok(());
                 }
+                IslandAction::Volume(_) => return Ok(()), // Handled on press/drag.
+                IslandAction::Mute => {
+                    if let Some(audio) = &mut self.audio {
+                        audio.toggle_mute()?;
+                    }
+                    return self.audio_changed(gfx);
+                }
+                IslandAction::ScrollUsage(direction) => {
+                    self.scroll_usage(f32::from(direction) * 72.0)?;
+                    return Ok(());
+                }
             }
             return self.refresh(gfx);
         }
@@ -1331,6 +1726,7 @@ impl MenuBar {
             )
         });
         match hit.map(|(_, _, action)| *action) {
+            Some(Action::AccessoryIndicator) => {}
             Some(Action::QuickSettings) => launcher::open_quick_settings(),
             Some(Action::Notifications) => launcher::open_notifications(),
             Some(Action::ToggleDnd) => {
@@ -1343,6 +1739,7 @@ impl MenuBar {
             Some(Action::Search) => launcher::open_search(),
             Some(Action::TaskView) => launcher::open_task_view(),
             Some(Action::Widgets) => launcher::open_widgets(),
+            Some(Action::Bluetooth) => launcher::open_bluetooth(),
             Some(Action::HiddenIcons) => launcher::toggle_hidden_icons(anchor),
             Some(Action::InputLanguage) => {} // Opened outside the app borrow.
             // Windows' own pages list which apps use each device.
@@ -1395,6 +1792,9 @@ impl MenuBar {
             usage.refresh(false);
         }
         let look = Look {
+            accessories: self.accessories.as_ref().map_or([None, None], |monitor| {
+                accessory_readings(&monitor.snapshot())
+            }),
             language: strings::language(),
             screen: monitor.screen,
             scale: monitor.scale,
@@ -1405,6 +1805,7 @@ impl MenuBar {
             input: system::input_language(),
             battery: system::battery(),
             status: self.status,
+            widgets: self.widgets,
             usage: self
                 .usage
                 .as_ref()
@@ -1429,7 +1830,21 @@ impl MenuBar {
         self.apply_look(gfx, look)
     }
 
-    fn apply_look(&mut self, gfx: &Gfx, look: Look) -> Result<()> {
+    fn apply_look(&mut self, gfx: &Gfx, mut look: Look) -> Result<()> {
+        look.active_providers = look.usage.visible_providers(look.active_providers);
+        look.usage_enabled &= look.active_providers.any();
+        self.panel = available_panel(look.panel, look.track.is_some(), look.usage_enabled);
+        look.panel = self.panel;
+        if look.panel != Some(Island::Usage) {
+            self.usage_scroll = 0.0;
+        }
+        let moved = self
+            .look
+            .as_ref()
+            .is_some_and(|old| old.screen != look.screen || old.scale != look.scale);
+        if look.panel != Some(Island::Music) || moved {
+            self.release_volume(None)?;
+        }
         if self.look.as_ref() == Some(&look) {
             return Ok(());
         }
@@ -1438,6 +1853,13 @@ impl MenuBar {
             .as_ref()
             .and_then(|old| usage_moment(&old.usage, &look.usage, &look.active_providers));
         self.build(gfx, &look)?;
+        // A crowded bar can have no room even for a compact trigger. Do not
+        // keep a ghost popup that reappears by itself when space returns.
+        if look.panel.is_some() && self.panel_span.width() <= 0.0 {
+            self.panel = None;
+            look.panel = None;
+            self.build(gfx, &look)?;
+        }
         self.look = Some(look);
         if let Some((provider, act)) = moment
             && let Some(&(_, x)) = self.usage_anchors.iter().find(|(p, _)| *p == provider)
@@ -1564,19 +1986,35 @@ impl MenuBar {
                 items.push((symbol(&[(glyph, 1.0)])?, action));
             }
         }
-        if status.buttons.search {
+        let show_search = look.widgets.search.unwrap_or(status.buttons.search);
+        let show_task_view = look.widgets.task_view.unwrap_or(status.buttons.task_view);
+        let show_widgets = look.widgets.widgets.unwrap_or(status.buttons.widgets);
+        let show_battery_percentage = look
+            .widgets
+            .battery_percent
+            .unwrap_or(status.battery_percentage);
+        let show_bluetooth = look.widgets.bluetooth;
+
+        if show_search {
             items.push((symbol(&[(glyph::SEARCH, 1.0)])?, Action::Search));
         }
-        let network = match status.network {
-            // The full fan stays faint behind the bars received, as on a Mac.
-            Network::Wifi { bars } => vec![
-                (glyph::WIFI_FULL, 0.3),
-                (glyph::WIFI[usize::from(bars.clamp(1, 4)) - 1], 1.0),
-            ],
-            Network::Ethernet => vec![(glyph::ETHERNET, 1.0)],
-            Network::Offline => vec![(glyph::OFFLINE, 1.0)],
-        };
-        items.push((symbol(&network)?, Action::QuickSettings));
+        if show_bluetooth {
+            items.push((symbol(&[(glyph::BLUETOOTH, 1.0)])?, Action::Bluetooth));
+        }
+        match status.network {
+            Network::Wifi { bars, has_internet } => {
+                items.push((
+                    gfx.wifi_brush(bars, has_internet, scale, ink)?,
+                    Action::QuickSettings,
+                ));
+            }
+            Network::Ethernet => {
+                items.push((symbol(&[(glyph::ETHERNET, 1.0)])?, Action::QuickSettings));
+            }
+            Network::Offline => {
+                items.push((symbol(&[(glyph::OFFLINE, 1.0)])?, Action::QuickSettings));
+            }
+        }
         if let Some(volume) = status.volume {
             let speaker = if volume.muted {
                 glyph::MUTE
@@ -1587,16 +2025,28 @@ impl MenuBar {
         }
         let mut battery_label = None;
         if let Some(battery) = look.battery {
-            if status.battery_percentage {
+            if show_battery_percentage {
                 battery_label = Some((
                     items.len(),
                     gfx.text_brush(&format!("{}%", battery.percent), scale, false, ink)?,
                 ));
             }
             items.push((
-                gfx.battery_brush(battery.percent, battery.charging, scale, ink)?,
+                gfx.battery_brush(battery.percent, battery.charging, battery.saver, scale, ink)?,
                 Action::QuickSettings,
             ));
+        }
+        let mut accessory_labels = Vec::new();
+        for device in look.accessories.into_iter().flatten().rev() {
+            let value = device
+                .percent
+                .map_or_else(|| "—".to_owned(), |percent| format!("{percent}%"));
+            accessory_labels.push((items.len(), gfx.text_brush(&value, scale, false, ink)?));
+            let icon = match device.kind {
+                AccessoryKind::Mouse => glyph::MOUSE,
+                AccessoryKind::Headset => glyph::HEADSET,
+            };
+            items.push((symbol(&[(icon, 1.0)])?, Action::AccessoryIndicator));
         }
         if let Some(language) = &look.input {
             items.push((
@@ -1607,16 +2057,18 @@ impl MenuBar {
         // The notification area (antivirus, OneDrive, apps in the background)
         // lives only in the hidden taskbar; this arrow opens its flyout.
         items.push((symbol(&[(glyph::HIDDEN_ICONS, 1.0)])?, Action::HiddenIcons));
-        if status.buttons.task_view {
+        if show_task_view {
             items.push((symbol(&[(glyph::TASK_VIEW, 1.0)])?, Action::TaskView));
         }
-        if status.buttons.widgets {
+        if show_widgets {
             items.push((symbol(&[(glyph::WIDGETS, 1.0)])?, Action::Widgets));
         }
         for (index, (item, action)) in items.iter().enumerate() {
             let zone_right = right;
-            if let Some((battery_index, label)) = &battery_label
-                && index == *battery_index
+            if let Some((_, label)) = battery_label
+                .iter()
+                .chain(accessory_labels.iter())
+                .find(|(item_index, _)| *item_index == index)
             {
                 right -= label.width;
                 place(&layers, label, right)?;
@@ -1625,15 +2077,28 @@ impl MenuBar {
             let left = right - item.width;
             place(&layers, item, left)?;
             // The battery icon and its percentage form one control.
-            self.zones.push((left - slop, zone_right + slop, *action));
+            // Accessory readings are passive status indicators, not controls.
+            if *action != Action::AccessoryIndicator {
+                self.zones.push((left - slop, zone_right + slop, *action));
+            }
             right = left - px(ITEM_GAP);
         }
 
         self.island_hits.clear();
+        self.volume_controls = None;
+        self.usage_viewport = None;
         self.triggers_span = Span::default();
         self.panel_span = Span::default();
         self.draw_island(gfx, look, &layers, width, height, left_end, right)?;
-
+        if let Some(drag) = self.volume_drag {
+            let new_span = self.island_hits.iter().find_map(|hit| match hit.action {
+                IslandAction::Volume(span) => Some(span),
+                _ => None,
+            });
+            if new_span != Some(drag) {
+                self.release_volume(None)?;
+            }
+        }
         self.surface.SetSize(Vector2 {
             X: width,
             Y: visual_height,
@@ -1689,16 +2154,60 @@ impl MenuBar {
         right_start: f32,
     ) -> Result<()> {
         let px = |logical: f32| (logical * look.scale).round();
-        let triggers = trigger_layout(
-            Span {
-                left: left_end + px(8.0),
-                right: right_start - px(8.0),
-            },
-            width / 2.0,
-            look.scale,
-            look.track.is_some(),
-            look.active_providers.count(),
-        );
+        let style = look.widgets.island_style;
+        let cover = if let Some(track) = &look.track {
+            let cached =
+                self.cover
+                    .as_ref()
+                    .is_some_and(|(source, _)| match (source, &track.artwork) {
+                        (Some(old), Some(new)) => Arc::ptr_eq(old, new),
+                        (None, None) => true,
+                        _ => false,
+                    });
+            if !cached {
+                self.cover = media::artwork(track)
+                    .map(|image| {
+                        let surface = gfx.image_surface(image)?;
+                        Ok::<_, anyhow::Error>((
+                            track.artwork.clone(),
+                            gfx.compositor.CreateSurfaceBrushWithSurface(&surface)?,
+                        ))
+                    })
+                    .transpose()?;
+            }
+            self.cover.as_ref().map(|(_, brush)| brush.clone())
+        } else {
+            self.cover = None;
+            None
+        };
+        let prepared_music = if style == IslandStyle::Bubble
+            && let Some(track) = &look.track
+        {
+            Some(prepare_bubble_music(gfx, look, track)?)
+        } else {
+            None
+        };
+        let triggers = match style {
+            IslandStyle::Notch => trigger_layout(
+                Span {
+                    left: left_end + px(8.0),
+                    right: right_start - px(8.0),
+                },
+                width / 2.0,
+                look.scale,
+                look.track.is_some(),
+                look.active_providers.count(),
+            ),
+            IslandStyle::Bubble => bubble_trigger_layout(
+                Span {
+                    left: left_end + px(8.0),
+                    right: right_start,
+                },
+                look.scale,
+                prepared_music.as_ref().map(|music| music.width),
+                look.active_providers.count(),
+            ),
+        };
         let [(_, music), (_, usage)] = triggers;
         let (Some(first), Some(last)) = (music.or(usage), usage.or(music)) else {
             return Ok(());
@@ -1708,7 +2217,18 @@ impl MenuBar {
             right: last.right,
         };
         let geometry = IslandGeometry::new(self.triggers_span, 0.0, look);
-        let compact = island_surface(gfx, look, layers, geometry, bar_height)?;
+        let (compact, compact_height, divider_inset) = match style {
+            IslandStyle::Notch => (
+                island_surface(gfx, look, layers, geometry, bar_height)?,
+                bar_height,
+                px(7.0),
+            ),
+            IslandStyle::Bubble => {
+                let (surface, pill_height) =
+                    bubble_surface(gfx, look, layers, geometry, bar_height)?;
+                (surface, pill_height, px(5.0))
+            }
+        };
         let divider = music
             .zip(usage)
             .map(|(music, usage)| ((music.right + usage.left) / 2.0).round());
@@ -1719,9 +2239,9 @@ impl MenuBar {
                 &compact,
                 &c.CreateColorBrushWithColor(geometry.border())?.cast()?,
                 x - self.triggers_span.left,
-                px(7.0),
+                divider_inset,
                 px(1.0).max(1.0),
-                bar_height - 2.0 * px(7.0),
+                (compact_height - 2.0 * divider_inset).max(1.0),
             )?;
         }
         let providers = island_providers(look);
@@ -1731,26 +2251,48 @@ impl MenuBar {
             };
             let geometry = IslandGeometry::new(span, 0.0, look);
             let segment = c.CreateContainerVisual()?;
-            segment.SetSize(Vector2::new(geometry.width, bar_height))?;
+            segment.SetSize(Vector2::new(geometry.width, compact_height))?;
             segment.SetOffset(Vector3::new(span.left - self.triggers_span.left, 0.0, 0.0))?;
             let content = segment.Children()?;
             compact.InsertAtTop(&segment)?;
             match kind {
                 Island::Music => {
                     if let Some(track) = &look.track {
-                        draw_compact_player(
-                            gfx,
-                            &content,
-                            geometry,
-                            geometry.width,
-                            bar_height,
-                            track,
-                        )?;
+                        match style {
+                            IslandStyle::Notch => draw_compact_player(
+                                gfx,
+                                &content,
+                                geometry,
+                                geometry.width,
+                                compact_height,
+                                track,
+                                cover.as_ref(),
+                            )?,
+                            IslandStyle::Bubble => {
+                                if let Some(prepared) = &prepared_music {
+                                    draw_bubble_player(
+                                        gfx,
+                                        &content,
+                                        geometry,
+                                        compact_height,
+                                        track,
+                                        prepared,
+                                        cover.as_ref(),
+                                    )?;
+                                }
+                            }
+                        }
                     }
                 }
                 Island::Usage => {
-                    let anchors =
-                        draw_compact_usage(gfx, &content, geometry, bar_height, &providers)?;
+                    let anchors = match style {
+                        IslandStyle::Notch => {
+                            draw_compact_usage(gfx, &content, geometry, compact_height, &providers)?
+                        }
+                        IslandStyle::Bubble => {
+                            draw_bubble_usage(gfx, &content, geometry, compact_height, &providers)?
+                        }
+                    };
                     self.usage_anchors = anchors
                         .into_iter()
                         .map(|(provider, x)| (provider, look.screen.left + (span.left + x) as i32))
@@ -1768,14 +2310,14 @@ impl MenuBar {
             if look.panel != Some(kind) {
                 continue;
             }
-            self.panel_span = panel_span(
-                span,
-                width,
-                px(match kind {
-                    Island::Music => 360.0,
-                    Island::Usage => ISLAND_EXPANDED_WIDTH,
-                }),
-            );
+            let desired = px(match kind {
+                Island::Music => 360.0,
+                Island::Usage => ISLAND_EXPANDED_WIDTH,
+            });
+            self.panel_span = match style {
+                IslandStyle::Notch => panel_span(span, width, desired),
+                IslandStyle::Bubble => bubble_panel_span(self.triggers_span, width, desired),
+            };
             let geometry = IslandGeometry::new(self.panel_span, bar_height + px(PANEL_GAP), look);
             let height = px(look.panel_height());
             let theme = Theme::for_popup(look.light, look.glass);
@@ -1783,7 +2325,7 @@ impl MenuBar {
             match kind {
                 Island::Music => {
                     if let Some(track) = &look.track {
-                        self.draw_player(gfx, &content, geometry, track)?;
+                        self.draw_player(gfx, &content, geometry, track, cover.as_ref())?;
                     }
                 }
                 Island::Usage => {
@@ -1851,19 +2393,38 @@ impl MenuBar {
             button_label.width,
             button_label.height,
         )?;
-        self.island_hits.push(geometry.hit(
-            button_left,
-            button_top,
-            button_width,
-            button_height,
-            IslandAction::Refresh,
-        ));
-        for (index, (provider, usage, accent)) in providers.iter().enumerate() {
-            let y = px(48.0 + index as f32 * ISLAND_ROW_HEIGHT);
+        if !look.usage_refreshing {
+            self.island_hits.push(geometry.hit(
+                button_left,
+                button_top,
+                button_width,
+                button_height,
+                IslandAction::Refresh,
+            ));
+        }
+        let body_top = px(42.0);
+        let body_height = (island_height - body_top - px(26.0)).max(0.0);
+        let content_height = px((look.panel_content_height() - 68.0).max(0.0));
+        let maximum = ((content_height - body_height) / scale).max(0.0);
+        self.usage_scroll = self.usage_scroll.clamp(0.0, maximum);
+        let viewport = c.CreateContainerVisual()?;
+        viewport.SetOffset(Vector3::new(0.0, body_top, 0.0))?;
+        viewport.SetSize(Vector2::new(island_width, body_height))?;
+        viewport.SetClip(&c.CreateInsetClip()?)?;
+        let body = c.CreateContainerVisual()?;
+        body.SetSize(Vector2::new(island_width, content_height))?;
+        body.SetOffset(Vector3::new(0.0, -px(self.usage_scroll), 0.0))?;
+        viewport.Children()?.InsertAtTop(&body)?;
+        content.InsertAtTop(&viewport)?;
+        let rows = body.Children()?;
+        let mut row_top = 6.0;
+        for (provider, usage, accent) in providers {
+            let y = px(row_top);
+            row_top += usage_row_height(usage);
             let inset = px(23.0);
             add_visual(
                 c,
-                content,
+                &rows,
                 &c.CreateColorBrushWithColor(geometry.border())?.cast()?,
                 inset,
                 y - px(6.0),
@@ -1872,7 +2433,7 @@ impl MenuBar {
             )?;
             draw_usage_row(
                 gfx,
-                content,
+                &rows,
                 *provider,
                 usage,
                 *accent,
@@ -1881,6 +2442,47 @@ impl MenuBar {
                 island_width,
                 y,
             )?;
+        }
+        let bounds = (
+            geometry.left,
+            geometry.top + body_top,
+            geometry.left + island_width,
+            geometry.top + body_top + body_height,
+        );
+        if maximum > 0.0 {
+            let [up, down] = [
+                ('\u{E70E}', body_top + px(2.0), -1),
+                ('\u{E70D}', body_top + body_height - px(22.0), 1),
+            ]
+            .map(|(symbol, top, direction)| -> Result<SpriteVisual> {
+                let label = gfx.glyph_brush(&[(symbol, 1.0)], scale * 0.7, ink)?;
+                let visual = add_visual(
+                    c,
+                    content,
+                    &label.brush.cast()?,
+                    island_width - px(22.0) + (px(18.0) - label.width) / 2.0,
+                    top + (px(20.0) - label.height) / 2.0,
+                    label.width,
+                    label.height,
+                )?;
+                self.island_hits.push(geometry.hit(
+                    island_width - px(22.0),
+                    top,
+                    px(18.0),
+                    px(20.0),
+                    IslandAction::ScrollUsage(direction),
+                ));
+                Ok(visual)
+            });
+            self.usage_viewport = Some(UsageViewport {
+                content: body,
+                maximum,
+                scale,
+                bounds,
+                up: up?,
+                down: down?,
+            });
+            self.position_usage_body()?;
         }
         let newest_age = providers
             .iter()
@@ -1909,6 +2511,7 @@ impl MenuBar {
         layers: &VisualCollection,
         geometry: IslandGeometry,
         track: &Track,
+        cover: Option<&CompositionSurfaceBrush>,
     ) -> Result<()> {
         let px = |v| geometry.px(v);
         let c = &gfx.compositor;
@@ -1944,27 +2547,9 @@ impl MenuBar {
             IslandAction::Toggle(Island::Music),
         ));
         let tile = px(34.0);
-        add_rounded_box(
-            c,
-            layers,
-            px(25.0),
-            px(46.0),
-            tile,
-            tile,
-            px(10.0),
-            geometry.control_fill(),
-            None,
-        )?;
-        let note = gfx.glyph_brush(&[('\u{E8D6}', 1.0)], geometry.scale, ink)?;
-        add_visual(
-            c,
-            layers,
-            &note.brush.cast()?,
-            px(25.0) + (tile - note.width) / 2.0,
-            px(46.0) + (tile - note.height) / 2.0,
-            note.width,
-            note.height,
-        )?;
+        if let Some(cover) = cover {
+            add_visual(c, layers, &cover.cast()?, px(25.0), px(46.0), tile, tile)?;
+        }
         let available = geometry.width - px(91.0);
         let title = gfx.text_brush_fitted(
             track_title(track),
@@ -2050,8 +2635,286 @@ impl MenuBar {
                     .push(geometry.hit(x, y, size, size, IslandAction::Media(control)));
             }
         }
+        add_panel_text(
+            gfx,
+            layers,
+            strings::text().media_volume,
+            px(25.0),
+            px(135.0),
+            geometry.scale,
+            10.5,
+            false,
+            ink,
+            0.65,
+        )?;
+        if let Some(volume) = self.status.volume {
+            let symbol = if volume.muted {
+                glyph::MUTE
+            } else {
+                glyph::VOLUME[volume.level.min(3) as usize]
+            };
+            let label = gfx.glyph_brush(&[(symbol, 1.0)], geometry.scale, ink)?;
+            add_visual(
+                c,
+                layers,
+                &label.brush.cast()?,
+                px(25.0),
+                px(160.0) - label.height / 2.0,
+                label.width,
+                label.height,
+            )?;
+            self.island_hits.push(geometry.hit(
+                px(18.0),
+                px(148.0),
+                px(32.0),
+                px(27.0),
+                IslandAction::Mute,
+            ));
+            let left = px(59.0);
+            let width = (geometry.width - left - px(66.0)).max(px(1.0));
+            let percent = self.volume_target.unwrap_or(volume.percent);
+            add_rounded_box(
+                c,
+                layers,
+                left,
+                px(158.0),
+                width,
+                px(4.0),
+                px(2.0),
+                geometry.control_fill(),
+                None,
+            )?;
+            let (_, fill) = retained_rounded_box(
+                c,
+                layers,
+                left,
+                px(158.0),
+                width,
+                px(4.0),
+                px(2.0),
+                if geometry.light {
+                    rgba(40, 48, 58, 220)
+                } else {
+                    rgba(240, 244, 250, 235)
+                },
+                None,
+            )?;
+            let dot = px(10.0);
+            let (knob, _) = retained_rounded_box(
+                c,
+                layers,
+                left - dot / 2.0,
+                px(160.0) - dot / 2.0,
+                dot,
+                dot,
+                dot / 2.0,
+                rgba(245, 247, 250, 255),
+                Some(geometry.border()),
+            )?;
+            let label =
+                gfx.text_brush_sized(&format!("{percent}%"), geometry.scale, 10.5, false, ink)?;
+            let value = add_visual(
+                c,
+                layers,
+                &label.brush.cast()?,
+                geometry.width - px(51.0),
+                px(153.0),
+                label.width,
+                label.height,
+            )?;
+            value.SetOpacity(0.8)?;
+            let mut controls = VolumeControls {
+                fill,
+                knob,
+                value,
+                geometry,
+                left,
+                width,
+                position_percent: None,
+                label_percent: percent,
+            };
+            controls.move_to(percent)?;
+            self.volume_controls = Some(controls);
+            self.island_hits.push(geometry.hit(
+                left - px(6.0),
+                px(147.0),
+                width + px(12.0),
+                px(29.0),
+                IslandAction::Volume(Span {
+                    left: geometry.left + left,
+                    right: geometry.left + left + width,
+                }),
+            ));
+        } else {
+            add_panel_text(
+                gfx,
+                layers,
+                strings::text().media_no_output,
+                px(25.0),
+                px(155.0),
+                geometry.scale,
+                11.0,
+                false,
+                ink,
+                0.5,
+            )?;
+        }
         Ok(())
     }
+
+    pub fn press_volume(&mut self, gfx: &Gfx, x: f32, y: f32) -> Result<()> {
+        self.suppress_volume_release = false;
+        let Some(hit) = self
+            .island_hits
+            .iter()
+            .find(|hit| hit.at(x, y) && matches!(hit.action, IslandAction::Volume(_)))
+        else {
+            return Ok(());
+        };
+        let IslandAction::Volume(span) = hit.action else {
+            return Ok(());
+        };
+        self.volume_drag = Some(span);
+        // SAFETY: Capture only for a live slider drag, never to activate the bar.
+        unsafe {
+            SetCapture(self.hwnd);
+        }
+        self.queue_volume(span, x);
+        self.paint_volume_preview(gfx)
+    }
+
+    pub fn scroll_usage_at(&mut self, point: POINT, delta: i16) -> Result<bool> {
+        if !self.visible || (self.auto_hide && !self.revealed) || delta == 0 {
+            return Ok(false);
+        }
+        let Some(viewport) = &self.usage_viewport else {
+            return Ok(false);
+        };
+        let (x, y) = (
+            (point.x - self.bounds.left) as f32,
+            (point.y - self.bounds.top) as f32,
+        );
+        let (left, top, right, bottom) = viewport.bounds;
+        if x < left || x >= right || y < top || y >= bottom {
+            return Ok(false);
+        }
+        self.scroll_usage(-f32::from(delta) / 120.0 * 48.0)
+    }
+
+    fn scroll_usage(&mut self, delta: f32) -> Result<bool> {
+        let Some(viewport) = &self.usage_viewport else {
+            return Ok(false);
+        };
+        let next = (self.usage_scroll + delta).clamp(0.0, viewport.maximum);
+        if next != self.usage_scroll {
+            self.usage_scroll = next;
+            self.position_usage_body()?;
+        }
+        Ok(true)
+    }
+
+    fn position_usage_body(&mut self) -> Result<()> {
+        let Some(viewport) = &self.usage_viewport else {
+            return Ok(());
+        };
+        let offset = (self.usage_scroll * viewport.scale).round();
+        viewport
+            .content
+            .SetOffset(Vector3::new(0.0, -offset, 0.0))?;
+        viewport
+            .up
+            .SetOpacity(if self.usage_scroll > 0.0 { 0.8 } else { 0.22 })?;
+        viewport
+            .down
+            .SetOpacity(if self.usage_scroll < viewport.maximum {
+                0.8
+            } else {
+                0.22
+            })?;
+        Ok(())
+    }
+
+    fn paint_volume_preview(&mut self, gfx: &Gfx) -> Result<()> {
+        if let Some(percent) = self.volume_target
+            && let Some(controls) = &mut self.volume_controls
+        {
+            controls.paint(gfx, percent)?;
+        }
+        Ok(())
+    }
+
+    fn queue_volume(&mut self, span: Span, x: f32) {
+        let percent = volume_percent(span, x);
+        self.volume_target = Some(percent);
+        if let Some(controls) = &mut self.volume_controls {
+            // Optimistic GPU-only feedback is independent of endpoint latency.
+            // Audio writes still proceed if device loss interrupts this paint;
+            // the existing graphics heartbeat owns recovery.
+            let _ = controls.move_to(percent);
+        }
+        if self.pending_volume == Some(percent)
+            || (self.pending_volume.is_none()
+                && self
+                    .status
+                    .volume
+                    .is_some_and(|v| v.percent == percent && !v.muted))
+        {
+            return;
+        }
+        let arm = self.pending_volume.is_none();
+        self.pending_volume = Some(percent);
+        if arm {
+            // At most 30 endpoint writes/second during dragging; no idle timer.
+            unsafe {
+                SetTimer(Some(self.hwnd), VOLUME_TIMER, 33, None);
+            }
+        }
+    }
+
+    pub fn flush_volume(&mut self) -> Result<()> {
+        // SAFETY: Our own short-lived drag timer.
+        unsafe {
+            let _ = KillTimer(Some(self.hwnd), VOLUME_TIMER);
+        }
+        if let Some(percent) = self.pending_volume.take()
+            && let Some(audio) = &mut self.audio
+        {
+            audio.set_percent(percent)?;
+        }
+        Ok(())
+    }
+
+    pub fn release_volume(&mut self, x: Option<f32>) -> Result<bool> {
+        let Some(span) = self.volume_drag.take() else {
+            return Ok(x.is_some() && std::mem::take(&mut self.suppress_volume_release));
+        };
+        self.suppress_volume_release = true;
+        if let Some(x) = x {
+            self.queue_volume(span, x);
+        }
+        // Clear state first: ReleaseCapture posts a capture-lost notification.
+        unsafe {
+            if GetCapture() == self.hwnd {
+                let _ = ReleaseCapture();
+            }
+        }
+        if let Err(error) = self.flush_volume() {
+            muelle_shell::log::line(&format!("ajustar volumen: {error:#}"));
+        }
+        self.volume_target = None;
+        Ok(true)
+    }
+}
+
+fn volume_percent(span: Span, x: f32) -> u8 {
+    if span.width() <= 0.0 || !x.is_finite() {
+        return 0;
+    }
+    (((x - span.left) / span.width()).clamp(0.0, 1.0) * 100.0).round() as u8
+}
+
+fn same_volume_indicator(old: Option<Volume>, new: Option<Volume>) -> bool {
+    old.map(|v| (v.level, v.muted)) == new.map(|v| (v.level, v.muted))
 }
 
 #[derive(Clone, Copy)]
@@ -2167,9 +3030,68 @@ fn trigger_layout(
     result
 }
 
+fn bubble_trigger_layout(
+    bounds: Span,
+    scale: f32,
+    music_width: Option<f32>,
+    providers: usize,
+) -> [(Island, Option<Span>); 2] {
+    let px = |v: f32| (v * scale).round();
+    let mut result = [(Island::Music, None), (Island::Usage, None)];
+    let music = music_width.is_some();
+    let gap = if music && providers > 0 { px(8.0) } else { 0.0 };
+    let music_width = music_width
+        .map(|width| width.clamp(px(36.0), px(BUBBLE_MUSIC_WIDTH)))
+        .unwrap_or(0.0);
+    let usage_width = if providers > 0 {
+        px(BUBBLE_USAGE_PADDING + BUBBLE_PROVIDER_WIDTH * providers as f32)
+    } else {
+        0.0
+    };
+    let total = music_width + usage_width;
+    let available = (bounds.width() - gap).min(total);
+    if total == 0.0 || available < px(if gap > 0.0 { 72.0 } else { 36.0 }) {
+        return result;
+    }
+    let music_width = if gap > 0.0 {
+        (available * music_width / total)
+            .round()
+            .clamp(px(36.0), available - px(36.0))
+    } else if music {
+        available
+    } else {
+        0.0
+    };
+    let left = (bounds.right - available - gap).max(bounds.left).round();
+    if music {
+        result[0].1 = Some(Span {
+            left,
+            right: left + music_width,
+        });
+    }
+    if providers > 0 {
+        result[1].1 = Some(Span {
+            left: left + music_width + gap,
+            right: left + available + gap,
+        });
+    }
+    result
+}
+
 fn panel_span(trigger: Span, screen_width: f32, desired: f32) -> Span {
     let width = desired.max(trigger.width()).min(screen_width);
     let left = ((trigger.left + trigger.right - width) / 2.0)
+        .clamp(0.0, screen_width - width)
+        .round();
+    Span {
+        left,
+        right: left + width,
+    }
+}
+
+fn bubble_panel_span(anchor: Span, screen_width: f32, desired: f32) -> Span {
+    let width = desired.max(anchor.width()).min(screen_width);
+    let left = (anchor.right - width)
         .clamp(0.0, screen_width - width)
         .round();
     Span {
@@ -2317,6 +3239,66 @@ fn island_surface(
     Ok(content)
 }
 
+fn bubble_surface(
+    gfx: &Gfx,
+    look: &Look,
+    layers: &VisualCollection,
+    geometry: IslandGeometry,
+    bar_height: f32,
+) -> Result<(VisualCollection, f32)> {
+    let c = &gfx.compositor;
+    let inset_y = geometry.px(BUBBLE_VERTICAL_INSET);
+    let pill_height = (bar_height - 2.0 * inset_y).max(1.0);
+    let radius = pill_height / 2.0;
+    let size = Vector2::new(geometry.width, pill_height);
+    let bubble = c.CreateContainerVisual()?;
+    bubble.SetSize(size)?;
+    bubble.SetOffset(Vector3::new(geometry.left.round(), inset_y, 0.0))?;
+    let content = bubble.Children()?;
+
+    let tint = match (look.light, look.glass) {
+        (true, true) => rgba(247, 249, 252, 243),
+        (false, true) => rgba(7, 9, 13, 242),
+        (true, false) => rgba(247, 249, 252, 255),
+        (false, false) => rgba(10, 12, 17, 255),
+    };
+    if look.glass {
+        let glass = c.CreateContainerVisual()?;
+        glass.SetSize(size)?;
+        let outline = c.CreateRoundedRectangleGeometry()?;
+        outline.SetSize(size)?;
+        outline.SetCornerRadius(Vector2 {
+            X: radius,
+            Y: radius,
+        })?;
+        glass.SetClip(&c.CreateGeometricClipWithGeometry(&outline)?)?;
+        add_visual(
+            c,
+            &glass.Children()?,
+            &c.CreateHostBackdropBrush()?.cast()?,
+            0.0,
+            0.0,
+            geometry.width,
+            pill_height,
+        )?;
+        content.InsertAtTop(&glass)?;
+    }
+    add_rounded_box(
+        c,
+        &content,
+        0.0,
+        0.0,
+        geometry.width,
+        pill_height,
+        radius,
+        tint,
+        None,
+    )?;
+
+    layers.InsertAtTop(&bubble)?;
+    Ok((content, pill_height))
+}
+
 /// Draws the providers in the closed island and returns where each one's
 /// figure sits (its centre, from the segment's left edge), for the crab.
 /// The moment an AI plan's figure crosses a line worth showing, comparing
@@ -2430,20 +3412,30 @@ fn draw_compact_usage(
                 icon_size as f32,
             )?;
         }
-        let percent = usage.main_window().map_or("—".to_owned(), |window| {
-            format!("{}%", window.used_percent)
-        });
+        let percent = usage.compact_text();
         if half > px(106.0) {
-            add_text(
-                gfx,
-                content,
-                &percent,
-                start + px(25.0),
-                px(6.0),
-                scale,
-                true,
-                ink,
-            )?;
+            let font = if usage.main_window().is_some() {
+                14.0
+            } else {
+                12.0
+            };
+            let label = gfx.text_brush_sized(&percent, scale, font, true, ink)?;
+            let reserve = if usage.main_window().is_some() {
+                74.0
+            } else {
+                50.0
+            };
+            if label.width <= half - px(reserve) {
+                add_visual(
+                    c,
+                    content,
+                    &label.brush.cast()?,
+                    start + px(25.0),
+                    (bar_height - label.height) / 2.0,
+                    label.width,
+                    label.height,
+                )?;
+            }
         }
         if half >= px(84.0) {
             let ring = gfx.usage_ring(
@@ -2465,6 +3457,87 @@ fn draw_compact_usage(
     Ok(anchors)
 }
 
+fn draw_bubble_usage(
+    gfx: &Gfx,
+    content: &VisualCollection,
+    geometry: IslandGeometry,
+    pill_height: f32,
+    providers: &[IslandProvider<'_>],
+) -> Result<Vec<(Provider, f32)>> {
+    let c = &gfx.compositor;
+    let px = |v| geometry.px(v);
+    let ink = geometry.ink();
+    let scale = geometry.scale;
+    let inset = px(8.0);
+    let slot = (geometry.width - 2.0 * inset) / providers.len().max(1) as f32;
+    if slot < px(20.0) {
+        let icon = gfx.glyph_brush(&[('\u{E9D9}', 1.0)], scale, ink)?;
+        add_visual(
+            c,
+            content,
+            &icon.brush.cast()?,
+            (geometry.width - icon.width) / 2.0,
+            (pill_height - icon.height) / 2.0,
+            icon.width,
+            icon.height,
+        )?;
+        let centre = geometry.width / 2.0;
+        return Ok(providers
+            .iter()
+            .map(|(provider, ..)| (*provider, centre))
+            .collect());
+    }
+    let icon_size = px(15.0) as u32;
+    let gap = px(4.0);
+    let mut anchors = Vec::with_capacity(providers.len());
+    for (index, (provider, usage, _accent)) in providers.iter().enumerate() {
+        let slot_left = inset + index as f32 * slot;
+        anchors.push((*provider, slot_left + slot / 2.0));
+        let percent = usage.compact_text();
+        let label = if slot >= px(44.0) {
+            let label = gfx.text_brush_sized(&percent, scale, 11.5, true, ink)?;
+            (label.width + icon_size as f32 + gap <= slot).then_some(label)
+        } else {
+            None
+        };
+        let group_width = icon_size as f32 + label.as_ref().map_or(0.0, |text| gap + text.width);
+        let start = slot_left + ((slot - group_width) / 2.0).max(0.0);
+        if let Some(image) = usage::logo(*provider) {
+            let image_brush = gfx.icon_brush(image, icon_size)?;
+            let brush: CompositionBrush =
+                if !matches!(provider, Provider::Claude | Provider::Gemini) && geometry.light {
+                    let tinted = c.CreateMaskBrush()?;
+                    tinted.SetMask(&image_brush)?;
+                    tinted.SetSource(&c.CreateColorBrushWithColor(rgba(27, 34, 45, 255))?)?;
+                    tinted.cast()?
+                } else {
+                    image_brush.cast()?
+                };
+            add_visual(
+                c,
+                content,
+                &brush,
+                start,
+                (pill_height - icon_size as f32) / 2.0,
+                icon_size as f32,
+                icon_size as f32,
+            )?;
+        }
+        if let Some(label) = label {
+            add_visual(
+                c,
+                content,
+                &label.brush.cast()?,
+                start + icon_size as f32 + gap,
+                (pill_height - label.height) / 2.0,
+                label.width,
+                label.height,
+            )?;
+        }
+    }
+    Ok(anchors)
+}
+
 fn track_title(track: &Track) -> &str {
     if track.title.trim().is_empty() {
         strings::text().media_title
@@ -2480,31 +3553,31 @@ fn draw_compact_player(
     width: f32,
     height: f32,
     track: &Track,
+    cover: Option<&CompositionSurfaceBrush>,
 ) -> Result<()> {
     let c = &gfx.compositor;
     let px = |v| geometry.px(v);
     let ink = geometry.ink();
-    let note = gfx.glyph_brush(
-        &[('\u{E8D6}', if track.playing { 1.0 } else { 0.66 })],
-        geometry.scale,
-        ink,
-    )?;
-    let x = px(23.0) + note.width;
+    let side = px(18.0).min(height).min(width);
+    let x = px(23.0) + side;
     let show_title = width > x + px(18.0);
     let note_x = if show_title {
         px(18.0)
     } else {
-        (width - note.width) / 2.0
+        (width - side) / 2.0
     };
-    add_visual(
-        c,
-        layers,
-        &note.brush.cast()?,
-        note_x,
-        (height - note.height) / 2.0,
-        note.width,
-        note.height,
-    )?;
+    if let Some(cover) = cover {
+        add_visual(
+            c,
+            layers,
+            &cover.cast()?,
+            note_x,
+            (height - side) / 2.0,
+            side,
+            side,
+        )?
+        .SetOpacity(if track.playing { 1.0 } else { 0.7 })?;
+    }
     if show_title {
         let label = gfx.text_brush_fitted(
             track_title(track),
@@ -2527,8 +3600,100 @@ fn draw_compact_player(
     Ok(())
 }
 
+struct BubbleMusic {
+    artwork_size: f32,
+    label: LabelBrush,
+    width: f32,
+}
+
+fn prepare_bubble_music(gfx: &Gfx, look: &Look, track: &Track) -> Result<BubbleMusic> {
+    let px = |v: f32| (v * look.scale).round();
+    let ink = if look.light { Ink::Dark } else { Ink::Light };
+    let artwork_size = px(18.0);
+    let left_pad = px(10.0);
+    let gap = px(6.0);
+    let right_pad = px(8.0);
+    let max_text =
+        (px(BUBBLE_MUSIC_WIDTH) - left_pad - artwork_size - gap - right_pad).max(px(18.0));
+    let label = gfx.text_brush_fitted(track_title(track), look.scale, 11.5, true, ink, max_text)?;
+    let width = (left_pad + artwork_size + gap + label.width + right_pad)
+        .min(px(BUBBLE_MUSIC_WIDTH))
+        .ceil();
+    Ok(BubbleMusic {
+        artwork_size,
+        label,
+        width,
+    })
+}
+
+fn draw_bubble_player(
+    gfx: &Gfx,
+    layers: &VisualCollection,
+    geometry: IslandGeometry,
+    height: f32,
+    track: &Track,
+    prepared: &BubbleMusic,
+    cover: Option<&CompositionSurfaceBrush>,
+) -> Result<()> {
+    let width = geometry.width;
+    let c = &gfx.compositor;
+    let px = |v| geometry.px(v);
+    let ink = geometry.ink();
+    let side = prepared.artwork_size.min(height).min(width);
+    let left_pad = px(10.0);
+    let gap = px(6.0);
+    let right_pad = px(8.0);
+    let text_x = left_pad + side + gap;
+    let max_label_width = width - text_x - right_pad;
+    let show_title = max_label_width >= px(18.0);
+    let note_x = if show_title {
+        left_pad
+    } else {
+        (width - side) / 2.0
+    };
+    if let Some(cover) = cover {
+        add_visual(
+            c,
+            layers,
+            &cover.cast()?,
+            note_x,
+            (height - side) / 2.0,
+            side,
+            side,
+        )?
+        .SetOpacity(if track.playing { 1.0 } else { 0.7 })?;
+    }
+    if show_title {
+        let fitted;
+        let label = if prepared.label.width <= max_label_width {
+            &prepared.label
+        } else {
+            fitted = gfx.text_brush_fitted(
+                track_title(track),
+                geometry.scale,
+                11.5,
+                true,
+                ink,
+                max_label_width,
+            )?;
+            &fitted
+        };
+        add_visual(
+            c,
+            layers,
+            &label.brush.cast()?,
+            text_x,
+            (height - label.height) / 2.0,
+            label.width,
+            label.height,
+        )?;
+    }
+    Ok(())
+}
+
 impl Drop for MenuBar {
     fn drop(&mut self) {
+        self.accessories = None;
         self.exit_animation = None;
         self.media = None;
         ISLAND_HOOK_WINDOW.store(0, Ordering::Relaxed);
@@ -2553,6 +3718,633 @@ mod island_tests {
     use super::*;
 
     #[test]
+    #[ignore = "Native popup layout/input regression; hidden window, no audio writes"]
+    fn native_popup_overflow_and_layout_changes_keep_input_in_sync() -> Result<()> {
+        use anyhow::Context;
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        // SAFETY: All composition objects stay on this test's STA thread.
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let mut bar = MenuBar::create(&gfx, false, false, true, MenuBarWidgets::default())?;
+        bar.set_visible(false)?;
+        bar.audio = None;
+        let mut look = bar.look.clone().context("initial look")?;
+        look.screen = RECT {
+            left: -1920,
+            top: -768,
+            right: 0,
+            bottom: 0,
+        };
+        look.track = None;
+        look.panel = Some(Island::Usage);
+        look.usage_enabled = true;
+        look.active_providers.0.fill(true);
+        for provider in Provider::ALL {
+            look.usage.providers[provider as usize] = ProviderUsage {
+                state: State::Ready,
+                windows: [300, 10_080]
+                    .into_iter()
+                    .map(|minutes| usage::Window {
+                        label: None,
+                        minutes,
+                        used_percent: 30,
+                        resets_at: None,
+                    })
+                    .collect(),
+                fetched_at: Some(std::time::SystemTime::now()),
+            };
+        }
+        let opencode = &mut look.usage.providers[Provider::OpenCode as usize];
+        opencode.windows.push(usage::Window {
+            label: None,
+            minutes: 43_200,
+            used_percent: 10,
+            resets_at: None,
+        });
+        for style in [IslandStyle::Notch, IslandStyle::Bubble] {
+            look.widgets.island_style = style;
+            for scale in [1.0, 1.5, 2.0] {
+                look.scale = scale;
+                for light in [false, true] {
+                    look.light = light;
+                    bar.usage_scroll = 0.0;
+                    bar.build(&gfx, &look)?;
+                    assert!(bar.visual_height <= 769, "popup must fit a 768 px display");
+                    if scale == 1.0 {
+                        assert!(bar.usage_viewport.is_none());
+                        continue;
+                    }
+                    let viewport = bar
+                        .usage_viewport
+                        .as_ref()
+                        .context("overflow needs a viewport")?;
+                    let bounds = viewport.bounds;
+                    let maximum = viewport.maximum;
+                    assert!(maximum > 0.0);
+                    let body = viewport.content.clone();
+                    let down = viewport.down.clone();
+                    let root = bar.surface.Children()?.First()?.Current()?;
+                    for _ in 0..20 {
+                        assert!(bar.scroll_usage(48.0)?);
+                    }
+                    assert_eq!(bar.surface.Children()?.First()?.Current()?, root);
+                    assert_eq!(bar.usage_scroll, maximum);
+                    assert_eq!(body.Offset()?.Y, -(maximum * scale).round());
+                    assert_eq!(down.Opacity()?, 0.22);
+                    let up = bar
+                        .island_hits
+                        .iter()
+                        .find(|hit| matches!(hit.action, IslandAction::ScrollUsage(-1)))
+                        .context("scroll up button")?;
+                    let (left, top, right, bottom) = up.bounds;
+                    assert!(
+                        left >= bounds.0
+                            && top >= bounds.1
+                            && right <= bounds.2
+                            && bottom <= bounds.3
+                    );
+                    bar.click(&gfx, (left + right) / 2.0, (top + bottom) / 2.0)?;
+                    assert!(bar.usage_scroll < maximum);
+                    assert_eq!(bar.surface.Children()?.First()?.Current()?, root);
+                    assert!(bar.scroll_usage(-10_000.0)?);
+                    assert_eq!(bar.usage_scroll, 0.0);
+                }
+            }
+        }
+        // A busy refresh is not another active input target.
+        look.usage_refreshing = true;
+        bar.build(&gfx, &look)?;
+        assert!(
+            !bar.island_hits
+                .iter()
+                .any(|hit| matches!(hit.action, IslandAction::Refresh))
+        );
+        look.usage_refreshing = false;
+        bar.scroll_usage(10_000.0)?;
+        look.active_providers.0.fill(false);
+        look.active_providers.0[Provider::Codex as usize] = true;
+        bar.build(&gfx, &look)?;
+        assert_eq!(bar.usage_scroll, 0.0); // A refresh that removes rows clamps the offset.
+        assert!(bar.usage_viewport.is_none());
+
+        look.panel = Some(Island::Music);
+        look.track = Some(Track::test_fixture());
+        bar.panel = look.panel;
+        bar.status.volume = Some(Volume {
+            level: 2,
+            muted: false,
+            percent: 50,
+        });
+        bar.apply_look(&gfx, look.clone())?;
+        bar.apply_volume_reading(
+            &gfx,
+            Some(Volume {
+                level: 0,
+                muted: true,
+                percent: 0,
+            }),
+        )?;
+        // Mute/glyph changes render the current snapshot; a full refresh would
+        // replace this monitor and scan live processes/system status again.
+        assert!(
+            bar.look
+                .as_ref()
+                .is_some_and(|current| current.screen == look.screen
+                    && current.status.volume.is_some_and(|volume| volume.muted))
+        );
+        let span = bar
+            .island_hits
+            .iter()
+            .find_map(|hit| match hit.action {
+                IslandAction::Volume(span) => Some(span),
+                _ => None,
+            })
+            .context("slider")?;
+        bar.volume_drag = Some(span); // Never capture the user's mouse in a test.
+        bar.queue_volume(span, span.left);
+        look.scale = 1.5;
+        bar.apply_look(&gfx, look.clone())?;
+        assert!(
+            bar.volume_drag.is_none()
+                && bar.pending_volume.is_none()
+                && bar.volume_target.is_none()
+        );
+        assert!(bar.release_volume(Some(span.right))?); // Late up must not activate another button.
+        let span = bar
+            .island_hits
+            .iter()
+            .find_map(|hit| match hit.action {
+                IslandAction::Volume(span) => Some(span),
+                _ => None,
+            })
+            .context("new slider")?;
+        bar.volume_drag = Some(span);
+        bar.queue_volume(span, span.right);
+        look.active_providers.0.fill(true); // Changes popup placement without changing monitor/DPI.
+        bar.apply_look(&gfx, look.clone())?;
+        assert!(bar.volume_drag.is_none() && bar.pending_volume.is_none());
+
+        // A trigger that cannot fit must not leave a latent open popup.
+        look.screen.right = look.screen.left + 160;
+        bar.apply_look(&gfx, look.clone())?;
+        assert!(bar.panel.is_none() && bar.look.as_ref().is_some_and(|look| look.panel.is_none()));
+        let mut wide = bar.look.clone().context("crowded look")?;
+        wide.screen.right = wide.screen.left + 1920;
+        bar.apply_look(&gfx, wide)?;
+        assert!(bar.panel_span.width() <= 0.0 && bar.usage_viewport.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn volume_coordinates_clamp_and_round_at_both_ends() {
+        let span = Span {
+            left: 100.0,
+            right: 300.0,
+        };
+        for (x, expected) in [
+            (-100.0, 0),
+            (100.0, 0),
+            (200.0, 50),
+            (299.0, 100),
+            (500.0, 100),
+            (f32::NAN, 0),
+        ] {
+            assert_eq!(volume_percent(span, x), expected);
+        }
+        assert_eq!(volume_percent(Span::default(), 1.0), 0);
+    }
+
+    #[test]
+    fn percentage_changes_keep_the_same_indicator_but_mute_and_device_changes_do_not() {
+        let volume = Volume {
+            level: 2,
+            muted: false,
+            percent: 40,
+        };
+        assert!(same_volume_indicator(
+            Some(volume),
+            Some(Volume {
+                percent: 60,
+                ..volume
+            })
+        ));
+        assert!(!same_volume_indicator(
+            Some(volume),
+            Some(Volume {
+                muted: true,
+                ..volume
+            })
+        ));
+        assert!(!same_volume_indicator(
+            Some(volume),
+            Some(Volume { level: 3, ..volume })
+        ));
+        assert!(!same_volume_indicator(Some(volume), None));
+        assert!(!same_volume_indicator(None, Some(volume)));
+    }
+
+    #[test]
+    #[ignore = "Native compositor coverage; hidden test window, no audio writes"]
+    fn native_music_artwork_and_volume_fit_both_styles_and_release_drag_state() -> Result<()> {
+        use anyhow::Context;
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let mut bar = MenuBar::create(&gfx, false, false, true, MenuBarWidgets::default())?;
+        bar.set_visible(false)?;
+        bar.audio = None; // This fixture can never change the user's audio.
+        bar.status.volume = Some(Volume {
+            level: 2,
+            muted: false,
+            percent: 42,
+        });
+        let mut look = bar.look.clone().context("initial look")?;
+        look.status = bar.status;
+        look.panel = Some(Island::Music);
+        look.track = Some(Track::test_fixture());
+        for style in [IslandStyle::Notch, IslandStyle::Bubble] {
+            look.widgets.island_style = style;
+            for scale in [1.0, 1.25, 1.5, 2.0] {
+                look.scale = scale;
+                for (light, glass) in [(true, true), (false, true), (true, false), (false, false)] {
+                    look.light = light;
+                    look.glass = glass;
+                    bar.build(&gfx, &look)?;
+                    assert!(bar.cover.is_some());
+                    let brush = bar.cover.as_ref().context("missing cover")?.1.clone();
+                    bar.build(&gfx, &look)?;
+                    assert_eq!(bar.cover.as_ref().context("cached cover")?.1, brush);
+                    let volume = bar
+                        .island_hits
+                        .iter()
+                        .find(|hit| matches!(hit.action, IslandAction::Volume(_)))
+                        .context("missing volume hit")?;
+                    let (left, top, right, bottom) = volume.bounds;
+                    assert!(left >= bar.panel_span.left && right <= bar.panel_span.right);
+                    assert!(
+                        top >= HEIGHT * scale
+                            && bottom <= (HEIGHT + PANEL_GAP + look.panel_height()) * scale + 1.0
+                    );
+                    assert!(
+                        bar.island_hits
+                            .iter()
+                            .any(|hit| matches!(hit.action, IslandAction::Mute))
+                    );
+                }
+            }
+        }
+        let image = Arc::new(muelle_shell::icons::IconImage {
+            width: 8,
+            height: 8,
+            bgra: [20, 40, 80, 255].repeat(64),
+        });
+        look.track.as_mut().context("track")?.artwork = Some(image.clone());
+        bar.build(&gfx, &look)?;
+        assert!(
+            bar.cover
+                .as_ref()
+                .and_then(|(source, _)| source.as_ref())
+                .is_some_and(|source| Arc::ptr_eq(source, &image))
+        );
+        // Compare the old full redraw path with retained updates without ever
+        // writing the real audio endpoint. Tree identity is the regression
+        // assertion; timings are informational, not a flaky speed threshold.
+        let started = Instant::now();
+        for step in 0..64 {
+            bar.status.volume = Some(Volume {
+                level: 2,
+                muted: false,
+                percent: 40 + step % 20,
+            });
+            look.status = bar.status;
+            bar.build(&gfx, &look)?;
+        }
+        let full_redraw = started.elapsed();
+        bar.look = Some(look.clone());
+        let root = bar.surface.Children()?.First()?.Current()?;
+        let started = Instant::now();
+        for step in 0..64 {
+            bar.apply_volume_reading(
+                &gfx,
+                Some(Volume {
+                    level: 2,
+                    muted: false,
+                    percent: 40 + step % 20,
+                }),
+            )?;
+            assert_eq!(bar.surface.Children()?.First()?.Current()?, root);
+            assert_eq!(
+                bar.volume_controls
+                    .as_ref()
+                    .context("retained volume")?
+                    .label_percent,
+                40 + step % 20
+            );
+        }
+        eprintln!(
+            "64 volume updates: full redraw {:?}, retained {:?} (no audio writes)",
+            full_redraw,
+            started.elapsed()
+        );
+        let span = Span {
+            left: 100.0,
+            right: 300.0,
+        };
+        bar.volume_drag = Some(span); // No SetCapture in a test.
+        bar.queue_volume(span, 140.0);
+        bar.pointer_moved(&gfx, 260.0, 0.0)?;
+        assert_eq!(bar.pending_volume, Some(80));
+        assert_eq!(
+            bar.volume_controls
+                .as_ref()
+                .context("immediate percentage")?
+                .label_percent,
+            80
+        );
+        assert_eq!(
+            bar.volume_controls
+                .as_ref()
+                .context("immediate thumb")?
+                .position_percent,
+            Some(80)
+        );
+        // An endpoint acknowledgement must not drag the thumb backwards while
+        // a newer pointer target is still waiting for its coalesced write.
+        bar.apply_volume_reading(
+            &gfx,
+            Some(Volume {
+                level: 2,
+                muted: false,
+                percent: 50,
+            }),
+        )?;
+        assert_eq!(
+            bar.volume_controls
+                .as_ref()
+                .context("optimistic thumb")?
+                .position_percent,
+            Some(80)
+        );
+        assert_eq!(bar.surface.Children()?.First()?.Current()?, root);
+        assert!(bar.release_volume(Some(300.0))?);
+        assert!(bar.pending_volume.is_none() && bar.volume_drag.is_none());
+        assert!(!bar.release_volume(None)?);
+        assert!(bar.release_volume(Some(200.0))?); // Late up after capture loss/timer.
+        assert!(!bar.release_volume(Some(200.0))?);
+        bar.status.volume = None;
+        bar.build(&gfx, &look)?;
+        assert!(
+            !bar.island_hits
+                .iter()
+                .any(|hit| matches!(hit.action, IslandAction::Volume(_) | IslandAction::Mute))
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires Windows composition; hidden window and no provider requests"]
+    fn opencode_only_measured_go_appears_in_both_island_styles() -> Result<()> {
+        use anyhow::Context;
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        // SAFETY: The dispatcher and hidden composition objects belong to this thread.
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let mut bar = MenuBar::create(&gfx, false, false, true, MenuBarWidgets::default())?;
+        bar.set_visible(false)?;
+        let mut look = bar.look.clone().context("initial look")?;
+        look.track = None;
+        look.active_providers = ActiveProviders::default();
+        look.active_providers.0[Provider::OpenCode as usize] = true;
+        // Yesterday's saved quota is not evidence that Codex is running now.
+        look.usage.providers[Provider::Codex as usize] = ProviderUsage {
+            state: State::Ready,
+            windows: vec![usage::Window {
+                label: None,
+                minutes: 300,
+                used_percent: 42,
+                resets_at: None,
+            }],
+            fetched_at: Some(std::time::SystemTime::now() - Duration::from_secs(24 * 60 * 60)),
+        };
+        let quota: Vec<_> = [300, 10_080, 43_200]
+            .into_iter()
+            .map(|minutes| usage::Window {
+                label: None,
+                minutes,
+                used_percent: 15,
+                resets_at: Some(chrono::Utc::now() + chrono::Duration::hours(2)),
+            })
+            .collect();
+        for style in [IslandStyle::Notch, IslandStyle::Bubble] {
+            look.widgets.island_style = style;
+            for scale in [1.0, 1.25, 1.5, 2.0] {
+                look.scale = scale;
+                for (light, glass) in [(true, true), (false, true), (true, false), (false, false)] {
+                    look.light = light;
+                    look.glass = glass;
+                    look.panel = Some(Island::Usage);
+                    look.usage_enabled = true;
+                    look.usage.providers[Provider::OpenCode as usize] = ProviderUsage::default();
+                    bar.apply_look(&gfx, look.clone())?;
+                    assert!(bar.island_hits.is_empty() && bar.panel.is_none());
+                    assert_eq!(bar.triggers_span.width(), 0.0);
+                    look.usage.providers[Provider::OpenCode as usize] = ProviderUsage {
+                        state: State::Ready,
+                        windows: quota.clone(),
+                        fetched_at: Some(std::time::SystemTime::now()),
+                    };
+                    bar.apply_look(&gfx, look.clone())?;
+                    let current = bar.look.as_ref().context("rendered Go")?;
+                    let providers = island_providers(current);
+                    assert_eq!(providers.len(), 1);
+                    assert!(providers.iter().all(|entry| entry.0 == Provider::OpenCode));
+                    assert_eq!(
+                        current.panel_content_height(),
+                        74.0 + ISLAND_ROW_HEIGHT + 26.0
+                    );
+                    assert!(bar.panel_span.width() > 0.0);
+                    assert!(
+                        bar.island_hits
+                            .iter()
+                            .any(|hit| matches!(hit.action, IslandAction::Toggle(Island::Usage)))
+                    );
+                    assert!(
+                        bar.island_hits
+                            .iter()
+                            .any(|hit| matches!(hit.action, IslandAction::Refresh))
+                    );
+                }
+            }
+        }
+        // Removing Go credentials/quota closes its open popup and removes the trigger.
+        look.usage.providers[Provider::OpenCode as usize] = ProviderUsage {
+            state: State::SignIn,
+            ..ProviderUsage::default()
+        };
+        bar.apply_look(&gfx, look)?;
+        assert!(bar.panel.is_none() && bar.panel_span.width() == 0.0);
+        assert!(bar.island_hits.is_empty() && bar.usage_viewport.is_none());
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Requires Windows desktop composition; keeps the bar hidden"]
+    fn accessory_opt_out_blocks_startup_resume_and_retry() -> Result<()> {
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
+        bar.set_visible(false)?;
+        assert!(!bar.accessories_enabled && bar.accessories.is_none());
+        bar.restart_accessories(&gfx)?;
+        bar.tick(&gfx)?;
+        assert!(bar.accessories.is_none());
+        bar.set_accessories_enabled(&gfx, true)?;
+        assert!(bar.accessories.is_some());
+        bar.set_accessories_enabled(&gfx, false)?;
+        bar.accessory_retry_at = Instant::now() - Duration::from_secs(1);
+        bar.restart_accessories(&gfx)?;
+        bar.tick(&gfx)?;
+        assert!(!bar.accessories_enabled && bar.accessories.is_none());
+        assert!(
+            bar.look
+                .as_ref()
+                .is_some_and(|look| look.accessories == [None, None])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn accessory_status_ignores_hidden_metadata_and_hides_incomplete_readings() {
+        use muelle_shell::accessories::{Device, State};
+        let mut snapshot = AccessorySnapshot {
+            state: State::Ready,
+            ..Default::default()
+        };
+        assert_eq!(accessory_readings(&snapshot), [None, None]);
+        snapshot.devices = vec![
+            Device {
+                id: "mouse".into(),
+                name: "Mouse".into(),
+                kind: AccessoryKind::Mouse,
+                percent: Some(0),
+                conflicting: false,
+                active_audio: false,
+            },
+            Device {
+                id: "headset".into(),
+                name: "Headset".into(),
+                kind: AccessoryKind::Headset,
+                percent: None,
+                conflicting: false,
+                active_audio: true,
+            },
+        ];
+        let before = accessory_readings(&snapshot);
+        assert!(before[0].is_some_and(|reading| reading.percent == Some(0)));
+        assert!(before[1].is_some_and(|reading| reading.percent.is_none()));
+        snapshot.devices[0].name = "New name".into();
+        assert!(accessory_readings(&snapshot) == before);
+        for state in [State::Loading, State::Unavailable] {
+            snapshot.state = state;
+            assert_eq!(accessory_readings(&snapshot), [None, None]);
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires Windows desktop composition; keeps the test bar hidden"]
+    fn accessory_indicators_render_without_controls_or_popups() -> Result<()> {
+        use anyhow::Context;
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
+        bar.set_visible(false)?;
+        bar.accessories = None;
+        let mut look = bar.look.clone().context("missing initial menu bar")?;
+        look.track = None;
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for light in [true, false] {
+                for glass in [true, false] {
+                    look.scale = scale;
+                    look.light = light;
+                    look.glass = glass;
+                    look.accessories = [None, None];
+                    bar.build(&gfx, &look)?;
+                    let root: ContainerVisual =
+                        bar.surface.Children()?.First()?.Current()?.cast()?;
+                    let empty_visuals = root.Children()?.Count()?;
+                    let controls = bar.zones.len();
+                    look.accessories = [
+                        Some(AccessoryReading {
+                            kind: AccessoryKind::Mouse,
+                            percent: Some(76),
+                        }),
+                        Some(AccessoryReading {
+                            kind: AccessoryKind::Headset,
+                            percent: Some(58),
+                        }),
+                    ];
+                    bar.build(&gfx, &look)?;
+                    let root: ContainerVisual =
+                        bar.surface.Children()?.First()?.Current()?.cast()?;
+                    assert_eq!(root.Children()?.Count()?, empty_visuals + 4);
+                    assert_eq!(bar.zones.len(), controls);
+                    assert!(bar.island_hits.is_empty());
+                    assert!(bar.outside_click_hook.is_none());
+                    assert_eq!(bar.panel, None);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     #[ignore = "Requires Windows desktop composition"]
     fn changing_ui_language_redraws_unchanged_menu_bar_content() -> Result<()> {
         use windows::Win32::System::WinRT::{
@@ -2575,7 +4367,7 @@ mod island_tests {
         };
         let gfx = Gfx::new()?;
         strings::set_language(Language::Es);
-        let mut bar = MenuBar::create(&gfx, false, true)?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
         assert!(
             bar.look
                 .as_ref()
@@ -2616,7 +4408,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true)?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
         assert!(
             !unsafe { IsWindowVisible(bar.hwnd) }.as_bool(),
             "auto-hide must apply before the first frame"
@@ -2718,7 +4510,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true)?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
         bar.set_app_name(&gfx, "Muelle animation test")?;
         bar.set_auto_hide(true)?;
         let inside = POINT {
@@ -2812,6 +4604,42 @@ mod island_tests {
         assert!(
             music.left >= bounds.left && music.right < usage.left && usage.right <= bounds.right
         );
+    }
+
+    #[test]
+    fn bubble_layout_aligns_to_right_status_edge_and_stays_compact() {
+        let bounds = Span {
+            left: 210.0,
+            right: 1420.0,
+        };
+        let [(_, Some(short_music)), (_, Some(short_usage))] =
+            bubble_trigger_layout(bounds, 1.0, Some(92.0), 2)
+        else {
+            panic!("Both bubble segments should fit");
+        };
+        let [(_, Some(long_music)), (_, Some(long_usage))] =
+            bubble_trigger_layout(bounds, 1.0, Some(240.0), 2)
+        else {
+            panic!("Both bubble segments should fit");
+        };
+        assert_eq!(short_usage.right, bounds.right);
+        assert_eq!(long_usage.right, bounds.right);
+        assert!(short_music.width() < long_music.width());
+        assert_eq!(long_music.width(), BUBBLE_MUSIC_WIDTH);
+        assert!(short_music.left >= bounds.left && short_music.right < short_usage.left);
+
+        let short_bubble = Span {
+            left: short_music.left,
+            right: short_usage.right,
+        };
+        let long_bubble = Span {
+            left: long_music.left,
+            right: long_usage.right,
+        };
+        let short_panel = bubble_panel_span(short_bubble, 1920.0, 360.0);
+        let long_panel = bubble_panel_span(long_bubble, 1920.0, 360.0);
+        assert_eq!(short_panel.left, long_panel.left);
+        assert_eq!(short_panel.right, long_panel.right);
     }
 
     #[test]

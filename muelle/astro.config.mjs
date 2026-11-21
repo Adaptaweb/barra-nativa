@@ -5,7 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   // Feeds the canonical URLs and the sitemap. Keep in sync with `site.url`.
-  site: "https://muellee.vercel.app",
+  site: "https://muelle.crafter.run",
   // The 404 page must stay out: a sitemap lists canonical, indexable URLs only.
   integrations: [sitemap({ filter: (page) => !page.endsWith("/404") })],
   vite: {

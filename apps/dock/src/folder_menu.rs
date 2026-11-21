@@ -19,8 +19,8 @@ use windows::{
         UI::WindowsAndMessaging::{
             CreatePopupMenu, DestroyMenu, GetForegroundWindow, GetMenuItemCount, HMENU,
             InsertMenuItemW, MENUITEMINFOW, MFS_DISABLED, MIIM_BITMAP, MIIM_ID, MIIM_STATE,
-            MIIM_STRING, MIIM_SUBMENU, PostMessageW, SetForegroundWindow, TPM_BOTTOMALIGN,
-            TPM_CENTERALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_NULL,
+            MIIM_STRING, MIIM_SUBMENU, PostMessageW, SetForegroundWindow, TPM_RETURNCMD,
+            TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_NULL,
         },
     },
     core::{HSTRING, PWSTR},
@@ -60,14 +60,20 @@ thread_local! {
     static OPEN: RefCell<Option<Open>> = const { RefCell::new(None) };
 }
 
-/// Shows the contents of `folder` as a menu whose bottom edge is centered
-/// at `anchor`, and returns the path of the item chosen (`None` if
+/// Shows the contents of `folder` as a menu on the `placement` side of
+/// `anchor`, and returns the path of the item chosen (`None` if
 /// dismissed). Folders inside are submenus and are never returned.
 ///
 /// Runs a modal loop that keeps dispatching messages to the dock, whose
 /// window procedure hands `WM_INITMENUPOPUP` to [`init_popup`]. The caller
 /// must not hold the app state meanwhile.
-pub fn show(owner: HWND, folder: &str, anchor: POINT, dark: bool) -> Option<String> {
+pub fn show(
+    owner: HWND,
+    folder: &str,
+    anchor: POINT,
+    dark: bool,
+    placement: crate::menu::Placement,
+) -> Option<String> {
     crate::menu::apply_theme(dark);
     // SAFETY: The menu is destroyed below, with its submenus.
     let root = unsafe { CreatePopupMenu() }.ok()?;
@@ -81,7 +87,7 @@ pub fn show(owner: HWND, folder: &str, anchor: POINT, dark: bool) -> Option<Stri
         let _ = SetForegroundWindow(owner);
         let chosen = TrackPopupMenuEx(
             root,
-            (TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_CENTERALIGN).0,
+            (TPM_RETURNCMD | TPM_RIGHTBUTTON | placement.native_flags()).0,
             anchor.x,
             anchor.y,
             owner,

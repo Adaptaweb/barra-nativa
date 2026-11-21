@@ -5,6 +5,10 @@
 //! callbacks on its own threads; they only post `message` to the bar's window,
 //! which then reads the new state on its UI thread.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use windows::{
     Networking::Connectivity::{
         NetworkConnectivityLevel, NetworkInformation, NetworkStatusChangedEventHandler,
@@ -42,9 +46,10 @@ fn notify(window: isize, message: u32) {
 pub enum Network {
     Offline,
     Ethernet,
-    /// Signal strength from 1 to 4 bars.
+    /// Signal strength from 1 to 4 bars, and whether connected to internet.
     Wifi {
         bars: u8,
+        has_internet: bool,
     },
 }
 
@@ -54,12 +59,13 @@ pub fn network() -> Network {
     let Ok(profile) = NetworkInformation::GetInternetConnectionProfile() else {
         return Network::Offline;
     };
-    let connected = profile
+    let level = profile
         .GetNetworkConnectivityLevel()
-        .is_ok_and(|level| level != NetworkConnectivityLevel::None);
-    if !connected {
+        .unwrap_or(NetworkConnectivityLevel::None);
+    if level == NetworkConnectivityLevel::None {
         return Network::Offline;
     }
+    let has_internet = level == NetworkConnectivityLevel::InternetAccess;
     if profile.IsWlanConnectionProfile().unwrap_or(false) {
         // Windows reports 0 to 5 bars; the glyphs have 4 steps.
         let reported = profile
@@ -67,7 +73,7 @@ pub fn network() -> Network {
             .and_then(|bars| bars.Value())
             .unwrap_or(5);
         let bars = (u32::from(reported.min(5)) * 4).div_ceil(5).max(1) as u8;
-        Network::Wifi { bars }
+        Network::Wifi { bars, has_internet }
     } else {
         Network::Ethernet
     }
@@ -104,6 +110,8 @@ pub struct Volume {
     pub muted: bool,
     /// 0 (silent) to 3 (loud): the steps the speaker glyph has.
     pub level: u8,
+    /// Precise endpoint reading, retained for the music popup slider.
+    pub percent: u8,
 }
 
 #[implement(IAudioEndpointVolumeCallback)]
@@ -123,6 +131,7 @@ impl IAudioEndpointVolumeCallback_Impl for VolumeChanged_Impl {
 struct DeviceChanged {
     window: isize,
     message: u32,
+    default_changed: Arc<AtomicBool>,
 }
 
 impl IMMNotificationClient_Impl for DeviceChanged_Impl {
@@ -140,6 +149,7 @@ impl IMMNotificationClient_Impl for DeviceChanged_Impl {
 
     fn OnDefaultDeviceChanged(&self, flow: EDataFlow, role: ERole, _id: &PCWSTR) -> Result<()> {
         if flow == eRender && role == eConsole {
+            self.default_changed.store(true, Ordering::Release);
             notify(self.window, self.message);
         }
         Ok(())
@@ -152,6 +162,7 @@ impl IMMNotificationClient_Impl for DeviceChanged_Impl {
 
 /// The default speakers' volume, followed across device changes.
 pub struct AudioWatch {
+    default_changed: Arc<AtomicBool>,
     enumerator: IMMDeviceEnumerator,
     devices: IMMNotificationClient,
     /// Current default device, its volume control and our callback on it.
@@ -166,22 +177,33 @@ impl AudioWatch {
     pub fn new(window: isize, message: u32) -> Option<Self> {
         // SAFETY: COM is initialized on this thread; the enumerator and the
         // registered client are released in `Drop`.
+        let default_changed = Arc::new(AtomicBool::new(false));
         let (enumerator, devices) = unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-            let devices: IMMNotificationClient = DeviceChanged { window, message }.into();
+            let devices: IMMNotificationClient = DeviceChanged {
+                window,
+                message,
+                default_changed: default_changed.clone(),
+            }
+            .into();
             enumerator
                 .RegisterEndpointNotificationCallback(&devices)
                 .ok()?;
             (enumerator, devices)
         };
         Some(Self {
+            default_changed,
             enumerator,
             devices,
             endpoint: None,
             window,
             message,
         })
+    }
+
+    pub fn take_default_changed(&self) -> bool {
+        self.default_changed.swap(false, Ordering::AcqRel)
     }
 
     /// Current volume of the default speakers, or `None` without any.
@@ -195,13 +217,47 @@ impl AudioWatch {
                 endpoint.GetMute().ok()?.as_bool(),
             )
         };
+        let percent = (level.clamp(0.0, 1.0) * 100.0).round() as u8;
         let level = match level {
             l if l < 0.01 => 0,
             l if l < 0.34 => 1,
             l if l < 0.67 => 2,
             _ => 3,
         };
-        Some(Volume { muted, level })
+        Some(Volume {
+            muted,
+            level,
+            percent,
+        })
+    }
+
+    /// Uses the watched default output; the existing callback updates all UI.
+    pub fn set_percent(&mut self, percent: u8) -> Result<()> {
+        self.follow_default();
+        let (_, endpoint, _) = self.endpoint.as_ref().ok_or_else(|| {
+            windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL)
+        })?;
+        // SAFETY: The endpoint belongs to this COM-initialized thread. The
+        // event context is optional. No waits, enumeration or new watcher.
+        unsafe {
+            endpoint.SetMasterVolumeLevelScalar(
+                f32::from(percent.min(100)) / 100.0,
+                std::ptr::null(),
+            )?;
+            if percent > 0 && endpoint.GetMute()?.as_bool() {
+                endpoint.SetMute(false, std::ptr::null())?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn toggle_mute(&mut self) -> Result<()> {
+        self.follow_default();
+        let (_, endpoint, _) = self.endpoint.as_ref().ok_or_else(|| {
+            windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL)
+        })?;
+        // SAFETY: Read and update our current, live endpoint on its apartment.
+        unsafe { endpoint.SetMute(!endpoint.GetMute()?.as_bool(), std::ptr::null()) }
     }
 
     /// Moves the volume callback to the default device if it changed.
@@ -264,6 +320,38 @@ impl Drop for AudioWatch {
 
 /* ------------------------------------------------------ Taskbar buttons */
 
+/// Cached physical container of the default output. Query from a background
+/// reader with COM initialized; a source failure is not a device disconnect.
+#[must_use]
+pub fn default_audio_container() -> Option<String> {
+    use windows::Win32::{
+        Foundation::PROPERTYKEY,
+        System::Com::{
+            STGM_READ,
+            StructuredStorage::{PropVariantClear, PropVariantToGUID},
+        },
+    };
+    const CONTAINER: PROPERTYKEY = PROPERTYKEY {
+        fmtid: windows::core::GUID::from_u128(0x8c7ed206_3f8a_4827_b3ab_ae9e1faefc6c),
+        pid: 2,
+    };
+    // SAFETY: Read-only Core Audio property store. Its allocated variant is
+    // cleared on both success and conversion failure before returning.
+    unsafe {
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+        let store = enumerator
+            .GetDefaultAudioEndpoint(eRender, eConsole)
+            .ok()?
+            .OpenPropertyStore(STGM_READ)
+            .ok()?;
+        let mut value = store.GetValue(&CONTAINER).ok()?;
+        let id = PropVariantToGUID(&value);
+        let _ = PropVariantClear(&mut value);
+        id.ok().map(|id| format!("{id:?}"))
+    }
+}
+
 /// The optional buttons the user has turned on in Windows Settings →
 /// Personalization → Taskbar, so the menu bar offers the same ones.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -318,6 +406,13 @@ pub fn taskbar_buttons() -> TaskbarButtons {
         // would read as shown), and Win+W opens Windows Ink instead.
         widgets: crate::system::is_windows_11() && dword(ADVANCED, "TaskbarDa").unwrap_or(1) != 0,
     }
+}
+
+/// The user's native taskbar badge preference. An unset value uses Windows'
+/// default (enabled); the dock never writes or overrides this preference.
+#[must_use]
+pub fn taskbar_badges_enabled() -> bool {
+    dword(ADVANCED, "TaskbarBadges").unwrap_or(1) != 0
 }
 
 /// Windows Settings → System → Power & battery → Battery percentage.

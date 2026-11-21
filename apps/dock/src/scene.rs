@@ -5,6 +5,7 @@ use std::cell::Cell;
 
 use anyhow::Result;
 use muelle_core::{
+    frame::{DockEdge, Frame as DockFrame},
     layout::{ItemKind, Layout, Rect},
     magnify::Magnified,
 };
@@ -213,7 +214,9 @@ pub struct SceneInput<'a> {
     pub contents: &'a [SlotContent<'a>],
     pub theme: Theme,
     pub scale: f32,
-    pub origin: (f32, f32),
+    /// Where the resting dock sits in the visual window, and on which edge:
+    /// every position the scene draws goes through it.
+    pub frame: DockFrame,
     /// Shown above an icon dragged out of the dock.
     pub remove_label: Option<&'a LabelBrush>,
 }
@@ -223,11 +226,190 @@ pub struct SceneInput<'a> {
 pub const BADGE_SIZE: f32 = 0.42;
 pub const BADGE_INSIDE: f32 = 0.85;
 
+/// A native attention request, deliberately without a fabricated unread count.
+/// Its vector is allocated on first use and only transformed during animation.
+pub(crate) struct AttentionBadge {
+    pub(crate) visual: ShapeVisual,
+    visible: bool,
+}
+
+impl AttentionBadge {
+    pub(crate) fn new(gfx: &Gfx, theme: Theme) -> Result<Self> {
+        let c = &gfx.compositor;
+        let circle = c.CreateEllipseGeometry()?;
+        circle.SetCenter(v2(0.5, 0.5))?;
+        circle.SetRadius(v2(0.43, 0.43))?;
+        let shape = c.CreateSpriteShapeWithGeometry(&circle)?;
+        shape.SetFillBrush(&c.CreateColorBrushWithColor(if theme.light {
+            rgba(255, 59, 48, 255)
+        } else {
+            rgba(255, 69, 58, 255)
+        })?)?;
+        shape.SetStrokeBrush(&c.CreateColorBrushWithColor(if theme.light {
+            rgba(255, 255, 255, 245)
+        } else {
+            rgba(38, 38, 40, 245)
+        })?)?;
+        shape.SetStrokeThickness(0.12)?;
+        let visual = c.CreateShapeVisual()?;
+        visual.SetSize(v2(1.0, 1.0))?;
+        visual.Shapes()?.Append(&shape)?;
+        visual.SetIsVisible(false)?;
+        Ok(Self {
+            visual,
+            visible: false,
+        })
+    }
+
+    pub(crate) fn set_visible(&mut self, visible: bool) -> Result<()> {
+        if self.visible != visible {
+            self.visual.SetIsVisible(visible)?;
+            self.visible = visible;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn place(&self, icon: Rect, scale: f32, opacity: f32, snap: bool) -> Result<()> {
+        if !self.visible {
+            return Ok(());
+        }
+        let rect = attention_rect(icon, scale);
+        let fit = |value: f32| if snap { value.round() } else { value };
+        self.visual
+            .SetScale(Vector3::new(fit(rect.width), fit(rect.height), 1.0))?;
+        self.visual.SetOffset(v3(fit(rect.x), fit(rect.y)))?;
+        self.visual.SetOpacity(opacity)?;
+        Ok(())
+    }
+}
+
+fn attention_rect(icon: Rect, scale: f32) -> Rect {
+    let side = (icon.width * 0.25)
+        .clamp(8.0 * scale, 14.0 * scale)
+        .min(icon.width.min(icon.height) * 0.45);
+    let inset = scale.min((icon.width - side) / 2.0).max(0.0);
+    Rect {
+        x: icon.x + icon.width - side - inset,
+        y: icon.y + inset,
+        width: side,
+        height: side,
+    }
+}
+
+#[cfg(test)]
+mod attention_tests {
+    use super::*;
+    use muelle_core::{
+        layout::{Metrics, layout},
+        magnify::{Magnifier, magnify},
+    };
+
+    #[test]
+    fn attention_stays_inside_small_magnified_and_high_dpi_icons() {
+        for scale in [1.0, 1.25, 1.5, 2.0, 3.0] {
+            for width in [16.0, 32.0, 48.0, 96.0] {
+                let icon = Rect {
+                    x: 17.0,
+                    y: -32.0,
+                    width: width * scale,
+                    height: width * scale,
+                };
+                let badge = attention_rect(icon, scale);
+                assert!(badge.x >= icon.x && badge.y >= icon.y);
+                assert!(badge.x + badge.width <= icon.x + icon.width);
+                assert!(badge.y + badge.height <= icon.y + icon.height);
+                assert!(badge.width > 0.0);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires Windows desktop composition; creates no visible window"]
+    fn native_attention_badges_reuse_visuals_follow_drag_and_hide_without_rebuilding() -> Result<()>
+    {
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for light in [false, true] {
+                let layout = layout(
+                    &[ItemKind::Icon, ItemKind::Icon],
+                    &Metrics::DEFAULT.scaled(scale),
+                );
+                let contents = [SlotContent::default(); 2];
+                let mut scene = Scene::build(
+                    &gfx,
+                    &SceneInput {
+                        layout: &layout,
+                        contents: &contents,
+                        theme: Theme::for_system(light, true),
+                        scale,
+                        frame: DockFrame::new(DockEdge::Bottom, (0.0, 0.0), layout.height),
+                        remove_label: None,
+                    },
+                )?;
+                let root = scene.root.clone();
+                scene.set_attention(&gfx, [true, false].into_iter())?;
+                let visual = scene.attention[0]
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("missing badge"))?
+                    .visual
+                    .clone();
+                scene.set_attention(&gfx, [true, false].into_iter())?;
+                assert!(
+                    scene.attention[0]
+                        .as_ref()
+                        .is_some_and(|badge| badge.visual == visual)
+                );
+                assert!(scene.attention[1].is_none());
+                let state = magnify(
+                    &layout,
+                    24.0 * scale,
+                    1.0,
+                    &Magnifier {
+                        range: 144.0 * scale,
+                        max_scale: 1.6,
+                    },
+                );
+                scene.apply(&Frame {
+                    state: &state,
+                    hovered: None,
+                    lifts: &[8.0 * scale, 0.0],
+                    drag: Some(Drag {
+                        index: 0,
+                        center: (80.0 * scale, 20.0 * scale),
+                        removing: false,
+                        ghost: false,
+                    }),
+                    target: None,
+                    slide: 0.0,
+                    snap: false,
+                })?;
+                assert!(visual.IsVisible()?);
+                assert!(visual.Scale()?.X > 0.0);
+                scene.set_attention(&gfx, [false, false].into_iter())?;
+                assert!(!visual.IsVisible()?);
+                assert!(scene.root == root);
+            }
+        }
+        Ok(())
+    }
+}
+
 /// An icon following the cursor while it is dragged.
 #[derive(Clone, Copy)]
 pub struct Drag {
     pub index: usize,
-    /// Icon center, relative to the resting dock origin.
+    /// Icon center in dock coordinates (along, across the dock).
     pub center: (f32, f32),
     /// Released here, the icon would leave the dock.
     pub removing: bool,
@@ -245,7 +427,8 @@ pub struct Frame<'a> {
     pub drag: Option<Drag>,
     /// The icon the dragged app would join in a group if released now.
     pub target: Option<usize>,
-    /// Vertical offset of the whole dock (auto-hide), in pixels.
+    /// How far the whole dock has slid toward the screen edge (auto-hide),
+    /// in pixels.
     pub slide: f32,
     /// Align to whole pixels; only at rest, where sharpness matters.
     pub snap: bool,
@@ -273,7 +456,7 @@ impl Label {
 
 pub struct Scene {
     pub root: ContainerVisual,
-    origin: (f32, f32),
+    frame: DockFrame,
     height: f32,
     stroke: f32,
     label_gap: f32,
@@ -293,14 +476,30 @@ pub struct Scene {
     slots: Vec<SpriteVisual>,
     badges: Vec<Option<SpriteVisual>>,
     notify_badges: Vec<Option<Label>>,
+    attention: Vec<Option<AttentionBadge>>,
+    attention_theme: Theme,
+    scale: f32,
     indicators: Vec<Option<ShapeVisual>>,
     labels: Vec<Option<Label>>,
     remove_label: Option<Label>,
 }
 
 impl Scene {
-    pub fn slot_x(&self, index: usize) -> Option<f32> {
-        Some(self.slots.get(index)?.Offset().ok()?.X)
+    /// Where the slot is drawn now, along the dock, in dock coordinates.
+    pub fn slot_along(&self, index: usize) -> Option<f32> {
+        let offset = self.slots.get(index)?.Offset().ok()?;
+        let size = self.slots.get(index)?.Size().ok()?;
+        // The box's top-left maps from a different dock corner on each edge;
+        // its centre maps from its centre on all of them.
+        let (along, _) = self
+            .frame
+            .to_dock(offset.X + size.X / 2.0, offset.Y + size.Y / 2.0);
+        let length = if self.frame.edge.is_vertical() {
+            size.Y
+        } else {
+            size.X
+        };
+        Some(along - length / 2.0)
     }
 
     pub fn build(gfx: &Gfx, input: &SceneInput<'_>) -> Result<Self> {
@@ -309,7 +508,7 @@ impl Scene {
             layout,
             theme,
             scale,
-            origin,
+            frame,
             ..
         } = *input;
         let radius = layout.height * 0.36;
@@ -340,8 +539,8 @@ impl Scene {
         layers.InsertAtTop(&glass)?;
         layers.InsertAtTop(&rim)?;
 
+        // Children are placed in window coordinates through `frame`.
         let content = c.CreateContainerVisual()?;
-        content.SetOffset(v3(origin.0, origin.1))?;
         let children = content.Children()?;
         let indicator_size = (4.0 * scale).round();
         let dot = c.CreateEllipseGeometry()?;
@@ -419,7 +618,7 @@ impl Scene {
 
         Ok(Self {
             root,
-            origin,
+            frame,
             height: layout.height,
             stroke,
             label_gap: 8.0 * scale,
@@ -436,10 +635,29 @@ impl Scene {
             slots,
             badges,
             notify_badges,
+            attention: (0..layout.slots.len()).map(|_| None).collect(),
+            attention_theme: theme,
+            scale,
             indicators,
             labels,
             remove_label,
         })
+    }
+
+    /// Changes only badge visuals: notifications never rebuild the layout or
+    /// close an open window picker. Repeated events reuse the same visual.
+    pub fn set_attention(&mut self, gfx: &Gfx, pending: impl Iterator<Item = bool>) -> Result<()> {
+        for (notice, on) in self.attention.iter_mut().zip(pending) {
+            if on && notice.is_none() {
+                let badge = AttentionBadge::new(gfx, self.attention_theme)?;
+                self.content.Children()?.InsertAtTop(&badge.visual)?;
+                *notice = Some(badge);
+            }
+            if let Some(badge) = notice {
+                badge.set_visible(on)?;
+            }
+        }
+        Ok(())
     }
 
     /// - `lifts`: how far each slot rises above its resting position (bounce).
@@ -456,7 +674,9 @@ impl Scene {
             snap,
         } = *frame;
         let fit = |value: f32| if snap { value.round() } else { value };
-        self.root.SetOffset(v3(0.0, slide))?;
+        let place = |rect: Rect| self.frame.rect(rect);
+        let (slide_x, slide_y) = self.frame.outward(slide);
+        self.root.SetOffset(v3(slide_x, slide_y))?;
         self.raise(drag.map(|drag| drag.index))?;
         self.place_merge(target.and_then(|index| {
             Some((
@@ -465,8 +685,14 @@ impl Scene {
             ))
         }))?;
 
-        let size = v2(fit(state.right - state.left), self.height);
-        let offset = v3(self.origin.0 + fit(state.left), self.origin.1);
+        let plate = place(Rect {
+            x: fit(state.left),
+            y: 0.0,
+            width: fit(state.right - state.left),
+            height: self.height,
+        });
+        let size = v2(plate.width, plate.height);
+        let offset = v3(plate.x, plate.y);
         for frame in &self.frames {
             frame.SetSize(size)?;
             frame.SetOffset(offset)?;
@@ -487,6 +713,24 @@ impl Scene {
                 Some(drag) => (drag.center.0 - width / 2.0, drag.center.1 - height / 2.0),
                 None => (x, y - lifts.get(index).copied().unwrap_or(0.0)),
             };
+            // In dock coordinates up to here; from here on, in the window.
+            let dot = place(Rect {
+                x: x + (width - self.indicator_size) / 2.0,
+                y: self.indicator_y,
+                width: self.indicator_size,
+                height: self.indicator_size,
+            });
+            let Rect {
+                x,
+                y,
+                width,
+                height,
+            } = place(Rect {
+                x,
+                y,
+                width,
+                height,
+            });
 
             if let Some(visual) = self.slots.get(index) {
                 visual.SetOffset(v3(fit(x), fit(y)))?;
@@ -513,24 +757,56 @@ impl Scene {
                     fit(y - nb.height * 0.25),
                 ))?;
             }
+            if let Some(Some(notice)) = self.attention.get(index) {
+                notice.place(
+                    Rect {
+                        x,
+                        y,
+                        width,
+                        height,
+                    },
+                    self.scale,
+                    if dragged.is_some_and(|drag| drag.ghost) {
+                        0.35
+                    } else if dragged.is_some_and(|drag| drag.removing) {
+                        0.55
+                    } else {
+                        1.0
+                    },
+                    snap,
+                )?;
+            }
             if let Some(Some(indicator)) = self.indicators.get(index) {
                 indicator.SetIsVisible(dragged.is_none())?;
-                indicator.SetOffset(v3(
-                    fit(x + (width - self.indicator_size) / 2.0),
-                    self.indicator_y,
-                ))?;
+                indicator.SetOffset(v3(fit(dot.x), fit(dot.y)))?;
             }
             if let Some(Some(label)) = self.labels.get(index) {
                 let shown = hovered == Some(index) && drag.is_none();
                 label.visual.SetIsVisible(shown)?;
                 if shown {
-                    self.place_label(label, x, y, width)?;
+                    self.place_label(
+                        label,
+                        Rect {
+                            x,
+                            y,
+                            width,
+                            height,
+                        },
+                    )?;
                 }
             }
             if let (Some(label), Some(drag)) = (&self.remove_label, dragged) {
                 label.visual.SetIsVisible(drag.removing)?;
                 if drag.removing {
-                    self.place_label(label, x, y, width)?;
+                    self.place_label(
+                        label,
+                        Rect {
+                            x,
+                            y,
+                            width,
+                            height,
+                        },
+                    )?;
                 }
             }
         }
@@ -552,6 +828,14 @@ impl Scene {
             let children = self.content.Children()?;
             children.Remove(visual)?;
             children.InsertAtTop(visual)?;
+            if let Some(Some(badge)) = index.and_then(|index| self.badges.get(index)) {
+                children.Remove(badge)?;
+                children.InsertAtTop(badge)?;
+            }
+            if let Some(Some(badge)) = index.and_then(|index| self.attention.get(index)) {
+                children.Remove(&badge.visual)?;
+                children.InsertAtTop(&badge.visual)?;
+            }
         }
         self.raised.set(index);
         Ok(())
@@ -564,10 +848,13 @@ impl Scene {
             self.merge.SetIsVisible(false)?;
             return Ok(());
         };
+        let rect = self.frame.rect(Rect {
+            y: rect.y - lift,
+            ..rect
+        });
         let pad = (rect.width * 0.1).round();
         let size = v2(rect.width + 2.0 * pad, rect.height + 2.0 * pad);
-        self.merge
-            .SetOffset(v3(rect.x - pad, rect.y - pad - lift))?;
+        self.merge.SetOffset(v3(rect.x - pad, rect.y - pad))?;
         self.merge.SetSize(size)?;
         self.merge_geometry
             .SetSize(v2(size.X - self.merge_stroke, size.Y - self.merge_stroke))?;
@@ -577,11 +864,25 @@ impl Scene {
         Ok(())
     }
 
-    fn place_label(&self, label: &Label, x: f32, y: f32, width: f32) -> Result<()> {
-        label.visual.SetOffset(v3(
-            (x + (width - label.width) / 2.0).round(),
-            (y - self.label_gap - label.height).round(),
-        ))?;
+    /// Beside the icon, on the side away from the screen edge: above it on
+    /// a bottom dock, to its right on a left dock, to its left on a right one.
+    fn place_label(&self, label: &Label, icon: Rect) -> Result<()> {
+        let Rect {
+            x,
+            y,
+            width,
+            height,
+        } = icon;
+        let middle = y + (height - label.height) / 2.0;
+        let (left, top) = match self.frame.edge {
+            DockEdge::Bottom => (
+                x + (width - label.width) / 2.0,
+                y - self.label_gap - label.height,
+            ),
+            DockEdge::Left => (x + width + self.label_gap, middle),
+            DockEdge::Right => (x - self.label_gap - label.width, middle),
+        };
+        label.visual.SetOffset(v3(left.round(), top.round()))?;
         Ok(())
     }
 }

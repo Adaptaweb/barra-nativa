@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 interface CardProps {
   /** Heading above the group, as macOS System Settings labels its groups. */
@@ -19,12 +19,15 @@ export function Card({ title, children }: CardProps) {
 interface RowProps {
   label: string;
   hint?: string;
+  icon?: ReactNode;
+  stacked?: boolean;
   children: ReactNode;
 }
 
-export function Row({ label, hint, children }: RowProps) {
+export function Row({ label, hint, icon, stacked, children }: RowProps) {
   return (
-    <div className="row">
+    <div className={stacked ? "row row-stacked" : "row"}>
+      {icon ? <span className="row-icon">{icon}</span> : null}
       <div className="row-text">
         <span className="row-label">{label}</span>
         {hint ? <span className="row-hint">{hint}</span> : null}
@@ -34,7 +37,7 @@ export function Row({ label, hint, children }: RowProps) {
   );
 }
 
-interface SubRowProps extends RowProps {
+interface SubRowProps extends Omit<RowProps, "icon"> {
   /** Whether the option it depends on is on; the row folds away while it is off. */
   open: boolean;
 }
@@ -80,29 +83,63 @@ interface SliderProps {
   min: number;
   max: number;
   label: string;
-  before?: string;
-  after?: string;
+  unit?: string;
   disabled?: boolean;
   onChange: (value: number) => void;
 }
 
-export function Slider({ value, min, max, label, before, after, disabled, onChange }: SliderProps) {
+export function Slider({ value, min, max, label, unit = "px", disabled, onChange }: SliderProps) {
   const filled = ((value - min) / (max - min)) * 100;
   return (
     <div className="slider">
-      {before ? <span className="slider-edge">{before}</span> : null}
       <input
         type="range"
         aria-label={label}
         min={min}
         max={max}
         value={value}
+        aria-valuetext={`${value} ${unit}`}
         disabled={disabled}
         style={{ "--filled": `${filled}%` } as React.CSSProperties}
         onChange={(event) => onChange(Number(event.target.value))}
       />
-      {after ? <span className="slider-edge">{after}</span> : null}
+      <output className="slider-value" aria-hidden="true">{value} {unit}</output>
     </div>
+  );
+}
+
+interface VisualChoicesProps<T extends string> {
+  label: string;
+  value: T;
+  hideLabel?: boolean;
+  options: readonly { value: T; label: string; preview: ReactNode; detail?: string }[];
+  onChange: (value: T) => void;
+}
+
+/** Native radios provide arrow-key navigation without extra listeners or state. */
+export function VisualChoices<T extends string>({ label, value, hideLabel, options, onChange }: VisualChoicesProps<T>) {
+  const name = useId();
+  return (
+    <fieldset className="visual-setting">
+      <legend className={hideLabel ? "sr-only" : "visual-legend"}>{label}</legend>
+      <div className="visual-choices" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
+        {options.map((option) => (
+          <label className="visual-choice" key={option.value}>
+            <input type="radio" name={name} value={option.value} checked={value === option.value}
+              onChange={() => onChange(option.value)} />
+            <span className="visual-choice-body">
+              <span className="visual-preview" aria-hidden="true">{option.preview}</span>
+              <span className="visual-choice-label">{option.label}
+                <span className="visual-check" aria-hidden="true">
+                <svg viewBox="0 0 16 16" width="12" height="12"><path d="m4 8 2.5 2.5L12 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                </span>
+              </span>
+              {option.detail ? <span className="visual-choice-detail">{option.detail}</span> : null}
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 
@@ -114,19 +151,15 @@ interface SegmentedProps<T extends string> {
 }
 
 export function Segmented<T extends string>({ value, label, options, onChange }: SegmentedProps<T>) {
+  const name = useId();
   return (
     <div className="segmented" role="radiogroup" aria-label={label}>
       {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          role="radio"
-          aria-checked={option.value === value}
-          className="segment"
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
+        <label key={option.value} className="segment">
+          <input type="radio" className="sr-only" name={name} value={option.value}
+            checked={option.value === value} onChange={() => onChange(option.value)} />
+          <span>{option.label}</span>
+        </label>
       ))}
     </div>
   );

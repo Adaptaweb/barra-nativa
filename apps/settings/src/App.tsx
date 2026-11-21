@@ -4,6 +4,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Config,
+  type DockPosition,
+  type GenieSpeed,
+  type IslandStyle,
   type Language,
   type UpdateInfo,
   ICON_SIZE,
@@ -15,12 +18,15 @@ import {
   windowsAnimations,
   installUpdate,
   loadConfig,
+  loadWallpaperPreview,
   openReleaseNotes,
+  openRepository,
   pickFolder,
   saveConfig,
   setAutostart,
 } from "./config";
-import { Card, Row, Segmented, Slider, SubRow, Toggle } from "./controls";
+import { Card, Row, Segmented, Slider, SubRow, Toggle, VisualChoices } from "./controls";
+import { DockPreview, IslandPreview, SettingIcon, SpeedPreview } from "./visuals";
 import { type SectionId, SectionIcon } from "./icons";
 import { UpdateBanner } from "./UpdateBanner";
 import en from "./i18n/en.json";
@@ -88,6 +94,13 @@ export function App() {
   const [version, setVersion] = useState("");
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: "checking" });
   const [confirmingReset, setConfirmingReset] = useState(false);
+  const [projectError, setProjectError] = useState(false);
+  const [wallpaper, setWallpaper] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    loadWallpaperPreview().then((image) => { if (alive) setWallpaper(image); });
+    return () => { alive = false; };
+  }, []);
   /** "Later" hides the banner until Settings is opened again. */
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const pending = useRef<Partial<Config> | null>(null);
@@ -194,6 +207,10 @@ export function App() {
     if (info.notes) openReleaseNotes(info.notes).catch(() => {});
   }, []);
 
+  const showProject = useCallback(() => {
+    openRepository().then(() => setProjectError(false)).catch(() => setProjectError(true));
+  }, []);
+
   // Two clicks: the first arms the button, the second resets. Pinned and
   // recent apps stay; they belong to the user, not to the settings.
   const reset = useCallback(() => {
@@ -212,6 +229,7 @@ export function App() {
 
   if (!config) return <div className="window" />;
   const t = textsFor(config.language);
+  const durationFormat = new Intl.NumberFormat(config.language === "auto" ? navigator.language : config.language);
   const chooseFolder = () => {
     pickFolder(config.shortcutsFolder)
       .then((folder) => folder && update({ shortcutsFolder: folder }))
@@ -259,6 +277,15 @@ export function App() {
             </NavItem>
           ))}
         </nav>
+        <footer className="sidebar-footer">
+          <button type="button" className="project-link" onClick={showProject}>
+            <SettingIcon name="star" size={20} />
+            <span><strong>{t.githubTitle}</strong><span>{t.githubStar}</span></span>
+            <SettingIcon name="external" size={12} />
+          </button>
+          {projectError ? <p className="project-error" role="alert">{t.githubError}</p> : null}
+          <div className="sidebar-version"><span>Muelle</span><span>{version ? `v${version}` : ""}</span></div>
+        </footer>
       </aside>
 
       <main className="content">
@@ -280,19 +307,27 @@ export function App() {
         <div className="content-body">
           {section === "dock" ? (
             <>
-              <Card>
+              <Card title={t.groupAppearance}>
+                <VisualChoices<DockPosition>
+                  label={t.dockPosition}
+                  value={config.dockPosition}
+                  options={[
+                    { value: "left", label: t.dockPositionLeft, preview: <DockPreview position="left" iconSize={config.iconSize} wallpaper={wallpaper} /> },
+                    { value: "bottom", label: t.dockPositionBottom, preview: <DockPreview position="bottom" iconSize={config.iconSize} wallpaper={wallpaper} /> },
+                    { value: "right", label: t.dockPositionRight, preview: <DockPreview position="right" iconSize={config.iconSize} wallpaper={wallpaper} /> },
+                  ]}
+                  onChange={(dockPosition) => update({ dockPosition })}
+                />
                 <Row label={t.size}>
                   <Slider
                     label={t.size}
                     value={config.iconSize}
                     min={ICON_SIZE.min}
                     max={ICON_SIZE.max}
-                    before={t.small}
-                    after={t.large}
                     onChange={(iconSize) => update({ iconSize })}
                   />
                 </Row>
-                <Row label={t.magnification} hint={t.magnificationHint}>
+                <Row icon={<SettingIcon name="magnification" />} label={t.magnification} hint={t.magnificationHint}>
                   <Toggle
                     label={t.magnification}
                     checked={config.magnification}
@@ -305,42 +340,40 @@ export function App() {
                     value={config.magnifiedSize}
                     min={config.iconSize}
                     max={MAX_MAGNIFIED_SIZE}
-                    before={t.small}
-                    after={t.large}
                     onChange={(magnifiedSize) => update({ magnifiedSize })}
                   />
                 </SubRow>
               </Card>
               <Card title={t.groupBehavior}>
-                <Row label={t.autoHide} hint={t.autoHideHint}>
+                <Row icon={<SettingIcon name="hide" />} label={t.autoHide} hint={t.autoHideHint}>
                   <Toggle
                     label={t.autoHide}
                     checked={config.autoHide}
                     onChange={(autoHide) => update({ autoHide })}
                   />
                 </Row>
-                <Row label={t.bounceOnOpen}>
+                <Row icon={<SettingIcon name="bounce" />} label={t.bounceOnOpen}>
                   <Toggle
                     label={t.bounceOnOpen}
                     checked={config.bounceOnOpen}
                     onChange={(bounceOnOpen) => update({ bounceOnOpen })}
                   />
                 </Row>
-                <Row label={t.mascot} hint={t.mascotHint}>
+                <Row icon={<SettingIcon name="mascot" />} label={t.mascot} hint={t.mascotHint}>
                   <Toggle
                     label={t.mascot}
                     checked={config.mascot}
                     onChange={(mascot) => update({ mascot })}
                   />
                 </Row>
-                <Row label={t.showIndicators}>
+                <Row icon={<SettingIcon name="indicators" />} label={t.showIndicators}>
                   <Toggle
                     label={t.showIndicators}
                     checked={config.showIndicators}
                     onChange={(showIndicators) => update({ showIndicators })}
                   />
                 </Row>
-                <Row label={t.showRecents} hint={t.showRecentsHint}>
+                <Row icon={<SettingIcon name="recents" />} label={t.showRecents} hint={t.showRecentsHint}>
                   <Toggle
                     label={t.showRecents}
                     checked={config.showRecents}
@@ -349,7 +382,7 @@ export function App() {
                 </Row>
               </Card>
               <Card>
-                <Row label={t.shortcutsFolder} hint={config.shortcutsFolder ?? t.shortcutsFolderHint}>
+                <Row icon={<SettingIcon name="folder" />} label={t.shortcutsFolder} hint={config.shortcutsFolder ?? t.shortcutsFolderHint}>
                   <div className="push-group">
                     {config.shortcutsFolder ? (
                       <button type="button" className="push" onClick={() => update({ shortcutsFolder: null })}>
@@ -366,19 +399,32 @@ export function App() {
           ) : section === "windows" ? (
             <>
               <Card title={t.groupMinimize}>
-                <Row label={t.genie} hint={t.genieHint}>
+                <Row icon={<SettingIcon name="genie" />} label={t.genie} hint={t.genieHint}>
                   <Toggle
                     label={t.genie}
                     checked={config.genie}
                     onChange={(genie) => update({ genie })}
                   />
                 </Row>
+                <SubRow label={t.genieSpeed} open={config.genie} stacked>
+                  <VisualChoices<GenieSpeed>
+                    label={t.genieSpeed}
+                    hideLabel
+                    value={config.genieSpeed}
+                    options={[
+                      { value: "normal", label: t.genieSpeedNormal, preview: <SpeedPreview speed="normal" />, detail: `${durationFormat.format(0.5)} s` },
+                      { value: "fast", label: t.genieSpeedFast, preview: <SpeedPreview speed="fast" />, detail: `${durationFormat.format(0.35)} s` },
+                      { value: "faster", label: t.genieSpeedFaster, preview: <SpeedPreview speed="faster" />, detail: `${durationFormat.format(0.25)} s` },
+                    ]}
+                    onChange={(genieSpeed) => update({ genieSpeed })}
+                  />
+                </SubRow>
                 <SubRow label={t.genieOff} hint={t.genieOffHint} open={config.genie && !animations}>
                   <button type="button" className="push" onClick={() => void openAnimationSettings()}>
                     {t.genieOffAction}
                   </button>
                 </SubRow>
-                <Row label={t.showMinimized} hint={t.showMinimizedHint}>
+                <Row icon={<SettingIcon name="windows" />} label={t.showMinimized} hint={t.showMinimizedHint}>
                   <Toggle
                     label={t.showMinimized}
                     checked={config.showMinimized}
@@ -395,29 +441,100 @@ export function App() {
               </Card>
             </>
           ) : section === "menubar" ? (
-            <Card>
-              <Row label={t.menuBarShow} hint={t.menuBarHint}>
-                <Toggle
-                  label={t.menuBarShow}
-                  checked={config.menuBar}
-                  onChange={(menuBar) => update({ menuBar })}
-                />
-              </Row>
-              <SubRow label={t.menuBarAutoHide} hint={t.menuBarAutoHideHint} open={config.menuBar}>
-                <Toggle
-                  label={t.menuBarAutoHide}
-                  checked={config.menuBarAutoHide}
-                  onChange={(menuBarAutoHide) => update({ menuBarAutoHide })}
-                />
-              </SubRow>
-              <SubRow label={t.aiUsage} hint={t.aiUsageHint} open={config.menuBar}>
-                <Toggle
-                  label={t.aiUsage}
-                  checked={config.aiUsage}
-                  onChange={(aiUsage) => update({ aiUsage })}
-                />
-              </SubRow>
-            </Card>
+
+            <>
+              <Card>
+                <Row icon={<SettingIcon name="menu" />} label={t.menuBarShow} hint={t.menuBarHint}>
+                  <Toggle
+                    label={t.menuBarShow}
+                    checked={config.menuBar}
+                    onChange={(menuBar) => update({ menuBar })}
+                  />
+                </Row>
+                <SubRow label={t.menuBarAutoHide} hint={t.menuBarAutoHideHint} open={config.menuBar}>
+                  <Toggle
+                    label={t.menuBarAutoHide}
+                    checked={config.menuBarAutoHide}
+                    onChange={(menuBarAutoHide) => update({ menuBarAutoHide })}
+                  />
+                </SubRow>
+                <SubRow label={t.menuBarMusic} hint={t.menuBarMusicHint} open={config.menuBar}>
+                  <Toggle
+                    label={t.menuBarMusic}
+                    checked={config.menuBarMusic}
+                    onChange={(menuBarMusic) => update({ menuBarMusic })}
+                  />
+                </SubRow>
+                <SubRow label={t.aiUsage} hint={t.aiUsageHint} open={config.menuBar}>
+                  <Toggle
+                    label={t.aiUsage}
+                    checked={config.aiUsage}
+                    onChange={(aiUsage) => update({ aiUsage })}
+                  />
+                </SubRow>
+                <SubRow
+                  label={t.islandStyle}
+                  stacked
+                  open={config.menuBar && (config.menuBarMusic || config.aiUsage)}
+                >
+                  <VisualChoices<IslandStyle>
+                    label={t.islandStyle}
+                    hideLabel
+                    value={config.menuBarIslandStyle}
+                    options={[
+                      { value: "notch", label: t.islandStyleNotch, preview: <IslandPreview style="notch" wallpaper={wallpaper} /> },
+                      { value: "bubble", label: t.islandStyleBubble, preview: <IslandPreview style="bubble" wallpaper={wallpaper} /> },
+                    ]}
+                    onChange={(menuBarIslandStyle) => update({ menuBarIslandStyle })}
+                  />
+                </SubRow>
+                <SubRow label={t.accessoryBattery} hint={t.accessoryBatteryHint} open={config.menuBar}>
+                  <Toggle
+                    label={t.accessoryBattery}
+                    checked={config.accessoryBattery}
+                    onChange={(accessoryBattery) => update({ accessoryBattery })}
+                  />
+                </SubRow>
+              </Card>
+              {config.menuBar && (
+                <Card title={t.menuBarItems}>
+                  <Row icon={<SettingIcon name="bluetooth" />} label={t.menuBarBluetooth} hint={t.menuBarBluetoothHint}>
+                    <Toggle
+                      label={t.menuBarBluetooth}
+                      checked={config.menuBarBluetooth}
+                      onChange={(menuBarBluetooth) => update({ menuBarBluetooth })}
+                    />
+                  </Row>
+                  <Row icon={<SettingIcon name="battery" />} label={t.menuBarBatteryPercent} hint={t.menuBarBatteryPercentHint}>
+                    <Toggle
+                      label={t.menuBarBatteryPercent}
+                      checked={config.menuBarBatteryPercent ?? false}
+                      onChange={(menuBarBatteryPercent) => update({ menuBarBatteryPercent })}
+                    />
+                  </Row>
+                  <Row icon={<SettingIcon name="search" />} label={t.menuBarSearch} hint={t.menuBarSearchHint}>
+                    <Toggle
+                      label={t.menuBarSearch}
+                      checked={config.menuBarSearch ?? true}
+                      onChange={(menuBarSearch) => update({ menuBarSearch })}
+                    />
+                  </Row>
+                  <Row icon={<SettingIcon name="windows" />} label={t.menuBarTaskView} hint={t.menuBarTaskViewHint}>
+                    <Toggle
+                      label={t.menuBarTaskView}
+                      checked={config.menuBarTaskView ?? true}
+                      onChange={(menuBarTaskView) => update({ menuBarTaskView })}
+                    />
+                  </Row>
+                  <Row icon={<SettingIcon name="widgets" />} label={t.menuBarWidgets} hint={t.menuBarWidgetsHint}>
+                    <Toggle
+                      label={t.menuBarWidgets}
+                      checked={config.menuBarWidgets ?? true}
+                      onChange={(menuBarWidgets) => update({ menuBarWidgets })}
+                    />
+                  </Row>
+                </Card>
+              )}
           ) : section === "notifications" ? (
             <>
               <Card>
@@ -445,7 +562,7 @@ export function App() {
                     min={2}
                     max={15}
                     value={config.notificationDuration}
-                    after={`${config.notificationDuration}s`}
+                    unit="s"
                     onChange={(notificationDuration) => update({ notificationDuration })}
                   />
                 </SubRow>
@@ -474,13 +591,14 @@ export function App() {
                 </Row>
               </Card>
             </>
+            </>
           ) : (
             <>
               <Card>
-                <Row label={t.autostart}>
+                <Row icon={<SettingIcon name="start" />} label={t.autostart}>
                   <Toggle label={t.autostart} checked={autostart} onChange={changeAutostart} />
                 </Row>
-                <Row label={t.language}>
+                <Row icon={<SettingIcon name="language" />} label={t.language}>
                   <Segmented<Language>
                     label={t.language}
                     value={config.language}
@@ -495,7 +613,7 @@ export function App() {
                 </Row>
               </Card>
               <Card title={t.updates}>
-                <Row label={t.checkUpdates} hint={t.checkUpdatesHint}>
+                <Row icon={<SettingIcon name="updates" />} label={t.checkUpdates} hint={t.checkUpdatesHint}>
                   <Toggle
                     label={t.checkUpdates}
                     checked={config.checkUpdates}
@@ -509,7 +627,7 @@ export function App() {
                     onChange={(autoUpdate) => update({ autoUpdate })}
                   />
                 </SubRow>
-                <Row label={t.updatesNow} hint={updateHint(t, updateState, version)}>
+                <Row icon={<SettingIcon name="updates" />} label={t.updatesNow} hint={updateHint(t, updateState, version)}>
                   {waiting && updateState.kind !== "installing" ? (
                     <button type="button" className="push push-primary" onClick={() => install(waiting)}>
                       {t.updatesInstall}
@@ -527,7 +645,7 @@ export function App() {
                 </Row>
               </Card>
               <Card>
-                <Row label={t.reset} hint={confirmingReset ? t.resetConfirmHint : t.resetHint}>
+                <Row icon={<SettingIcon name="reset" />} label={t.reset} hint={confirmingReset ? t.resetConfirmHint : t.resetHint}>
                   <button
                     type="button"
                     className={confirmingReset ? "push push-danger" : "push"}

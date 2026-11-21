@@ -2,6 +2,7 @@
 //! icons and masks to be drawn on compositor surfaces.
 
 use anyhow::{Context, Result};
+use muelle_core::frame::DockEdge;
 use muelle_shell::icons::IconImage;
 use windows::{
     Foundation::Size,
@@ -34,7 +35,7 @@ use windows::{
             Direct3D::D3D_DRIVER_TYPE_WARP,
             Direct3D11::{
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_SINGLETHREADED,
-                D3D11_SDK_VERSION, D3D11CreateDevice,
+                D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
             },
             DirectWrite::{
                 DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -66,6 +67,13 @@ const WHITE: D2D1_COLOR_F = D2D1_COLOR_F {
     a: 1.0,
 };
 
+/// Shared font glyphs belong to drawing code, which is also used by the
+/// standalone diagnostics without a menu bar or application lifecycle.
+pub(crate) mod network_glyph {
+    pub const WIFI: [char; 4] = ['\u{E872}', '\u{E873}', '\u{E874}', '\u{E701}'];
+    pub const WIFI_FULL: char = '\u{E701}';
+}
+
 pub struct LabelBrush {
     pub brush: CompositionSurfaceBrush,
     pub width: f32,
@@ -76,9 +84,11 @@ pub struct LabelBrush {
 pub struct Gfx {
     pub compositor: Compositor,
     graphics: CompositionGraphicsDevice,
+    d3d: ID3D11Device,
     // Surfaces depend on this device, so it must outlive them.
     _d2d: ID2D1Device,
     dwrite: IDWriteFactory,
+    on_error: Option<fn(&anyhow::Error)>,
 }
 
 impl Gfx {
@@ -86,7 +96,7 @@ impl Gfx {
         let compositor = Compositor::new()?;
         // SAFETY: D3D writes only to the initialized output slot; the returned
         // device is immediately wrapped in an owned COM interface.
-        let (d2d, graphics) = unsafe {
+        let (d3d, d2d, graphics) = unsafe {
             let mut d3d = None;
             D3D11CreateDevice(
                 None,
@@ -99,19 +109,35 @@ impl Gfx {
                 None,
                 None,
             )?;
-            let dxgi: IDXGIDevice = d3d.context("Direct3D no devolvió un dispositivo")?.cast()?;
+            let d3d = d3d.context("Direct3D no devolvió un dispositivo")?;
+            let dxgi: IDXGIDevice = d3d.cast()?;
             let d2d = D2D1CreateDevice(&dxgi, None)?;
             let graphics = compositor
                 .cast::<ICompositorInterop>()?
                 .CreateGraphicsDevice(&d2d)?;
-            (d2d, graphics)
+            (d3d, d2d, graphics)
         };
         Ok(Self {
             compositor,
             graphics,
+            d3d,
             _d2d: d2d,
             dwrite: unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? },
+            on_error: None,
         })
+    }
+
+    pub fn with_error_handler(mut self, handler: fn(&anyhow::Error)) -> Self {
+        self.on_error = Some(handler);
+        self
+    }
+
+    /// A read-only query on the UI thread, reusing the watchdog's existing
+    /// heartbeat. Detects lost devices even when the dock has nothing to redraw.
+    pub fn check_device(&self) -> Result<()> {
+        // SAFETY: The owned device is queried only on its creation thread.
+        unsafe { self.d3d.GetDeviceRemovedReason()? };
+        Ok(())
     }
 
     /// Creates a `width` × `height` pixel surface, draws on it, and returns it
@@ -127,6 +153,20 @@ impl Gfx {
     }
 
     fn draw_surface(
+        &self,
+        width: u32,
+        height: u32,
+        paint: impl FnOnce(&ID2D1DeviceContext) -> Result<()>,
+    ) -> Result<CompositionDrawingSurface> {
+        self.try_draw_surface(width, height, paint)
+            .inspect_err(|error| {
+                if let Some(handler) = self.on_error {
+                    handler(error);
+                }
+            })
+    }
+
+    fn try_draw_surface(
         &self,
         width: u32,
         height: u32,
@@ -359,9 +399,16 @@ impl Gfx {
         })
     }
 
-    /// Creates an app-name label: a dark pill (light in light theme) with a
-    /// downward-pointing arrow.
-    pub fn label_brush(&self, text: &str, scale: f32, light: bool) -> Result<LabelBrush> {
+    /// Creates an app-name label: a dark pill (light in light theme) with an
+    /// arrow pointing at the icon: down on a bottom dock, toward the screen
+    /// edge on a side dock (the label sits beside the icon there).
+    pub fn label_brush(
+        &self,
+        text: &str,
+        scale: f32,
+        light: bool,
+        edge: DockEdge,
+    ) -> Result<LabelBrush> {
         let (pad_x, pad_y, arrow) = (11.0 * scale, 5.0 * scale, 6.0 * scale);
         let (fill, ink) = if light {
             (rgb(0.96, 0.96, 0.97, 0.92), rgb(0.0, 0.0, 0.0, 0.88))
@@ -390,51 +437,65 @@ impl Gfx {
         };
 
         let body_height = (metrics.height + 2.0 * pad_y).ceil();
-        let width = (metrics.width + 2.0 * pad_x).ceil();
-        let height = body_height + arrow;
+        let body_width = (metrics.width + 2.0 * pad_x).ceil();
+        let (width, height) = if edge.is_vertical() {
+            (body_width + arrow, body_height)
+        } else {
+            (body_width, body_height + arrow)
+        };
+        // Where the pill starts: after the arrow on a left dock's label.
+        let body_left = if edge == DockEdge::Left { arrow } else { 0.0 };
+        // The arrow: its base on the pill (1 px into it, so no seam shows)
+        // and its tip pointing at the icon.
+        let (base_a, base_b, tip) = match edge {
+            DockEdge::Bottom => (
+                (width / 2.0 - arrow, body_height - 1.0),
+                (width / 2.0 + arrow, body_height - 1.0),
+                (width / 2.0, height),
+            ),
+            DockEdge::Left => (
+                (arrow + 1.0, height / 2.0 - arrow),
+                (arrow + 1.0, height / 2.0 + arrow),
+                (0.0, height / 2.0),
+            ),
+            DockEdge::Right => (
+                (body_width - 1.0, height / 2.0 - arrow),
+                (body_width - 1.0, height / 2.0 + arrow),
+                (width, height / 2.0),
+            ),
+        };
         let brush = self.draw(width as u32, height as u32, |dc| {
             let body = D2D1_ROUNDED_RECT {
                 rect: D2D_RECT_F {
-                    left: 0.0,
+                    left: body_left,
                     top: 0.0,
-                    right: width,
+                    right: body_left + body_width,
                     bottom: body_height,
                 },
                 radiusX: 7.0 * scale,
                 radiusY: 7.0 * scale,
             };
-            let middle = width / 2.0;
             // SAFETY: All created objects remain alive until the end of the block.
             unsafe {
                 let fill = dc.CreateSolidColorBrush(&fill, None)?;
                 dc.FillRoundedRectangle(&body, &fill);
 
-                // The arrow triangle hangs from the center of the pill and
-                // overlaps it by 1 px to avoid a visible seam.
                 let triangle = dc.GetFactory()?.CreatePathGeometry()?;
                 let sink = triangle.Open()?;
-                sink.BeginFigure(
-                    Vector2 {
-                        X: middle - arrow,
-                        Y: body_height - 1.0,
-                    },
-                    D2D1_FIGURE_BEGIN_FILLED,
-                );
-                sink.AddLine(Vector2 {
-                    X: middle + arrow,
-                    Y: body_height - 1.0,
-                });
-                sink.AddLine(Vector2 {
-                    X: middle,
-                    Y: height,
-                });
+                let point = |(x, y): (f32, f32)| Vector2 { X: x, Y: y };
+                sink.BeginFigure(point(base_a), D2D1_FIGURE_BEGIN_FILLED);
+                sink.AddLine(point(base_b));
+                sink.AddLine(point(tip));
                 sink.EndFigure(D2D1_FIGURE_END_CLOSED);
                 sink.Close()?;
                 dc.FillGeometry(&triangle, &fill, None);
 
                 let ink = dc.CreateSolidColorBrush(&ink, None)?;
                 dc.DrawTextLayout(
-                    Vector2 { X: pad_x, Y: pad_y },
+                    Vector2 {
+                        X: body_left + pad_x,
+                        Y: pad_y,
+                    },
                     &layout,
                     &ink,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
@@ -1197,6 +1258,103 @@ impl Gfx {
         })
     }
 
+    /// Wi-Fi icon filled to `bars` with faint fan background.
+    /// If `has_internet` is false, an exclamation mark is drawn beside the Wi-Fi icon.
+    pub fn wifi_brush(
+        &self,
+        bars: u8,
+        has_internet: bool,
+        scale: f32,
+        ink: Ink,
+    ) -> Result<LabelBrush> {
+        let icon_side = (18.0 * scale).round();
+        let width = if has_internet {
+            icon_side
+        } else {
+            (icon_side + 7.0 * scale).round()
+        };
+        let height = icon_side;
+        // SAFETY: The format lives for the drawing below.
+        let format = unsafe {
+            let format = self.dwrite.CreateTextFormat(
+                icon_font(),
+                None,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                15.0 * scale,
+                w!(""),
+            )?;
+            format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
+            format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+            format
+        };
+        let brush = self.draw(width as u32, height as u32, |dc| {
+            let icon_area = D2D_RECT_F {
+                left: 0.0,
+                top: 0.0,
+                right: icon_side,
+                bottom: height,
+            };
+            // SAFETY: The brush, format and text live for each drawing call.
+            unsafe {
+                let ink_brush = dc.CreateSolidColorBrush(&ink.color(), None)?;
+                let wifi_glyph = network_glyph::WIFI[usize::from(bars.clamp(1, 4)) - 1];
+                for &(glyph, opacity) in &[(network_glyph::WIFI_FULL, 0.3f32), (wifi_glyph, 1.0f32)]
+                {
+                    let mut units = [0u16; 2];
+                    let text = glyph.encode_utf16(&mut units);
+                    ink_brush.SetOpacity(opacity);
+                    dc.DrawText(
+                        text,
+                        &format,
+                        &icon_area,
+                        &ink_brush,
+                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                        DWRITE_MEASURING_MODE_NATURAL,
+                    );
+                }
+                if !has_internet {
+                    let warn_color = rgb(0.98, 0.60, 0.0, 1.0);
+                    let warn_brush = dc.CreateSolidColorBrush(&warn_color, None)?;
+                    let ex_x = icon_side + 2.5 * scale;
+                    let stroke = (1.8 * scale).max(1.0);
+                    let bar_top = height * 0.22;
+                    let bar_bottom = height * 0.58;
+                    dc.DrawLine(
+                        Vector2 {
+                            X: ex_x,
+                            Y: bar_top,
+                        },
+                        Vector2 {
+                            X: ex_x,
+                            Y: bar_bottom,
+                        },
+                        &warn_brush,
+                        stroke,
+                        None,
+                    );
+                    let dot_radius = (stroke * 0.55).max(1.0);
+                    let dot_y = height * 0.74;
+                    dc.FillEllipse(
+                        &D2D1_ELLIPSE {
+                            point: Vector2 { X: ex_x, Y: dot_y },
+                            radiusX: dot_radius,
+                            radiusY: dot_radius,
+                        },
+                        &warn_brush,
+                    );
+                }
+            }
+            Ok(())
+        })?;
+        Ok(LabelBrush {
+            brush,
+            width,
+            height,
+        })
+    }
+
     /// Two switches, one on and one off: the control center glyph.
     pub fn control_center_brush(&self, scale: f32, ink: Ink) -> Result<LabelBrush> {
         let (width, height) = ((19.0 * scale).round(), (16.0 * scale).round());
@@ -1242,11 +1400,12 @@ impl Gfx {
         })
     }
 
-    /// Battery outline filled to `percent`, green while charging.
+    /// Battery outline filled to `percent`, green while charging, orange on saver.
     pub fn battery_brush(
         &self,
         percent: u8,
         charging: bool,
+        saver: bool,
         scale: f32,
         ink: Ink,
     ) -> Result<LabelBrush> {
@@ -1257,6 +1416,8 @@ impl Gfx {
             let body_right = width - cap - stroke;
             let level = if charging {
                 rgb(0.20, 0.78, 0.35, 1.0)
+            } else if saver {
+                rgb(0.98, 0.60, 0.0, 1.0)
             } else if percent <= 20 {
                 rgb(1.0, 0.27, 0.23, 1.0)
             } else {
@@ -1422,6 +1583,45 @@ fn icon_font() -> windows::core::PCWSTR {
 
 const fn rgb(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r, g, b, a }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use windows::Win32::{
+        Foundation::D2DERR_RECREATE_TARGET,
+        System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        },
+    };
+
+    #[test]
+    fn drawing_error_reaches_observer_and_balances_begin_end_draw() -> Result<()> {
+        static ERRORS: AtomicUsize = AtomicUsize::new(0);
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?.with_error_handler(|_| {
+            ERRORS.fetch_add(1, Ordering::Relaxed);
+        });
+        gfx.check_device()?;
+        // Synthetic loss at the drawing boundary; the real software device
+        // remains usable, allowing us to verify EndDraw ran despite the error.
+        let failed = gfx.draw_surface(2, 2, |_| {
+            Err(windows::core::Error::from_hresult(D2DERR_RECREATE_TARGET).into())
+        });
+        assert!(failed.is_err());
+        assert_eq!(ERRORS.load(Ordering::Relaxed), 1);
+        gfx.draw_surface(2, 2, |_| Ok(()))?;
+        gfx.check_device()?;
+        Ok(())
+    }
 }
 
 /// Foreground color of menu bar content, by theme.

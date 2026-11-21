@@ -51,7 +51,8 @@ use windows::{
                 SPI_GETSCREENREADER, SW_SHOWNA, SWP_NOACTIVATE,
                 SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor, SetForegroundWindow, SetTimer,
                 SetWindowPos, ShowWindow, SystemParametersInfoW, TPM_BOTTOMALIGN, TPM_CENTERALIGN,
-                TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenuEx,
+                TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_RIGHTBUTTON,
+                TPM_TOPALIGN, TPM_VCENTERALIGN, TRACK_POPUP_MENU_FLAGS, TrackPopupMenuEx,
                 TranslateMessage, WA_INACTIVE, WM_ACTIVATE, WM_CANCELMODE, WM_CAPTURECHANGED,
                 WM_CHAR, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE,
                 WM_NULL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER,
@@ -88,13 +89,20 @@ impl MenuItem {
     }
 }
 
-/// Shows the menu with its bottom edge centered at `anchor` and returns the
+/// Shows the menu on the `placement` side of `anchor` and returns the
 /// selected command (`None` if dismissed).
 ///
 /// Runs a modal loop that continues dispatching messages to dock windows.
 /// The caller must not hold the app state while this function runs.
-pub fn show(gfx: &Gfx, owner: HWND, items: &[MenuItem], anchor: POINT, dark: bool) -> Option<u32> {
-    show_at(gfx, owner, items, anchor, dark, Placement::Above)
+pub fn show(
+    gfx: &Gfx,
+    owner: HWND,
+    items: &[MenuItem],
+    anchor: POINT,
+    dark: bool,
+    placement: Placement,
+) -> Option<u32> {
+    show_at(gfx, owner, items, anchor, dark, placement)
 }
 
 pub fn show_below(
@@ -107,10 +115,39 @@ pub fn show_below(
     show_at(gfx, owner, items, anchor, dark, Placement::Below)
 }
 
-#[derive(Clone, Copy)]
-enum Placement {
+/// Where a menu opens from its anchor point: above it, centred (an icon on
+/// a bottom dock), below it, or beside it, centred vertically (an icon on a
+/// side dock: to its right on a left dock, to its left on a right one).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Placement {
     Above,
     Below,
+    Right,
+    Left,
+}
+
+impl Placement {
+    /// The same placement for `TrackPopupMenuEx`.
+    #[must_use]
+    pub fn native_flags(self) -> TRACK_POPUP_MENU_FLAGS {
+        match self {
+            Self::Above => TPM_CENTERALIGN | TPM_BOTTOMALIGN,
+            Self::Below => TPM_CENTERALIGN | TPM_TOPALIGN,
+            Self::Right => TPM_LEFTALIGN | TPM_VCENTERALIGN,
+            Self::Left => TPM_RIGHTALIGN | TPM_VCENTERALIGN,
+        }
+    }
+
+    /// Top-left corner of a `w` x `h` menu placed from `anchor`, before
+    /// keeping it on screen.
+    fn corner(self, anchor: POINT, w: i32, h: i32) -> (i32, i32) {
+        match self {
+            Self::Above => (anchor.x - w / 2, anchor.y - h),
+            Self::Below => (anchor.x - w / 2, anchor.y),
+            Self::Right => (anchor.x, anchor.y - h / 2),
+            Self::Left => (anchor.x - w, anchor.y - h / 2),
+        }
+    }
 }
 
 fn show_at(
@@ -360,7 +397,7 @@ impl Popup {
             }
         }
 
-        // Above the anchor, centered on it, and inside its monitor.
+        // Placed from the anchor, and inside its monitor.
         let mut monitor = MONITORINFO {
             cbSize: size_of::<MONITORINFO>() as u32,
             ..Default::default()
@@ -375,15 +412,12 @@ impl Popup {
         let screen: RECT = monitor.rcMonitor;
         let (w, h) = (width as i32, height as i32);
         let margin = px(MARGIN) as i32;
-        let left = (anchor.x - w / 2).clamp(
+        let (left, top) = placement.corner(anchor, w, h);
+        let left = left.clamp(
             screen.left + margin,
             (screen.right - margin - w).max(screen.left + margin),
         );
-        let top = match placement {
-            Placement::Above => anchor.y - h,
-            Placement::Below => anchor.y,
-        }
-        .clamp(
+        let top = top.clamp(
             screen.top + margin,
             (screen.bottom - margin - h).max(screen.top + margin),
         );
@@ -880,15 +914,7 @@ fn show_native(
         let _ = SetForegroundWindow(owner);
         let chosen = TrackPopupMenuEx(
             menu,
-            (TPM_RETURNCMD
-                | TPM_NONOTIFY
-                | TPM_RIGHTBUTTON
-                | TPM_CENTERALIGN
-                | match placement {
-                    Placement::Above => TPM_BOTTOMALIGN,
-                    Placement::Below => TPM_TOPALIGN,
-                })
-            .0,
+            (TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | placement.native_flags()).0,
             anchor.x,
             anchor.y,
             owner,

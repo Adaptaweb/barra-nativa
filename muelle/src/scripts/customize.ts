@@ -28,6 +28,7 @@ export function initCustomize(root: HTMLElement) {
   const dock = root.querySelector<HTMLElement>("[data-preview-dock]");
   const bar = root.querySelector<HTMLElement>("[data-preview-bar]");
   const island = root.querySelector<HTMLElement>("[data-preview-island]");
+  const accessories = root.querySelector<HTMLElement>("[data-preview-accessories]");
   const textNode = root.querySelector<HTMLScriptElement>("[data-settings-text]");
   if (!scene || !preview || !dock || !bar || !textNode) return;
 
@@ -123,6 +124,8 @@ export function initCustomize(root: HTMLElement) {
       row.hidden = !isOn("menuBar");
     });
     island?.toggleAttribute("hidden", !isOn("aiUsage"));
+    accessories?.toggleAttribute("hidden", !isOn("accessoryBattery"));
+    bar.classList.toggle("has-accessories", isOn("accessoryBattery"));
   };
 
   preview.addEventListener("pointermove", (event) => {

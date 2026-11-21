@@ -79,7 +79,7 @@ export const anatomy: AnatomyGroup[] = [
 export const customizeIntro = {
   eyebrow: "Settings",
   title: "Make it yours.",
-  lead: "A real settings window, in English or Spanish. Every change reaches the dock the moment you make it. Try it here.",
+  lead: "A real settings window, in English or Spanish. Try each change here, including optional mouse and headset battery indicators. Accessory monitoring stays off until you enable it.",
 } as const;
 
 /** The preview dock in the Customize scene. */
@@ -105,6 +105,7 @@ export const settingsDefaults = {
   menuBar: true,
   menuBarAutoHide: false,
   aiUsage: true,
+  accessoryBattery: false,
   genie: true,
   showMinimized: false,
   autostart: true,
@@ -134,6 +135,9 @@ export const settingsText = {
     menuBarAutoHideHint: "It reappears when you touch the top edge of the screen.",
     aiUsage: "Show AI provider usage",
     aiUsageHint: "While a supported AI client is open, an island in the menu bar shows its available plan limits.",
+    accessoryBattery: "Show accessory battery",
+    accessoryBatteryHint: "Battery levels for supported mice and headsets. While off, no accessories are monitored or queried.",
+    accessoryPreviewHint: "Turn this on to preview a connected mouse and headset. The values are examples; device support varies.",
     genie: "Genie effect",
     genieHint: "While it is on, windows do not use the Windows animations for maximizing or closing.",
     showMinimized: "Show minimized windows",
@@ -170,6 +174,9 @@ export const settingsText = {
     menuBarAutoHideHint: "Reaparece al tocar el borde superior de la pantalla.",
     aiUsage: "Mostrar uso de proveedores de IA",
     aiUsageHint: "Mientras un cliente de IA compatible está abierto, una isla en la barra superior muestra sus límites disponibles.",
+    accessoryBattery: "Mostrar batería de accesorios",
+    accessoryBatteryHint: "Batería de ratones y auriculares compatibles. Desactivado, no detecta ni consulta accesorios.",
+    accessoryPreviewHint: "Actívalo para ver un ratón y unos auriculares conectados. Los valores son ejemplos; la compatibilidad depende del dispositivo.",
     genie: "Efecto genio",
     genieHint: "Mientras está activo, las ventanas no usan las animaciones de Windows al maximizar ni al cerrar.",
     showMinimized: "Mostrar ventanas minimizadas",

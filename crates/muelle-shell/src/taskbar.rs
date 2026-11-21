@@ -43,6 +43,11 @@ pub fn take_over() -> bool {
     take_over_taskbars(&taskbars(), &state_file())
 }
 
+/// Whether Explorer has restored the visibility of a taskbar window.
+pub fn needs_visibility_repair() -> bool {
+    taskbars().into_iter().any(|hwnd| !is_ghosted(hwnd))
+}
+
 fn take_over_taskbars(bars: &[HWND], file: &std::path::Path) -> bool {
     // A logon task can run before Explorer creates Shell_TrayWnd. Saving
     // an absent shell's state would lose the user's original preference.
@@ -64,10 +69,12 @@ fn take_over_taskbars(bars: &[HWND], file: &std::path::Path) -> bool {
             return false;
         }
     }
-    set_autohide(true);
+    if !autohide_enabled() {
+        set_autohide(true);
+    }
     let mut hidden = true;
     for &hwnd in bars {
-        hidden &= set_ghost(hwnd, true);
+        hidden &= is_ghosted(hwnd) || set_ghost(hwnd, true);
     }
     hidden
 }
@@ -157,15 +164,21 @@ fn set_ghost(hwnd: HWND, ghost: bool) -> bool {
             let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style & !GHOST_STYLES);
         }
-        if !ghost {
-            return true;
+    }
+    !ghost || is_ghosted(hwnd)
+}
+
+fn is_ghosted(hwnd: HWND) -> bool {
+    // SAFETY: Read-only queries with valid outputs. A destroyed window fails the check.
+    unsafe {
+        if GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & GHOST_STYLES != GHOST_STYLES {
+            return false;
         }
         let mut alpha = 255;
         let mut flags = Default::default();
         GetLayeredWindowAttributes(hwnd, None, Some(&mut alpha), Some(&mut flags)).is_ok()
             && alpha == 0
             && flags.contains(LWA_ALPHA)
-            && GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & GHOST_STYLES == GHOST_STYLES
     }
 }
 
@@ -205,11 +218,18 @@ mod tests {
                 None,
                 None,
             )?;
+            let initially_ghosted = is_ghosted(window);
             let hidden = set_ghost(window, true);
+            SetLayeredWindowAttributes(window, COLORREF(0), 255, LWA_ALPHA)?;
+            let reset_was_detected = !is_ghosted(window);
+            let hidden_again = set_ghost(window, true);
             let restored = set_ghost(window, false);
             let styles = GetWindowLongPtrW(window, GWL_EXSTYLE);
             let _ = DestroyWindow(window);
+            assert!(!initially_ghosted);
             assert!(hidden);
+            assert!(reset_was_detected);
+            assert!(hidden_again);
             assert!(restored);
             assert_eq!(styles & GHOST_STYLES, 0);
         }

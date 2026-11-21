@@ -2253,7 +2253,7 @@ dependencies = [
 
 [[package]]
 name = "muelle"
-version = "0.1.15"
+version = "0.1.18"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2265,6 +2265,7 @@ dependencies = [
  "serde",
  "serde_json",
  "windows",
+ "windows-collections",
  "windows-core",
  "windows-future",
  "windows-numerics",
@@ -2273,7 +2274,7 @@ dependencies = [
 
 [[package]]
 name = "muelle-config"
-version = "0.1.15"
+version = "0.1.18"
 dependencies = [
  "serde",
  "serde_json",
@@ -2282,14 +2283,16 @@ dependencies = [
 
 [[package]]
 name = "muelle-core"
-version = "0.1.15"
+version = "0.1.18"
 
 [[package]]
 name = "muelle-settings"
-version = "0.1.15"
+version = "0.1.18"
 dependencies = [
+ "base64 0.23.1",
  "muelle-config",
  "muelle-shell",
+ "png",
  "serde",
  "serde_json",
  "tauri",
@@ -2300,8 +2303,9 @@ dependencies = [
 
 [[package]]
 name = "muelle-shell"
-version = "0.1.15"
+version = "0.1.18"
 dependencies = [
+ "serde",
  "thiserror 2.0.21",
  "windows",
  "windows-core",
@@ -3764,8 +3768,12 @@ name = "spikes"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "muelle-core",
  "muelle-shell",
+ "serde",
+ "serde_json",
  "windows",
+ "windows-collections",
  "windows-core",
  "windows-numerics",
 ]

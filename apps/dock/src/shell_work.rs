@@ -18,10 +18,11 @@ use muelle_shell::{files, launcher, pins::unpin_from_taskbar, recycle_bin};
 use serde::{Deserialize, Serialize};
 use windows::Win32::{
     Foundation::{HANDLE, HWND, WAIT_TIMEOUT},
-    System::Com::{
-        COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
+    System::{
+        Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize},
+        Diagnostics::Debug::{SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, SetErrorMode},
+        Threading::WaitForSingleObject,
     },
-    System::Threading::WaitForSingleObject,
     UI::WindowsAndMessaging::AllowSetForegroundWindow,
 };
 
@@ -185,13 +186,20 @@ pub fn dispatch(action: Action) -> Result<()> {
 /// A rejected request must be visible to the user, without blocking the UI
 /// or creating a new dialog for every repeated click on a full queue.
 pub fn notify_not_started() {
+    notify_failure(crate::strings::text().shell_operation_failed);
+}
+
+pub fn notify_end_task_failed() {
+    notify_failure(crate::strings::text().end_task_failed);
+}
+
+fn notify_failure(message: &'static str) {
     use std::sync::atomic::{AtomicBool, Ordering};
     use windows::Win32::UI::WindowsAndMessaging::{MB_ICONWARNING, MB_OK, MessageBoxW};
     static SHOWING: AtomicBool = AtomicBool::new(false);
     if SHOWING.swap(true, Ordering::AcqRel) {
         return;
     }
-    let message = crate::strings::text().shell_operation_failed;
     let shown = thread::Builder::new()
         .name("muelle-shell-notice".into())
         .spawn(move || {
@@ -266,6 +274,10 @@ fn read_action(input: impl Read) -> Result<Action> {
 }
 
 pub fn worker_main() -> Result<()> {
+    // SAFETY: Suppress system modal error popups (missing DLLs or ordinals in 3rd-party shell extensions).
+    unsafe {
+        let _ = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+    }
     let action = read_action(std::io::stdin().lock())?;
     // SAFETY: The helper owns this apartment and balances it after the native
     // shell action returns. Shell launch calls wait for activation before exit.
