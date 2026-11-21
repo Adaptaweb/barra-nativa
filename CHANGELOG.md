@@ -8,6 +8,8 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+## [0.1.18]
+
 ### English
 
 - A folder or window picker left open no longer re-sends its unchanged visuals
