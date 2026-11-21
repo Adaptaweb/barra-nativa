@@ -418,6 +418,62 @@ export function App() {
                 />
               </SubRow>
             </Card>
+          ) : section === "notifications" ? (
+            <>
+              <Card>
+                <Row label={t.notificationsEnabled} hint={t.notificationsHint}>
+                  <Toggle
+                    label={t.notificationsEnabled}
+                    checked={config.notifications}
+                    onChange={(notifications) => update({ notifications })}
+                  />
+                </Row>
+                <SubRow label={t.notificationPosition} open={config.notifications}>
+                  <Segmented
+                    label={t.notificationPosition}
+                    value={config.notificationPosition}
+                    options={[
+                      { value: "top-right", label: t.notificationPositionTopRight },
+                      { value: "bottom-right", label: t.notificationPositionBottomRight },
+                    ]}
+                    onChange={(notificationPosition) => update({ notificationPosition })}
+                  />
+                </SubRow>
+                <SubRow label={t.notificationDuration} open={config.notifications}>
+                  <Slider
+                    label={t.notificationDuration}
+                    min={2}
+                    max={15}
+                    value={config.notificationDuration}
+                    after={`${config.notificationDuration}s`}
+                    onChange={(notificationDuration) => update({ notificationDuration })}
+                  />
+                </SubRow>
+              </Card>
+              <Card>
+                <Row label={t.notificationBadges} hint={t.notificationBadgesHint}>
+                  <Toggle
+                    label={t.notificationBadges}
+                    checked={config.notificationBadges}
+                    onChange={(notificationBadges) => update({ notificationBadges })}
+                  />
+                </Row>
+                <Row label={t.notificationBounce} hint={t.notificationBounceHint}>
+                  <Toggle
+                    label={t.notificationBounce}
+                    checked={config.notificationBounce}
+                    onChange={(notificationBounce) => update({ notificationBounce })}
+                  />
+                </Row>
+                <Row label={t.notificationDnd} hint={t.notificationDndHint}>
+                  <Toggle
+                    label={t.notificationDnd}
+                    checked={config.notificationDnd}
+                    onChange={(notificationDnd) => update({ notificationDnd })}
+                  />
+                </Row>
+              </Card>
+            </>
           ) : (
             <>
               <Card>
@@ -513,7 +569,7 @@ function updateHint(t: Texts, state: UpdateState, version: string): string {
   }
 }
 
-const SECTIONS: readonly SectionId[] = ["dock", "windows", "menubar", "system"];
+const SECTIONS: readonly SectionId[] = ["dock", "windows", "menubar", "notifications", "system"];
 
 function sectionTitle(t: Texts, section: SectionId): string {
   switch (section) {
@@ -523,6 +579,8 @@ function sectionTitle(t: Texts, section: SectionId): string {
       return t.windows;
     case "menubar":
       return t.menuBar;
+    case "notifications":
+      return t.notifications;
     case "system":
       return t.system;
   }

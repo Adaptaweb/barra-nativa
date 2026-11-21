@@ -38,11 +38,12 @@ use windows::{
             },
             DirectWrite::{
                 DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-                DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-                DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
-                DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_METRICS, DWRITE_TRIMMING,
-                DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP,
-                DWriteCreateFactory, IDWriteFactory, IDWriteTextLayout,
+                DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_MEASURING_MODE_NATURAL,
+                DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_CENTER,
+                DWRITE_TEXT_METRICS, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER,
+                DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory, IDWriteFactory,
+                IDWriteTextLayout,
             },
             Dxgi::{Common::DXGI_FORMAT_B8G8R8A8_UNORM, IDXGIDevice},
         },
@@ -760,6 +761,189 @@ impl Gfx {
                     &cross_brush,
                     stroke_width,
                     None,
+                );
+            }
+            Ok(())
+        })
+    }
+
+    /// Red notification count badge (macOS style), e.g. "1", "4", "99+".
+    pub fn notification_badge_brush(&self, count: usize, scale: f32) -> Result<LabelBrush> {
+        let text = if count > 99 {
+            "99+".to_string()
+        } else {
+            count.to_string()
+        };
+        let font_size = 11.0 * scale;
+        let pad_h = 6.0 * scale;
+        let pad_v = 2.0 * scale;
+
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        let (layout, metrics) = unsafe {
+            let format = self.dwrite.CreateTextFormat(
+                text_font(),
+                None,
+                DWRITE_FONT_WEIGHT_BOLD,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                font_size,
+                w!(""),
+            )?;
+            let layout = self
+                .dwrite
+                .CreateTextLayout(&utf16, &format, 256.0, 128.0)?;
+            let mut metrics = DWRITE_TEXT_METRICS::default();
+            layout.GetMetrics(&mut metrics)?;
+            (layout, metrics)
+        };
+
+        let diameter = (metrics.height + 2.0 * pad_v).max(18.0 * scale).ceil();
+        let width = (metrics.width + 2.0 * pad_h).max(diameter).ceil();
+        let height = diameter;
+
+        let brush = self.draw(width as u32, height as u32, |dc| {
+            let radius = height / 2.0;
+            let body = D2D1_ROUNDED_RECT {
+                rect: D2D_RECT_F {
+                    left: 0.0,
+                    top: 0.0,
+                    right: width,
+                    bottom: height,
+                },
+                radiusX: radius,
+                radiusY: radius,
+            };
+            unsafe {
+                // macOS traffic-light red badge with slight border for separation
+                let bg_color = rgb(1.0, 0.23, 0.19, 1.0);
+                let bg_brush = dc.CreateSolidColorBrush(&bg_color, None)?;
+                dc.FillRoundedRectangle(&body, &bg_brush);
+
+                let text_color = rgb(1.0, 1.0, 1.0, 1.0);
+                let text_brush = dc.CreateSolidColorBrush(&text_color, None)?;
+                let text_origin = Vector2 {
+                    X: ((width - metrics.width) / 2.0).floor(),
+                    Y: ((height - metrics.height) / 2.0).floor(),
+                };
+                dc.DrawTextLayout(
+                    text_origin,
+                    &layout,
+                    &text_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                );
+            }
+            Ok(())
+        })?;
+
+        Ok(LabelBrush {
+            brush,
+            width,
+            height,
+        })
+    }
+
+    /// A glass notification card with title, body, and rounded corners.
+    pub fn notification_banner_brush(
+        &self,
+        title: &str,
+        body: &str,
+        width: f32,
+        height: f32,
+        scale: f32,
+        light: bool,
+    ) -> Result<CompositionSurfaceBrush> {
+        let title_utf16: Vec<u16> = title.encode_utf16().collect();
+        let body_utf16: Vec<u16> = body.encode_utf16().collect();
+        let avail_w = (width - 52.0 * scale).max(50.0);
+
+        let (title_layout, body_layout) = unsafe {
+            let t_format = self.dwrite.CreateTextFormat(
+                text_font(),
+                None,
+                DWRITE_FONT_WEIGHT_BOLD,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                13.0 * scale,
+                w!(""),
+            )?;
+            let t_layout =
+                self.dwrite
+                    .CreateTextLayout(&title_utf16, &t_format, avail_w, 24.0 * scale)?;
+
+            let b_format = self.dwrite.CreateTextFormat(
+                text_font(),
+                None,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                11.5 * scale,
+                w!(""),
+            )?;
+            let b_layout =
+                self.dwrite
+                    .CreateTextLayout(&body_utf16, &b_format, avail_w, 32.0 * scale)?;
+
+            (t_layout, b_layout)
+        };
+
+        self.draw(width as u32, height as u32, |dc| {
+            let rounded = D2D1_ROUNDED_RECT {
+                rect: D2D_RECT_F {
+                    left: 0.0,
+                    top: 0.0,
+                    right: width,
+                    bottom: height,
+                },
+                radiusX: 14.0 * scale,
+                radiusY: 14.0 * scale,
+            };
+            unsafe {
+                let fill_color = if light {
+                    rgb(0.97, 0.97, 0.98, 0.94)
+                } else {
+                    rgb(0.12, 0.12, 0.14, 0.92)
+                };
+                let brush = dc.CreateSolidColorBrush(&fill_color, None)?;
+                dc.FillRoundedRectangle(&rounded, &brush);
+
+                let border_color = if light {
+                    rgb(0.0, 0.0, 0.0, 0.08)
+                } else {
+                    rgb(1.0, 1.0, 1.0, 0.12)
+                };
+                let border_brush = dc.CreateSolidColorBrush(&border_color, None)?;
+                dc.DrawRoundedRectangle(&rounded, &border_brush, 1.0, None);
+
+                let title_color = if light {
+                    rgb(0.08, 0.08, 0.09, 0.95)
+                } else {
+                    rgb(0.95, 0.95, 0.97, 0.98)
+                };
+                let title_brush = dc.CreateSolidColorBrush(&title_color, None)?;
+                dc.DrawTextLayout(
+                    Vector2 {
+                        X: 16.0 * scale,
+                        Y: 12.0 * scale,
+                    },
+                    &title_layout,
+                    &title_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                );
+
+                let body_color = if light {
+                    rgb(0.35, 0.35, 0.38, 0.90)
+                } else {
+                    rgb(0.72, 0.72, 0.75, 0.90)
+                };
+                let body_brush = dc.CreateSolidColorBrush(&body_color, None)?;
+                dc.DrawTextLayout(
+                    Vector2 {
+                        X: 16.0 * scale,
+                        Y: 34.0 * scale,
+                    },
+                    &body_layout,
+                    &body_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
                 );
             }
             Ok(())

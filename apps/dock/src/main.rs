@@ -25,6 +25,7 @@ mod media;
 mod menu;
 mod menubar;
 mod multi_window_view;
+mod notification_banner;
 mod scene;
 mod shell_work;
 mod strings;
@@ -76,7 +77,65 @@ fn main() -> Result<()> {
         [guard::FLAG, pid] => guard::run(pid.parse().context("pid no válido")?),
         ["--usage-worker"] => usage::worker_main(),
         [shell_work::FLAG] => shell_work::worker_main(),
-        _ => bail!("uso: muelle [--quit | --restore | --autostart on|off]"),
+        ["notify", rest @ ..] | ["--notify", rest @ ..] => handle_notify_cli(rest),
+        _ => bail!("uso: muelle [--quit | --restore | --autostart on|off | notify]"),
+    }
+}
+
+fn handle_notify_cli(args: &[&str]) -> Result<()> {
+    let mut title = String::new();
+    let mut body = String::new();
+    let mut app = "Terminal".to_string();
+    let mut icon: Option<String> = None;
+    let mut duration_secs = 5u32;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i] {
+            "--title" if i + 1 < args.len() => {
+                title = args[i + 1].to_string();
+                i += 2;
+            }
+            "--body" if i + 1 < args.len() => {
+                body = args[i + 1].to_string();
+                i += 2;
+            }
+            "--app" if i + 1 < args.len() => {
+                app = args[i + 1].to_string();
+                i += 2;
+            }
+            "--icon" if i + 1 < args.len() => {
+                icon = Some(args[i + 1].to_string());
+                i += 2;
+            }
+            "--duration" if i + 1 < args.len() => {
+                duration_secs = args[i + 1].parse().unwrap_or(5);
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+
+    if title.is_empty() && body.is_empty() {
+        bail!(
+            "uso: muelle notify --title <título> --body <cuerpo> [--app <app>] [--icon <ruta>] [--duration <segundos>]"
+        );
+    }
+
+    let payload = muelle_shell::dock_link::NotificationPayload {
+        app_id: app.clone(),
+        app_name: app,
+        title,
+        body,
+        icon_path: icon,
+        duration_secs,
+    };
+
+    if muelle_shell::dock_link::post_notification(&payload) {
+        println!("Notificación enviada a Muelle.");
+        Ok(())
+    } else {
+        bail!("No se pudo entregar la notificación: Muelle no está en ejecución.");
     }
 }
 

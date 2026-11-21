@@ -10,6 +10,12 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Added macOS-style glass notification banners supporting configurable screen positions (top-right or bottom-right), auto-dismiss with hover pause, click-to-activate, and dismiss button or middle-click.
+- Added red unread notification count badges on dock icons, cleared automatically when the app is focused or dismissed.
+- Added dock icon attention bounce on shell alert events (`HSHELL_FLASH`), respecting Windows reduced-motion settings.
+- Added Do Not Disturb (Focus) toggle in the menu bar to silence banners while preserving dock badges.
+- Added local notification CLI and IPC: `muelle notify --title <TITLE> --body <BODY> [--app <APP>] [--icon <PATH>] [--duration <SECS>]` via lightweight zero-polling `WM_COPYDATA`.
+- New Settings → Notifications section with toggles for banners, position, duration, badges, attention bounce, and Do Not Disturb.
 - Hover previews on dock icons now display a close button ("✕") at the top-left
   corner on hover with localized tooltip ("Close window"), allowing closing
   individual windows gracefully via WM_CLOSE without activating them.
@@ -31,6 +37,12 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Incorporadas alertas en banners de cristal estilo macOS con posición configurable (superior o inferior derecha), desaparición automática con pausa al pasar el cursor, clic para activar y botón de cierre o clic central para descartar.
+- Incorporadas insignias rojas de contador de notificaciones pendientes en los iconos del dock, eliminadas automáticamente al enfocar la app o descartar sus avisos.
+- Incorporada animación de rebote de atención en el dock cuando una app solicita atención (`HSHELL_FLASH`), respetando las preferencias de movimiento reducido de Windows.
+- Incorporado conmutador de concentración / «No molestar» en la barra superior para silenciar avisos manteniendo las insignias en el dock.
+- Incorporada interfaz local por línea de comandos e IPC: `muelle notify --title <TÍTULO> --body <CUERPO> [--app <APP>] [--icon <RUTA>] [--duration <SEGS>]` mediante `WM_COPYDATA` ligero y sin sondeos.
+- Nueva sección Ajustes → Notificaciones con opciones de banners, posición, duración, insignias, rebote de atención y No molestar.
 - Las previsualizaciones al pasar el cursor sobre los iconos del dock ahora muestran
   un botón de cerrar («✕») en la esquina superior izquierda al posarse sobre ellas
   con mensaje localizado («Cerrar ventana»), permitiendo cerrar ventanas individuales

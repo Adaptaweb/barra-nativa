@@ -153,5 +153,6 @@ project. It makes two kinds of network requests, both optional:
   available; Antigravity is queried through its local service. Credentials stay
   in memory and are never stored by Muelle. Turn it off in Settings → Menu bar
   → *Show AI provider usage*.
+- **Notifications:** notification content and banners are processed strictly in memory on your local machine and are never written to disk, saved in log files, or transmitted over the network.
 
 Details: [muellee.vercel.app/privacy](https://muellee.vercel.app/privacy).

@@ -151,5 +151,6 @@ dos tipos de conexión de red, ambas opcionales:
   y Flash; Antigravity se consulta mediante su servicio local. Las credenciales
   permanecen en memoria; Muelle no las guarda. Se desactiva en Ajustes → Barra
   superior → *Mostrar uso de proveedores de IA*.
+- **Notificaciones:** el contenido y los avisos de las notificaciones se procesan exclusivamente en la memoria local de tu equipo; nunca se escriben en disco, ni se guardan en registros ni se transmiten por la red.
 
 Detalles: [muellee.vercel.app/privacy](https://muellee.vercel.app/privacy).

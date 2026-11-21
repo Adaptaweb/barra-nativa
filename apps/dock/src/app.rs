@@ -78,10 +78,10 @@ use windows::{
                 PostMessageW, PostQuitMessage, RegisterClassW, RegisterShellHookWindow,
                 RegisterWindowMessageW, SM_CXDRAG, SM_SWAPBUTTON, SWP_HIDEWINDOW, SWP_NOACTIVATE,
                 SWP_SHOWWINDOW, SetTimer, SetWindowPos, WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT,
-                WINEVENT_SKIPOWNPROCESS, WM_APP, WM_CAPTURECHANGED, WM_CLOSE, WM_DESTROY,
-                WM_DISPLAYCHANGE, WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-                WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_QUIT,
-                WM_RBUTTONUP, WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
+                WINEVENT_SKIPOWNPROCESS, WM_APP, WM_CAPTURECHANGED, WM_CLOSE, WM_COPYDATA,
+                WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN,
+                WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+                WM_QUIT, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
                 WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
                 WS_EX_TRANSPARENT, WS_POPUP,
             },
@@ -102,6 +102,7 @@ use crate::{
     menu::{self, MenuItem},
     menubar::MenuBar,
     multi_window_view::{MultiWindowAction, MultiWindowView},
+    notification_banner,
     scene::{Drag, Frame, Scene, SceneInput, SlotContent, Theme},
     shell_work::{self, Action as ShellAction},
     strings::{self, text},
@@ -361,7 +362,7 @@ fn window_of(id: &str) -> Option<isize> {
 /// Work deferred until the app state is released. These calls may open a modal
 /// loop (a menu, shell error dialog, or recycle bin confirmation) that dispatches
 /// messages back to the dock.
-enum Outside {
+pub(crate) enum Outside {
     Open(String),
     OpenStart,
     Activate(Vec<isize>),
@@ -395,7 +396,7 @@ enum Outside {
     ShowDesktop,
 }
 
-struct MenuRequest {
+pub(crate) struct MenuRequest {
     gfx: Gfx,
     target: MenuTarget,
     items: Vec<MenuItem>,
@@ -616,7 +617,7 @@ struct ReorderMotion {
     offsets: Vec<f32>,
 }
 
-struct App {
+pub(crate) struct App {
     visual: HWND,
     input: HWND,
     gfx: Gfx,
@@ -674,6 +675,7 @@ struct App {
     pointed: bool,
     pending_drop: Option<Outside>,
     bounces: HashMap<String, Bounce>,
+    notifications: muelle_core::notifications::NotificationQueue,
     /// Minimized windows, in the order they were minimized.
     minimized: Vec<isize>,
     thumbnails: Thumbnails,
@@ -1200,10 +1202,28 @@ impl App {
 
         let room = px(SHADOW_ROOM);
         let (room_x, room_top) = (room + side_growth, rise + px(LABEL_ROOM));
+        let notify_badges: Vec<Option<LabelBrush>> = if self.config.notification_badges {
+            self.entries
+                .iter()
+                .map(|entry| {
+                    entry.id.as_ref().and_then(|id| {
+                        let count = self.notifications.badge_count(id);
+                        if count > 0 {
+                            self.gfx.notification_badge_brush(count, scale).ok()
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect()
+        } else {
+            (0..self.entries.len()).map(|_| None).collect()
+        };
         let contents: Vec<SlotContent<'_>> = self
             .entries
             .iter()
-            .map(|entry| {
+            .enumerate()
+            .map(|(index, entry)| {
                 let asset = entry.id.as_ref().and_then(|id| self.assets.get(id));
                 let badge = entry
                     .id
@@ -1212,11 +1232,13 @@ impl App {
                     .and_then(|hwnd| self.windows.iter().find(|window| window.hwnd == hwnd))
                     .and_then(|window| self.assets.get(&window.app_id))
                     .and_then(|asset| asset.icon.as_ref());
+                let notify_badge = notify_badges.get(index).and_then(|opt| opt.as_ref());
                 SlotContent {
                     icon: asset.and_then(|asset| asset.icon.as_ref()),
                     label: asset.and_then(|asset| asset.label.as_ref()),
                     running: entry.running && self.config.show_indicators,
                     badge,
+                    notify_badge,
                 }
             })
             .collect();
@@ -1591,7 +1613,7 @@ impl App {
     /// it flew in; otherwise it gets its system transitions back first, so it
     /// returns with the system's restore animation (the next `sync` turns
     /// them off again).
-    fn activating(&mut self, windows: Vec<isize>) -> Option<Outside> {
+    pub(crate) fn activating(&mut self, windows: Vec<isize>) -> Option<Outside> {
         if self.start_restore_flight(&windows) {
             // `tick` restores the window when the genie reaches full size.
             return None;
@@ -3595,11 +3617,136 @@ impl App {
             return;
         }
         if let Some(window) = self.windows.iter().find(|window| window.hwnd == hwnd) {
+            let app_id = window.app_id.clone();
+            if self.config.muted_apps.contains(&app_id) {
+                return;
+            }
+            if self.config.notification_bounce && animations_enabled() {
+                self.start_bounce(app_id.clone(), Some(ATTENTION_HOPS * bounce::HOP_SECONDS));
+            }
+            if self.config.notification_badges {
+                let title = tracker::title(hwnd);
+                self.notifications.push(
+                    app_id.clone(),
+                    title.clone(),
+                    title,
+                    String::new(),
+                    None,
+                    Some(hwnd),
+                    self.config.notification_duration as u64 * 1000,
+                    self.config.notification_dnd || !self.config.notifications,
+                    false,
+                );
+                let _ = self.render();
+            }
+        }
+    }
+
+    pub fn on_notification(&mut self, payload: muelle_shell::dock_link::NotificationPayload) {
+        if !self.config.notifications {
+            return;
+        }
+        let muted = self.config.muted_apps.contains(&payload.app_id);
+        if muted {
+            return;
+        }
+
+        let duration_ms = (payload.duration_secs.max(1) as u64) * 1000;
+        let dnd = self.config.notification_dnd;
+
+        let pushed = self.notifications.push(
+            payload.app_id.clone(),
+            payload.app_name.clone(),
+            payload.title.clone(),
+            payload.body.clone(),
+            payload.icon_path.clone(),
+            None,
+            duration_ms,
+            dnd,
+            false,
+        );
+
+        if self.config.notification_bounce && animations_enabled() {
             self.start_bounce(
-                window.app_id.clone(),
+                payload.app_id.clone(),
                 Some(ATTENTION_HOPS * bounce::HOP_SECONDS),
             );
         }
+
+        if self.config.notification_badges {
+            let _ = self.render();
+        }
+
+        if pushed.is_some() && !self.fullscreen {
+            let pos = match self.config.notification_position {
+                muelle_config::NotificationPosition::TopRight => {
+                    muelle_core::notifications::BannerPosition::TopRight
+                }
+                muelle_config::NotificationPosition::BottomRight => {
+                    muelle_core::notifications::BannerPosition::BottomRight
+                }
+            };
+            let work_area = primary_monitor().map_or(
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 1920.0,
+                    height: 1080.0,
+                },
+                |m| Rect {
+                    x: m.screen.left as f32,
+                    y: m.screen.top as f32,
+                    width: (m.screen.right - m.screen.left) as f32,
+                    height: (m.screen.bottom - m.screen.top) as f32,
+                },
+            );
+            let scale = self.dock_monitor().map_or(1.0, |m| m.scale);
+            let theme = Theme::for_system(uses_light_theme(), transparency_enabled());
+            let _ = notification_banner::NotificationBannerView::ensure_or_create(
+                &self.gfx, pos, work_area, scale, theme,
+            );
+            let _ = notification_banner::NotificationBannerView::sync_queue(
+                &self.gfx,
+                &self.notifications,
+            );
+        }
+    }
+
+    pub fn dismiss_notification(&mut self, id: u64) {
+        self.notifications.dismiss(id);
+        let _ =
+            notification_banner::NotificationBannerView::sync_queue(&self.gfx, &self.notifications);
+    }
+
+    pub fn tick_notifications(&mut self, delta_ms: u64) {
+        let expired = self.notifications.tick(delta_ms);
+        if !expired.is_empty() {
+            let _ = notification_banner::NotificationBannerView::sync_queue(
+                &self.gfx,
+                &self.notifications,
+            );
+        }
+    }
+
+    pub fn clear_notification_badge(&mut self, app_id: &str) {
+        if self.notifications.badge_count(app_id) > 0 {
+            self.notifications.clear_badge(app_id);
+            let _ = self.render();
+        }
+    }
+
+    pub fn toggle_dnd(&mut self) {
+        self.config.notification_dnd = !self.config.notification_dnd;
+        if self.config.notification_dnd {
+            notification_banner::NotificationBannerView::hide();
+        }
+        let mut patch = serde_json::Map::new();
+        patch.insert(
+            "notificationDnd".into(),
+            serde_json::Value::Bool(self.config.notification_dnd),
+        );
+        let _ = muelle_config::update_preferences(&muelle_config::default_path(), patch);
+        menu_bar_refresh();
     }
 
     /// Refreshes open windows and recomposes the dock if anything changed.
@@ -4060,6 +4207,10 @@ impl App {
     fn on_foreground_changed(&mut self) -> Result<()> {
         self.close_preview();
         let foreground = tracker::foreground_window();
+        if let Some(window) = self.windows.iter().find(|w| w.hwnd == foreground) {
+            let app_id = window.app_id.clone();
+            self.clear_notification_badge(&app_id);
+        }
         self.flights.retain(|flight| flight.is_current(foreground));
         // The app roster can stay identical while its windows change z-order.
         // Refresh their order so the next dock activation selects the actual
@@ -4100,13 +4251,13 @@ impl App {
 
 /// Runs `action` on the app and logs failures; a transient failure must not
 /// terminate the dock.
-fn with_app(what: &str, action: impl FnOnce(&mut App) -> Result<()>) {
+pub(crate) fn with_app(what: &str, action: impl FnOnce(&mut App) -> Result<()>) {
     with_app_then(what, |app| action(app).map(|()| None));
 }
 
 /// Like `with_app`, but `action` can request work to perform after releasing
 /// the app state (see [`Outside`]).
-fn with_app_then(what: &str, action: impl FnOnce(&mut App) -> Result<Option<Outside>>) {
+pub(crate) fn with_app_then(what: &str, action: impl FnOnce(&mut App) -> Result<Option<Outside>>) {
     let outside = APP.with(|cell| {
         // Modal calls run outside the borrow, so this should not happen. If it
         // does, discard the message rather than terminating the dock.
@@ -4759,7 +4910,29 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         }
         // A folder's submenu in the shortcuts folder's menu is about to open.
         WM_INITMENUPOPUP if folder_menu::init_popup(HMENU(w.0 as *mut _)) => {}
-        WM_DESTROY => unsafe { PostQuitMessage(0) },
+        WM_COPYDATA => {
+            let cds =
+                unsafe { &*(l.0 as *const windows::Win32::System::DataExchange::COPYDATASTRUCT) };
+            if cds.dwData == muelle_shell::dock_link::NOTIFY_DATA_TAG && cds.cbData > 0 {
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize)
+                };
+                if let Some(payload) = std::str::from_utf8(bytes)
+                    .ok()
+                    .and_then(muelle_shell::dock_link::NotificationPayload::decode)
+                {
+                    with_app("notificación", |app| {
+                        app.on_notification(payload);
+                        Ok(())
+                    });
+                    return LRESULT(1);
+                }
+            }
+        }
+        WM_DESTROY => {
+            notification_banner::NotificationBannerView::hide();
+            unsafe { PostQuitMessage(0) };
+        }
         _ if SHELL_HOOK.get() == Some(&msg) => match w.0 {
             // Changing the foreground window does not change the app list; it
             // can only enter or exit full-screen mode.
@@ -4950,6 +5123,7 @@ pub fn run() -> Result<()> {
             pointed: false,
             pending_drop: None,
             bounces: HashMap::new(),
+            notifications: muelle_core::notifications::NotificationQueue::new(),
             minimized: Vec::new(),
             thumbnails: Thumbnails::new(visual),
             flights: Vec::new(),

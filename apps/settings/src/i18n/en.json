@@ -73,5 +73,18 @@
   "shortcutsFolder": "Shortcuts folder",
   "shortcutsFolderHint": "A folder at the right of the Dock: its contents open as a menu, with a submenu for each folder inside.",
   "shortcutsFolderChoose": "Choose…",
-  "shortcutsFolderRemove": "Remove"
+  "shortcutsFolderRemove": "Remove",
+  "notifications": "Notifications",
+  "notificationsEnabled": "Show notifications",
+  "notificationsHint": "Displays macOS-style glass notification banners for apps and alerts.",
+  "notificationPosition": "Position",
+  "notificationPositionTopRight": "Top right",
+  "notificationPositionBottomRight": "Bottom right",
+  "notificationDuration": "Banner duration",
+  "notificationBadges": "Badge app icons",
+  "notificationBadgesHint": "Show unread notification count badge on the Dock icon.",
+  "notificationBounce": "Bounce icon on alert",
+  "notificationBounceHint": "Bounces the Dock icon when an app requests attention.",
+  "notificationDnd": "Do Not Disturb",
+  "notificationDndHint": "Silences notification banners while keeping Dock badges."
 }

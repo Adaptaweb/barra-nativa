@@ -73,5 +73,18 @@
   "shortcutsFolder": "Carpeta de accesos directos",
   "shortcutsFolderHint": "Una carpeta a la derecha del Dock: su contenido se abre como un menú, con un submenú por cada carpeta que contiene.",
   "shortcutsFolderChoose": "Elegir…",
-  "shortcutsFolderRemove": "Quitar"
+  "shortcutsFolderRemove": "Quitar",
+  "notifications": "Notificaciones",
+  "notificationsEnabled": "Mostrar notificaciones",
+  "notificationsHint": "Muestra alertas en banners de cristal estilo macOS para aplicaciones.",
+  "notificationPosition": "Posición",
+  "notificationPositionTopRight": "Superior derecha",
+  "notificationPositionBottomRight": "Inferior derecha",
+  "notificationDuration": "Duración del banner",
+  "notificationBadges": "Insignias en los iconos",
+  "notificationBadgesHint": "Muestra el contador de notificaciones pendientes en el icono del Dock.",
+  "notificationBounce": "Animar icono al recibir alerta",
+  "notificationBounceHint": "Hace rebotar el icono en el Dock cuando la app solicita atención.",
+  "notificationDnd": "No molestar",
+  "notificationDndHint": "Silencia los banners de notificación manteniendo las insignias en el Dock."
 }
