@@ -13,9 +13,6 @@
 
 <img width="1000" height="259" alt="ezgif-6345057d171e16ef" src="https://github.com/user-attachments/assets/e5b2ce63-cec1-4d1d-8ef1-a4fa1c668c40" />
 
-
-Smooth magnification, live window previews, and an optional Genie-style minimize effect.
-
 | Clawd Pet | Genie Effect on Minimize |
 | :---: | :---: |
 | ![GIF showing mascot the Dock and Menu Bar](https://github.com/user-attachments/assets/580b235e-6141-493a-a333-8f2b96f3acca) | ![GIF showing a window minimizing into the Dock with the Genie effect](https://github.com/user-attachments/assets/878503a8-7286-445d-826b-41c18da013bc) |
