@@ -8,6 +8,8 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+## [0.1.19]
+
 ### English
 
 - Added Dock settings for Start, Downloads and Recycle Bin visibility, optional File Explorer
@@ -36,14 +38,18 @@ copia la sección de la versión que se publica a la release de GitHub.
 - Added local notification CLI and IPC: `muelle notify --title <TITLE> --body <BODY> [--app <APP>] [--icon <PATH>] [--duration <SECS>]` via lightweight zero-polling `WM_COPYDATA`.
 - New Settings → Notifications section with toggles for banners, position, duration, badges, attention bounce, and Do Not Disturb.
 - Hover previews on dock icons now display a close button ("✕") at the top-left
-  corner on hover with localized tooltip ("Close window"), allowing closing
-  individual windows gracefully via WM_CLOSE without activating them.
+  corner on hover, allowing individual windows to close gracefully via WM_CLOSE
+  without activating them.
 - Middle-clicking any window preview thumbnail or minimized window in the dock
   now closes that window directly.
 - Window previews now support single-window apps as well as multi-window apps,
   automatically re-layout when windows close, and close the popup when all
   windows have closed.
 - New setting in Settings → Windows: "Show close button on previews" (on by default).
+- Reserved space above DWM thumbnails for the preview close button so it is no
+  longer clipped; removed its tooltip.
+- Removed the redundant "System volume" label from the media popup and moved the
+  volume controls up.
 
 ### Español
 
@@ -76,9 +82,8 @@ copia la sección de la versión que se publica a la release de GitHub.
 - Incorporada interfaz local por línea de comandos e IPC: `muelle notify --title <TÍTULO> --body <CUERPO> [--app <APP>] [--icon <RUTA>] [--duration <SEGS>]` mediante `WM_COPYDATA` ligero y sin sondeos.
 - Nueva sección Ajustes → Notificaciones con opciones de banners, posición, duración, insignias, rebote de atención y No molestar.
 - Las previsualizaciones al pasar el cursor sobre los iconos del dock ahora muestran
-  un botón de cerrar («✕») en la esquina superior izquierda al posarse sobre ellas
-  con mensaje localizado («Cerrar ventana»), permitiendo cerrar ventanas individuales
-  de forma ordenada mediante WM_CLOSE sin activarlas.
+  un botón de cerrar («✕») en la esquina superior izquierda al posarse sobre ellas,
+  permitiendo cerrar ventanas individuales mediante WM_CLOSE sin activarlas.
 - Hacer clic central en cualquier miniatura de previsualización o en ventanas
   minimizadas en el dock ahora cierra esa ventana directamente.
 - Las previsualizaciones ahora admiten tanto apps de una sola ventana como multi-ventana,
@@ -86,6 +91,10 @@ copia la sección de la versión que se publica a la release de GitHub.
   emergente cuando no quedan más ventanas abiertas.
 - Nuevo ajuste en Ajustes → Ventanas: «Mostrar botón de cerrar en previsualizaciones»
   (activado por defecto).
+- Se reservó espacio encima de las miniaturas DWM para que el botón de cerrar de
+  las previsualizaciones no quede cortado; se eliminó su tooltip.
+- Se quitó la etiqueta redundante «Volumen del sistema» del popup multimedia y
+  se subieron los controles de volumen.
 
 ## [0.1.18]
 
