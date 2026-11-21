@@ -242,6 +242,10 @@ impl Current {
     }
 
     fn update_track(&mut self) {
+        // A failed read belongs to this metadata change, not to the previous
+        // song. Never pair yesterday's title/artist with the current session.
+        self.title.clear();
+        self.artist.clear();
         self.artwork = None;
         if let Some(properties) = self
             .session

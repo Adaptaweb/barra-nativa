@@ -177,6 +177,10 @@ pub struct MultiWindowView {
     pressed: Option<usize>,
     mouse_was_down: bool,
     foreground: isize,
+    /// The card lit when the opened view was last drawn. Once open, only that
+    /// changes what it shows, so a tick that finds it the same touches
+    /// nothing: no composition batch and no DWM work while the view rests.
+    drawn: Option<Option<usize>>,
 }
 
 /// Where the view opens: the app's icon and display, and the screen edge
@@ -236,6 +240,7 @@ impl MultiWindowView {
             page: 0,
             cards: Vec::new(),
             opened: Instant::now(),
+            drawn: None,
             animated: animations_enabled(),
             left_at: None,
             pressed: None,
@@ -414,6 +419,7 @@ impl MultiWindowView {
             target.SetRoot(&root)?;
         }
         self.opened = Instant::now();
+        self.drawn = None;
         Ok(())
     }
 
@@ -426,6 +432,9 @@ impl MultiWindowView {
         };
         let eased = 1.0 - (1.0 - progress).powi(3);
         let hovered = self.layout.hit(self.local_cursor()?);
+        if progress >= 1.0 && self.drawn == Some(hovered) {
+            return Ok(());
+        }
         let center = (self.anchor.left + (self.anchor.right - self.anchor.left) / 2
             - self.layout.bounds.left) as f32;
         let travel = (1.0 - eased) * 36.0 * self.scale;
@@ -461,6 +470,7 @@ impl MultiWindowView {
                 );
             }
         }
+        self.drawn = (progress >= 1.0).then_some(hovered);
         // Run quickly only during the opening view animation. Nothing is polled
         // when the popup is closed, and thumbnail pixels are maintained by DWM.
         unsafe {

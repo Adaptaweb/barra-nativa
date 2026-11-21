@@ -354,6 +354,10 @@ pub struct GroupView {
     pressed: Option<(usize, POINT)>,
     mouse_was_down: bool,
     foreground: isize,
+    /// The app lit when the unfolded view was last drawn. Once unfolded, only
+    /// that changes what it shows, so a tick that finds it the same touches
+    /// nothing: no composition batch and no DWM work while the view rests.
+    drawn: Option<Option<usize>>,
 }
 
 impl GroupView {
@@ -413,6 +417,7 @@ impl GroupView {
             scale: place.scale,
             theme: place.theme,
             opened: Instant::now(),
+            drawn: None,
             animated: animations_enabled(),
             pressed: None,
             mouse_was_down: false,
@@ -613,14 +618,37 @@ impl GroupView {
             ((self.anchor.left + self.anchor.right) / 2 - self.layout.bounds.left) as f32,
             (self.anchor.top - self.layout.bounds.top) as f32,
         );
-        let mut moving = false;
+        // The last app starts unfolding last; the panel fades in with the first.
+        let last_start = self.visuals.len().saturating_sub(1) as f32 * STAGGER_SECONDS;
+        let moving = self.animated && elapsed < last_start + OPEN_SECONDS;
+        if moving || self.drawn != Some(lit) {
+            self.draw(elapsed, start, lit)?;
+        }
+        self.drawn = (!moving).then_some(lit);
+        // Quick while unfolding; then just often enough to follow the pointer.
+        // SAFETY: Our own timer; setting it again replaces it.
+        unsafe {
+            SetTimer(
+                Some(self.hwnd),
+                TIMER,
+                if moving || self.pressed.is_some() {
+                    16
+                } else {
+                    50
+                },
+                None,
+            )
+        };
+        Ok(())
+    }
+
+    fn draw(&self, elapsed: f32, start: (f32, f32), lit: Option<usize>) -> Result<()> {
         for (index, (visual, icon)) in self.visuals.iter().zip(&self.layout.icons).enumerate() {
             let progress = if self.animated {
                 ((elapsed - index as f32 * STAGGER_SECONDS) / OPEN_SECONDS).clamp(0.0, 1.0)
             } else {
                 1.0
             };
-            moving |= progress < 1.0;
             let eased = 1.0 - (1.0 - progress).powi(3);
             let side = (icon.right - icon.left) as f32;
             let (left, top) = (icon.left as f32, icon.top as f32);
@@ -653,20 +681,6 @@ impl GroupView {
             };
             panel.SetOpacity(1.0 - (1.0 - progress).powi(3))?;
         }
-        // Quick while unfolding; then just often enough to follow the pointer.
-        // SAFETY: Our own timer; setting it again replaces it.
-        unsafe {
-            SetTimer(
-                Some(self.hwnd),
-                TIMER,
-                if moving || self.pressed.is_some() {
-                    16
-                } else {
-                    50
-                },
-                None,
-            )
-        };
         Ok(())
     }
 

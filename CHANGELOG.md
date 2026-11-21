@@ -10,6 +10,15 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- A folder or window picker left open no longer re-sends its unchanged visuals
+  to the compositor every 50–60 ms: once open, it redraws only when the item
+  under the pointer changes, so Windows does no composition work while it rests.
+- Fixed island popup edge cases: AI cards stay within the display at high DPI,
+  with clipped scrolling and reachable buttons. Volume drags cancel safely when
+  the layout changes; audio-only updates reuse current system/provider data.
+  Popups without room for their trigger close, repeated refresh clicks are
+  disabled while busy, and failed media reads no longer retain the previous song.
+  Scrolling reuses GPU visuals without extra idle polling or quota requests.
 - Music now shows circular Windows media artwork in the island and its popup,
   with a bundled offline fallback. The popup adds system volume and mute controls;
   the thumb and percentage respond immediately, with coalesced audio writes and
@@ -65,15 +74,14 @@ copia la sección de la versión que se publica a la release de GitHub.
   last reading for 30 minutes while it sleeps, as Logitech's own tools do, and
   each request waits longer for a reply over the radio. Unplugging the
   receiver still removes it at once.
-- OpenCode now distinguishes Go quotas from Zen's estimated cost on this device
-  over the last 30 days. Both appear in one theme-aware card; Go also shows its
-  monthly window. Zen opens the official Console for the real account balance,
-  which is not exposed by its public API. Local history is read only, bounded,
-  and refreshed by the existing worker without extra background polling.
+- OpenCode shows only measured Go quotas and their reset times, including the
+  monthly window. Zen's local spending estimate and balance link are removed,
+  together with the history queries and bundled SQLite dependency. A Zen-only
+  connection shows no OpenCode indicator; missing quota data never becomes 0%.
 - Fixed OpenCode Go account discovery: read its `opencode-go` credential, respect
   `XDG_DATA_HOME`, and fall back from an empty environment key to the saved login.
-  The usage card now identifies Go explicitly and provides a working connection
-  guide button instead of an inert sign-in instruction.
+  Only saved Go keys or an explicit environment key are used for quota requests;
+  saved Zen keys are not queried.
 - Fixed a blocking "Ordinal 381 Not Found" system dialog when launching applications
   with Uninstall Tool (`utshellext.dll`) or other third-party shell extensions installed
   (issue #23). `muelle.exe` now embeds an application manifest declaring a dependency on
@@ -88,6 +96,16 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Una carpeta o un selector de ventanas abierto ya no reenvía al compositor sus
+  visuales sin cambios cada 50–60 ms: una vez abierto, solo se redibuja cuando
+  cambia el elemento bajo el puntero, así que Windows no compone nada mientras reposa.
+- Corregidos casos límite de los popups: las tarjetas de IA caben en la pantalla
+  con escala alta, con desplazamiento y botones limitados al área visible. El
+  arrastre de volumen se cancela si cambia su posición; los cambios de audio
+  reutilizan los datos del sistema y proveedores. Los popups sin espacio para
+  su acceso se cierran, actualizar se desactiva mientras está ocupado y los
+  errores de lectura multimedia no conservan la pista anterior. Desplazar la
+  lista reutiliza visuales GPU, sin sondeo en reposo ni consultas de cuota extra.
 - La isla y el popup de música muestran la carátula circular de Windows, con
   una imagen incluida como respaldo. El popup incorpora volumen del sistema y
   silencio: tirador y porcentaje responden al instante, reutilizando sus visuales
@@ -167,13 +185,12 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 - Corregida la detección de cuentas OpenCode Go: se lee la credencial `opencode-go`,
   se respeta `XDG_DATA_HOME` y una variable de clave vacía permite usar la sesión
-  guardada. La tarjeta identifica Go e incluye un botón funcional con instrucciones
-  de conexión, en lugar de un texto de inicio de sesión sin acción.
-- OpenCode distingue las cuotas de Go del gasto estimado de Zen en este equipo
-  durante los últimos 30 días, en una misma tarjeta que respeta el tema. Go muestra
-  también su ventana mensual. Zen permite abrir la consola oficial para consultar
-  el saldo real, que no expone su API pública. El historial se lee sin modificarlo,
-  con límites de trabajo y usando el worker e intervalo existentes.
+  guardada. Las consultas usan únicamente la clave guardada de Go o una clave
+  explícita de entorno; no se consulta con claves guardadas de Zen.
+- OpenCode muestra solo cuotas medidas de Go y sus reinicios, incluido el mes.
+  Se retiran el gasto local de Zen y el enlace al saldo, las consultas al historial
+  y la dependencia SQLite. Una conexión solo Zen no muestra el indicador de
+  OpenCode; la ausencia de cuotas nunca se convierte en 0 %.
 - Los manifiestos de WinGet usan `/S` en ambos modos desatendidos y declaran
   las dependencias de Visual C++ x64 y WebView2. Se corrigen riesgos de interfaz
   en la primera instalación y de runtimes ausentes; falta revalidar con Microsoft.

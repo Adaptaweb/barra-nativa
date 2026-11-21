@@ -30,9 +30,6 @@ use windows::Win32::{
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
-mod opencode;
-pub use opencode::{LocalSpend, OpenCodeDetails};
-
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum State {
     Loading,
@@ -76,8 +73,6 @@ pub struct ProviderUsage {
     pub state: State,
     pub windows: Vec<Window>,
     pub fetched_at: Option<SystemTime>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opencode: Option<OpenCodeDetails>,
 }
 
 impl Default for ProviderUsage {
@@ -86,28 +81,14 @@ impl Default for ProviderUsage {
             state: State::Loading,
             windows: Vec::new(),
             fetched_at: None,
-            opencode: None,
         }
     }
 }
 
 impl ProviderUsage {
-    pub fn name(&self, provider: Provider) -> &'static str {
-        match (provider, self.opencode.as_ref()) {
-            (Provider::OpenCode, Some(details)) => match (details.go, details.zen) {
-                (true, false) => "OpenCode Go",
-                (false, true) => "OpenCode Zen",
-                _ => "OpenCode",
-            },
-            _ => provider.name(),
-        }
-    }
-
     pub fn compact_text(&self) -> String {
         if let Some(window) = self.main_window() {
             format!("{}%", window.used_percent)
-        } else if let Some(spend) = self.opencode.as_ref().and_then(|details| details.spend) {
-            spend.amount()
         } else {
             "—".to_owned()
         }
@@ -131,6 +112,13 @@ impl Snapshot {
     pub fn get(&self, provider: Provider) -> &ProviderUsage {
         &self.providers[provider as usize]
     }
+
+    /// OpenCode's process also serves Zen and unrelated providers. Only real
+    /// Go quota windows justify its indicator; a running process alone does not.
+    pub fn visible_providers(&self, mut active: ActiveProviders) -> ActiveProviders {
+        active.0[Provider::OpenCode as usize] &= !self.get(Provider::OpenCode).windows.is_empty();
+        active
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -150,7 +138,7 @@ impl Provider {
         match self {
             Self::Claude => "Claude",
             Self::Codex => "Codex",
-            Self::OpenCode => "OpenCode",
+            Self::OpenCode => "OpenCode Go",
             Self::Gemini => "Gemini",
         }
     }
@@ -309,6 +297,11 @@ impl Monitor {
             return;
         }
         let active = active_providers();
+        if !active.any() {
+            self.running.store(false, Ordering::Release);
+            self.mark_inactive();
+            return;
+        }
         if !force
             && active == self.last_active
             && self
@@ -375,12 +368,8 @@ impl Drop for Monitor {
 }
 
 fn merge(previous: &mut ProviderUsage, fetched: ProviderUsage) {
-    if fetched.state == State::Unavailable
-        && !previous.windows.is_empty()
-        && fetched.opencode.is_none_or(|details| details.go)
-    {
+    if fetched.state == State::Unavailable && !previous.windows.is_empty() {
         previous.state = State::Unavailable;
-        previous.opencode = fetched.opencode;
     } else {
         *previous = fetched;
     }
@@ -432,7 +421,6 @@ fn ready(windows: Vec<Window>) -> ProviderUsage {
         state: State::Ready,
         windows,
         fetched_at: Some(SystemTime::now()),
-        opencode: None,
     }
 }
 
@@ -534,46 +522,9 @@ fn fetch_opencode(client: &Client) -> ProviderUsage {
     let api_key = env::var("OPENCODE_API_KEY").ok();
     let data_home = env::var_os("XDG_DATA_HOME").map(PathBuf::from);
     let home = home();
-    let path = opencode_auth_path(data_home.as_deref(), home.as_deref());
-    // One bounded read, shared by both credential detection and the Go request.
-    let auth = path.as_deref().and_then(read_opencode_auth);
-    let token = opencode_key(api_key.as_deref(), auth.as_ref());
-    // OPENCODE_API_KEY can belong to either service. An environment key alone
-    // is not evidence of a Go subscription: require its saved ID or real quotas.
-    let go_key = auth
-        .as_ref()
-        .is_some_and(|auth| opencode_entry(auth, "opencode-go").is_some());
-    let zen_key = auth
-        .as_ref()
-        .is_some_and(|auth| opencode_entry(auth, "opencode").is_some());
-    let spend = path
+    opencode_token(api_key.as_deref(), data_home.as_deref(), home.as_deref())
         .as_deref()
-        .and_then(Path::parent)
-        .and_then(|directory| {
-            opencode::local_spend(&directory.join("opencode.db"), Utc::now())
-                .ok()
-                .flatten()
-        });
-    let quota = token.map_or_else(sign_in, |token| fetch_opencode_go(client, token));
-    combine_opencode(quota, go_key, zen_key, spend)
-}
-
-fn combine_opencode(
-    mut quota: ProviderUsage,
-    go_key: bool,
-    zen_key: bool,
-    spend: Option<LocalSpend>,
-) -> ProviderUsage {
-    let go = go_key || !quota.windows.is_empty();
-    let zen = zen_key || spend.is_some();
-    // Zen's local cost history needs no authentication. Lack of a Go subscription
-    // must not produce a misleading sign-in prompt for a Zen-only connection.
-    if !go && zen {
-        quota.state = State::Ready;
-        quota.fetched_at = Some(SystemTime::now());
-    }
-    quota.opencode = Some(OpenCodeDetails { go, zen, spend });
-    quota
+        .map_or_else(sign_in, |token| fetch_opencode_go(client, token))
 }
 
 fn fetch_opencode_go(client: &Client, token: &str) -> ProviderUsage {
@@ -622,11 +573,9 @@ fn opencode_auth_path(data_home: Option<&Path>, home: Option<&Path>) -> Option<P
 
 fn opencode_key<'a>(api_key: Option<&'a str>, auth: Option<&'a Value>) -> Option<&'a str> {
     api_key.and_then(opencode_usable_key).or_else(|| {
-        // Go has its own provider ID. Keep the legacy Zen API-key entry as a
-        // fallback, but never forward another provider's OAuth or API secrets.
-        ["opencode-go", "opencode"]
-            .into_iter()
-            .find_map(|id| opencode_entry(auth?, id))
+        // Zen keys do not establish a Go subscription. Never probe a saved
+        // Zen-only connection or forward another provider's credentials.
+        opencode_entry(auth?, "opencode-go")
     })
 }
 
@@ -653,7 +602,6 @@ fn read_opencode_auth(path: &Path) -> Option<Value> {
     serde_json::from_slice(&bytes).ok()
 }
 
-#[cfg(test)]
 fn opencode_token(
     api_key: Option<&str>,
     data_home: Option<&Path>,
@@ -1074,7 +1022,6 @@ fn scan_rollout(path: &std::path::Path) -> Option<ProviderUsage> {
             state: State::Ready,
             windows,
             fetched_at,
-            opencode: None,
         });
     }
     None
@@ -1173,53 +1120,52 @@ mod tests {
     }
 
     #[test]
-    fn opencode_zen_without_go_never_requests_a_go_login_or_invents_a_quota() {
-        let usage = combine_opencode(unavailable(), false, true, None);
-        assert!(usage.state == State::Ready);
-        assert_eq!(usage.name(Provider::OpenCode), "OpenCode Zen");
-        assert!(usage.main_window().is_none());
-        assert_eq!(usage.compact_text(), "—");
-        let usage = combine_opencode(
-            sign_in(),
-            false,
-            false,
-            Some(LocalSpend {
-                micro_usd: 1_250_000,
-                requests: 3,
-            }),
-        );
-        assert_eq!(usage.name(Provider::OpenCode), "OpenCode Zen");
-        assert_eq!(usage.compact_text(), "$1.25");
+    fn opencode_only_shows_measured_go_quotas_for_a_running_client() {
+        let mut snapshot = Snapshot::default();
+        let mut active = ActiveProviders::default();
+        active.0[Provider::OpenCode as usize] = true;
+        active.0[Provider::Claude as usize] = true;
+        assert!(!snapshot.visible_providers(active).has(Provider::OpenCode));
+        assert!(snapshot.visible_providers(active).has(Provider::Claude));
+        snapshot.providers[Provider::OpenCode as usize] = ready(parse_opencode(&json!({"usage": {
+            "rolling": {"percent": 15}, "weekly": {"percent": 35}, "monthly": {"percent": 50}
+        }})));
+        assert!(snapshot.visible_providers(active).has(Provider::OpenCode));
+        assert_eq!(Provider::OpenCode.name(), "OpenCode Go");
+        assert_eq!(snapshot.get(Provider::OpenCode).compact_text(), "15%");
+        assert_eq!(snapshot.get(Provider::OpenCode).windows.len(), 3);
+        active.0[Provider::OpenCode as usize] = false;
+        assert!(!snapshot.visible_providers(active).has(Provider::OpenCode));
     }
 
     #[test]
-    fn opencode_keeps_go_quotas_and_zen_cost_separate_in_the_same_snapshot() {
-        let quota = ready(parse_opencode(&json!({"usage": {
-            "rolling": {"percent": 15}, "weekly": {"percent": 35}, "monthly": {"percent": 50}
-        }})));
-        let usage = combine_opencode(
-            quota,
-            true,
-            true,
-            Some(LocalSpend {
-                micro_usd: 4_200_000,
-                requests: 5,
-            }),
-        );
-        assert_eq!(usage.name(Provider::OpenCode), "OpenCode");
-        assert_eq!(usage.compact_text(), "15%");
-        assert_eq!(usage.windows.len(), 3);
-        assert_eq!(
-            usage
-                .opencode
-                .and_then(|details| details.spend)
-                .map(LocalSpend::amount)
-                .as_deref(),
-            Some("$4.20")
-        );
-        let only_go = combine_opencode(sign_in(), true, false, None);
-        assert!(only_go.state == State::SignIn);
-        assert_eq!(only_go.name(Provider::OpenCode), "OpenCode Go");
+    fn opencode_missing_or_invalid_windows_never_become_a_quota() {
+        for value in [
+            json!({"balance": 20}),
+            json!({"usage": {}}),
+            json!({"usage": {"rolling": {"percent": null}}}),
+            json!({"usage": {"rolling": {"percent": -1}}}),
+            json!({"usage": {"rolling": {"percent": 150}}}),
+        ] {
+            assert!(parse_opencode(&value).is_empty());
+        }
+        let zero = parse_opencode(&json!({"usage": {"rolling": {"percent": 0}}}));
+        assert_eq!(zero.len(), 1);
+        assert_eq!(zero[0].used_percent, 0);
+    }
+
+    #[test]
+    fn opencode_failed_refresh_keeps_measured_quotas_stale_but_logout_clears_them() {
+        let mut previous = ready(parse_opencode(
+            &json!({"usage": {"rolling": {"percent": 42}}}),
+        ));
+        let fetched_at = previous.fetched_at;
+        merge(&mut previous, unavailable());
+        assert!(previous.state == State::Unavailable);
+        assert_eq!(previous.compact_text(), "42%");
+        assert_eq!(previous.fetched_at, fetched_at);
+        merge(&mut previous, sign_in());
+        assert!(previous.windows.is_empty());
     }
 
     #[test]
@@ -1269,7 +1215,7 @@ mod tests {
     }
 
     #[test]
-    fn opencode_go_credentials_take_precedence_over_legacy_zen() {
+    fn opencode_go_credentials_ignore_saved_zen_keys() {
         let auth = json!({
             "opencode-go": {"type": "api", "key": "go-fixture"},
             "opencode": {"type": "api", "key": "zen-fixture"}
@@ -1292,7 +1238,7 @@ mod tests {
         assert_eq!(opencode_key(None, Some(&auth)), None);
         assert_eq!(opencode_key(Some("invalid\r\nheader"), Some(&auth)), None);
         let legacy = json!({"opencode": {"type": "api", "key": " legacy-fixture "}});
-        assert_eq!(opencode_key(None, Some(&legacy)), Some("legacy-fixture"));
+        assert_eq!(opencode_key(None, Some(&legacy)), None);
     }
 
     #[test]
@@ -1335,9 +1281,14 @@ mod tests {
                 &default_path,
                 br#"{"opencode":{"type":"api","key":"other-account-fixture"}}"#,
             )?;
+            assert!(opencode_token(None, None, Some(&home)).is_none());
+            fs::write(
+                &default_path,
+                br#"{"opencode-go":{"type":"api","key":"other-go-account-fixture"}}"#,
+            )?;
             assert_eq!(
                 opencode_token(None, None, Some(&home)).as_deref(),
-                Some("other-account-fixture")
+                Some("other-go-account-fixture")
             );
             // A missing explicit account must not fall back to another directory.
             assert!(opencode_token(None, Some(&root.join("missing")), Some(&home)).is_none());
