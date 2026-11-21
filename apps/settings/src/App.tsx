@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Config,
   type DockPosition,
+  type DockDensity,
+  type DockAutoHideSpeed,
   type GenieSpeed,
   type IslandStyle,
   type Language,
@@ -345,6 +347,16 @@ export function App() {
                     onChange={(iconSize) => update({ iconSize })}
                   />
                 </Row>
+                <VisualChoices<DockDensity>
+                  label={t.dockDensity}
+                  value={config.dockDensity ?? "normal"}
+                  options={[
+                    { value: "compact", label: t.dockDensityCompact, preview: <DockPreview position="bottom" iconSize={48} density="compact" wallpaper={wallpaper} /> },
+                    { value: "normal", label: t.dockDensityNormal, preview: <DockPreview position="bottom" iconSize={48} density="normal" wallpaper={wallpaper} /> },
+                    { value: "spacious", label: t.dockDensitySpacious, preview: <DockPreview position="bottom" iconSize={48} density="spacious" wallpaper={wallpaper} /> },
+                  ]}
+                  onChange={(dockDensity) => update({ dockDensity })}
+                />
                 <Row icon={<SettingIcon name="magnification" />} label={t.magnification} hint={t.magnificationHint}>
                   <Toggle
                     label={t.magnification}
@@ -362,6 +374,17 @@ export function App() {
                   />
                 </SubRow>
               </Card>
+              <Card title={t.dockItems}>
+                <Row label={t.showStart}>
+                  <Toggle label={t.showStart} checked={config.showStart ?? true} onChange={(showStart) => update({ showStart })} />
+                </Row>
+                <Row label={t.pinExplorer} hint={t.pinExplorerHint}>
+                  <Toggle label={t.pinExplorer} checked={config.pinExplorer ?? true} onChange={(pinExplorer) => update({ pinExplorer })} />
+                </Row>
+                <Row label={t.showTrash}>
+                  <Toggle label={t.showTrash} checked={config.showTrash ?? true} onChange={(showTrash) => update({ showTrash })} />
+                </Row>
+              </Card>
               <Card title={t.groupBehavior}>
                 <Row icon={<SettingIcon name="hide" />} label={t.autoHide} hint={t.autoHideHint}>
                   <Toggle
@@ -370,6 +393,18 @@ export function App() {
                     onChange={(autoHide) => update({ autoHide })}
                   />
                 </Row>
+                <SubRow label={t.dockAutoHideSpeed} open={config.autoHide}>
+                  <Segmented<DockAutoHideSpeed>
+                    label={t.dockAutoHideSpeed}
+                    value={config.dockAutoHideSpeed ?? "normal"}
+                    options={[
+                      { value: "smooth", label: t.dockAutoHideSmooth },
+                      { value: "normal", label: t.dockDensityNormal },
+                      { value: "fast", label: t.genieSpeedFast },
+                    ]}
+                    onChange={(dockAutoHideSpeed) => update({ dockAutoHideSpeed })}
+                  />
+                </SubRow>
                 <Row icon={<SettingIcon name="bounce" />} label={t.bounceOnOpen}>
                   <Toggle
                     label={t.bounceOnOpen}

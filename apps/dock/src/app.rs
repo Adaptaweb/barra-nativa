@@ -22,7 +22,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use muelle_config::{Config, DockGroup, DockPosition};
+use muelle_config::{Config, DockDensity, DockGroup, DockPosition};
 use muelle_core::{
     attention::Attention,
     bounce,
@@ -243,8 +243,6 @@ const ASSETS_DELAY_MS: u32 = 16;
 const DRAG_TIMER: usize = 16;
 const DRAG_POLL_MS: u32 = 16;
 
-/// Auto-hide slide speed (about 250 ms).
-const SLIDE_OMEGA: f32 = 24.0;
 /// Screen-edge strip that reveals a hidden dock, in physical pixels.
 const REVEAL_STRIP: i32 = 2;
 /// An icon released this far above the magnified dock, in icon heights, leaves it.
@@ -569,6 +567,7 @@ struct StageKey {
     bin_full: bool,
     auto_hide: bool,
     icon_size: u32,
+    density: DockDensity,
     max_scale: f32,
     indicators: bool,
     entries: Vec<Entry>,
@@ -899,12 +898,22 @@ fn load_config() -> Config {
     }
 }
 
-/// The Explorer is always pinned, like Finder, on its own.
+/// Apply only Explorer's built-in pin, preserving the order of all other apps.
+fn apply_explorer_pin(roster: &mut Roster, pinned: bool) {
+    let explorer = explorer_id();
+    if pinned {
+        let before = roster.pinned().iter().find(|id| **id != explorer).cloned();
+        roster.pin_before(&explorer, before.as_deref());
+    } else {
+        roster.unpin(&explorer);
+        roster.forget_recent(&explorer);
+    }
+}
+
 fn roster_from(config: &Config) -> Roster {
     let explorer = explorer_id();
     let mut pinned = config.pinned.clone();
     pinned.retain(|id| *id != explorer);
-    pinned.insert(0, explorer.clone());
     let groups = config
         .groups
         .iter()
@@ -918,7 +927,9 @@ fn roster_from(config: &Config) -> Roster {
                 .collect(),
         })
         .collect();
-    Roster::new(pinned, config.recent.clone()).with_groups(groups)
+    let mut roster = Roster::new(pinned, config.recent.clone()).with_groups(groups);
+    apply_explorer_pin(&mut roster, config.pin_explorer);
+    roster
 }
 
 fn save_settings(roster: &Roster, config: &Config) {
@@ -1042,7 +1053,9 @@ impl App {
                 None => icon(&app.id, Role::App, app.running),
             })
             .collect();
-        entries.insert(0, icon(START_ID, Role::Start, false));
+        if self.config.show_start {
+            entries.insert(0, icon(START_ID, Role::Start, false));
+        }
         if self.config.show_recents && !self.roster.recent().is_empty() {
             entries.push(separator());
             entries.extend(
@@ -1068,7 +1081,23 @@ impl App {
         if let Some(downloads) = &self.downloads {
             entries.push(icon(downloads, Role::Folder, false));
         }
-        entries.push(icon(recycle_bin::PARSING_NAME, Role::Trash, false));
+        if self.config.show_trash {
+            entries.push(icon(recycle_bin::PARSING_NAME, Role::Trash, false));
+        }
+        // Hiding fixed items can leave a section empty. Never leave loose dividers.
+        let mut previous_separator = true;
+        entries.retain(|entry| {
+            let separator = entry.kind == ItemKind::Separator;
+            let keep = !separator || !previous_separator;
+            previous_separator = separator;
+            keep
+        });
+        while entries
+            .last()
+            .is_some_and(|entry| entry.kind == ItemKind::Separator)
+        {
+            entries.pop();
+        }
         entries
     }
 
@@ -1278,6 +1307,7 @@ impl App {
             bin_full: self.bin_full,
             auto_hide: self.config.auto_hide,
             icon_size: self.config.icon_size,
+            density: self.config.dock_density,
             max_scale: self.config.max_scale(),
             indicators: self.config.show_indicators,
             entries: self.current_entries(),
@@ -1298,8 +1328,11 @@ impl App {
 
         let scale = monitor.scale;
         let max_scale = key.max_scale;
+        let (gap, padding) = key.density.spacing();
         let mut metrics = Metrics {
             icon: key.icon_size as f32,
+            gap,
+            padding,
             ..Metrics::DEFAULT
         }
         .scaled(scale);
@@ -2647,8 +2680,8 @@ impl App {
         self.place_windows()
     }
 
-    /// Only running or pinned apps, and groups, can be dragged; the Explorer,
-    /// Start, recent apps, Downloads, and the recycle bin stay in place.
+    /// Only running or pinned apps, and groups, can be dragged. Explorer's
+    /// built-in pin is managed by Settings; the other fixed items stay put too.
     fn is_draggable(&self, entry: &Entry) -> bool {
         matches!(entry.role, Role::App | Role::Group)
             && entry.id.as_ref().is_some_and(|id| {
@@ -3835,11 +3868,17 @@ impl App {
             self.restore_transitions();
             self.snapshots.clear();
         }
+        if config.notification_dnd || !config.notifications {
+            self.notifications.clear_banners();
+            notification_banner::NotificationBannerView::hide();
+        }
         if config.auto_hide != self.config.auto_hide {
             self.slide.target = if config.auto_hide { 1.0 } else { 0.0 };
             self.last_frame = Instant::now();
         }
         let moved = config.dock_position != self.config.dock_position;
+        apply_explorer_pin(&mut self.roster, config.pin_explorer);
+        self.slide.omega = config.dock_auto_hide_speed.omega();
         self.config = config;
         if moved {
             // A hidden dock comes out of its new edge on every display.
@@ -3899,6 +3938,7 @@ impl App {
         for id in previous.iter().filter(|id| !current.contains(id)) {
             self.roster.unpin(id);
         }
+        apply_explorer_pin(&mut self.roster, self.config.pin_explorer);
         save_settings(&self.roster, &self.config);
         self.refresh()
     }
@@ -4107,18 +4147,20 @@ impl App {
         }
     }
 
-    pub fn toggle_dnd(&mut self) {
-        self.config.notification_dnd = !self.config.notification_dnd;
-        if self.config.notification_dnd {
+    fn toggle_dnd(&mut self) -> Result<()> {
+        let enabled = !self.config.notification_dnd;
+        let mut patch = serde_json::Map::new();
+        patch.insert("notificationDnd".into(), serde_json::Value::Bool(enabled));
+        muelle_config::update_preferences(&muelle_config::default_path(), patch)?;
+        self.config.notification_dnd = enabled;
+        if enabled {
+            self.notifications.clear_banners();
             notification_banner::NotificationBannerView::hide();
         }
-        let mut patch = serde_json::Map::new();
-        patch.insert(
-            "notificationDnd".into(),
-            serde_json::Value::Bool(self.config.notification_dnd),
-        );
-        let _ = muelle_config::update_preferences(&muelle_config::default_path(), patch);
-        menu_bar_refresh();
+        if let Some(bar) = &mut self.menubar {
+            bar.set_dnd(&self.gfx, enabled)?;
+        }
+        Ok(())
     }
 
     fn sync_attention_visuals(&mut self) -> Result<()> {
@@ -4183,6 +4225,9 @@ impl App {
         let changed = self
             .roster
             .sync(self.windows.iter().map(|window| window.app_id.as_str()));
+        if !self.config.pin_explorer {
+            self.roster.forget_recent(&explorer_id());
+        }
         if self.roster.recent() != recent_before.as_slice() {
             save_settings(&self.roster, &self.config);
         }
@@ -4354,6 +4399,7 @@ impl App {
             bluetooth: self.config.menu_bar_bluetooth,
             battery_percent: self.config.menu_bar_battery_percent,
             island_style: self.config.menu_bar_island_style,
+            dnd: self.config.notification_dnd,
         };
         if !self.config.menu_bar {
             self.menubar = None;
@@ -4537,7 +4583,7 @@ impl App {
                 y: screen.top + (screen.bottom - screen.top) / 2,
             });
             self.amount = Spring::at(0.0, HOVER_OMEGA);
-            self.slide = Spring::at(1.0, SLIDE_OMEGA);
+            self.slide = Spring::at(1.0, self.config.dock_auto_hide_speed.omega());
             self.fullscreen = false;
             self.refresh()?;
         }
@@ -4819,6 +4865,11 @@ fn with_app_value<T: Default>(what: &str, action: impl FnOnce(&mut App) -> Resul
 pub fn menu_bar_clicked(x: f32, y: f32) {
     with_app_then("barra superior", |app| {
         if let Some(bar) = &mut app.menubar {
+            if bar.dnd_at(x, y) {
+                bar.dismiss_island(&app.gfx)?;
+                app.toggle_dnd()?;
+                return Ok(None);
+            }
             if let Some(anchor) = bar.input_switcher_anchor(x, y) {
                 bar.dismiss_island(&app.gfx)?;
                 return Ok(Some(Outside::InputMenu {
@@ -5653,6 +5704,7 @@ pub fn run() -> Result<()> {
         strings::set_language(config.language);
         let roster = roster_from(&config);
         let auto_hide = config.auto_hide;
+        let slide_omega = config.dock_auto_hide_speed.omega();
         let mut app = App {
             visual,
             input,
@@ -5683,7 +5735,7 @@ pub fn run() -> Result<()> {
             placeholder: None,
             remove_label: None,
             config,
-            slide: Spring::at(if auto_hide { 1.0 } else { 0.0 }, SLIDE_OMEGA),
+            slide: Spring::at(if auto_hide { 1.0 } else { 0.0 }, slide_omega),
             press: None,
             drag: None,
             incoming: Vec::new(),
@@ -5855,6 +5907,72 @@ pub fn run() -> Result<()> {
         let _ = worker.join();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod dock_preferences_tests {
+    use super::*;
+
+    #[test]
+    fn explorer_preference_preserves_other_pins_and_follows_open_windows() {
+        let explorer = explorer_id();
+        let config = Config {
+            pinned: vec!["editor".into(), explorer.clone(), "browser".into()],
+            pin_explorer: false,
+            ..Config::default()
+        };
+        let mut roster = roster_from(&config);
+        assert_eq!(roster.pinned(), ["editor", "browser"]);
+        assert!(!roster.apps().iter().any(|app| app.id == explorer));
+        roster.sync(["editor", explorer.as_str()]);
+        assert!(roster.is_running(&explorer) && !roster.is_pinned(&explorer));
+        apply_explorer_pin(&mut roster, true);
+        assert_eq!(roster.pinned(), [explorer.as_str(), "editor", "browser"]);
+        apply_explorer_pin(&mut roster, false);
+        assert!(roster.is_running(&explorer) && !roster.is_pinned(&explorer));
+        roster.sync(["editor"]);
+        apply_explorer_pin(&mut roster, false);
+        assert!(!roster.apps().iter().any(|app| app.id == explorer));
+        assert!(!roster.recent().contains(&explorer));
+    }
+
+    #[test]
+    fn density_changes_dimensions_without_changing_icon_size() {
+        let mut widths = Vec::new();
+        for density in [
+            DockDensity::Compact,
+            DockDensity::Normal,
+            DockDensity::Spacious,
+        ] {
+            let (gap, padding) = density.spacing();
+            let metrics = Metrics {
+                icon: 64.0,
+                gap,
+                padding,
+                ..Metrics::DEFAULT
+            };
+            let result = layout(&[ItemKind::Icon; 3], &metrics);
+            assert!(result.slots.iter().all(|slot| slot.rect.width == 64.0));
+            widths.push(result.width);
+        }
+        assert!(widths.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn auto_hide_presets_keep_the_original_speed_as_default() {
+        use muelle_config::DockAutoHideSpeed;
+        let progress = |speed: DockAutoHideSpeed| {
+            let mut spring = Spring::at(1.0, speed.omega());
+            spring.target = 0.0;
+            for _ in 0..12 {
+                spring.step(1.0 / 120.0);
+            }
+            spring.value
+        };
+        assert!(progress(DockAutoHideSpeed::Smooth) > progress(DockAutoHideSpeed::Normal));
+        assert!(progress(DockAutoHideSpeed::Normal) > progress(DockAutoHideSpeed::Fast));
+        assert_eq!(DockAutoHideSpeed::default().omega(), 24.0);
+    }
 }
 
 #[cfg(test)]

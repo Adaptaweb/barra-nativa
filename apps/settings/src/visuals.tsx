@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import type { DockPosition, GenieSpeed, IslandStyle } from "./config";
+import type { DockDensity, DockPosition, GenieSpeed, IslandStyle } from "./config";
 
 const PATHS = {
   size: <><rect x="3" y="9" width="6" height="6" rx="1.5" /><rect x="13" y="5" width="9" height="14" rx="2" /></>,
@@ -35,12 +35,12 @@ export function SettingIcon({ name, size = 18 }: { name: keyof typeof PATHS; siz
 const MINI_ICONS = <><i /><i /><i /><i /><i /></>;
 
 /** Illustrations only: no window capture, network, timers or animation loop. */
-export function DockPreview({ position, iconSize, wallpaper }: { position: DockPosition; iconSize: number; wallpaper: string | null }) {
+export function DockPreview({ position, iconSize, wallpaper, density = "normal" }: { position: DockPosition; iconSize: number; wallpaper: string | null; density?: DockDensity }) {
   return <span className="preview-screen">
     {wallpaper ? <img className="preview-wallpaper" src={wallpaper} alt="" /> : null}
     <span className="preview-topbar"><i /><i /><i /></span>
     <span className="preview-window"><i /><i /><i /></span>
-    <span className="preview-dock" data-position={position}
+    <span className="preview-dock" data-position={position} data-density={density}
       style={{ "--mini-icon": `${6 + (iconSize - 32) / 16}px` } as CSSProperties}>{MINI_ICONS}</span>
   </span>;
 }

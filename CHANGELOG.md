@@ -10,6 +10,12 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Added Dock settings for Start and Recycle Bin visibility, optional File Explorer
+  pinning, three spacing presets with previews, and three auto-hide animation
+  speeds. Existing appearance and edge activation delays remain the defaults.
+- Fixed the moon button: it toggles Muelle's Do Not Disturb without re-entering
+  the app state, shows its active state, and clears queued banners while keeping
+  unread badges. It does not change Windows Focus settings.
 - Fixed the dock appearing over full-screen playback controls (#33). Full-screen
   detection now follows owned controls, distinguishes custom-frame maximized
   windows, and reacts to in-place size changes without permanent polling.
@@ -40,6 +46,12 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Añadidos ajustes del Dock para ocultar Inicio y Papelera, dejar de mantener
+  Explorador fijado, elegir tres espaciados con previsualización y tres velocidades
+  de animación al ocultar. Se conservan el aspecto y las esperas actuales por defecto.
+- Corregida la luna: activa No molestar de Muelle sin volver a pedir prestado el
+  estado de la app, indica cuándo está activo y descarta banners pendientes sin
+  borrar insignias. No modifica la concentración de Windows.
 - Corregido el dock que aparecía sobre los controles de reproducción en pantalla
   completa (#33). La detección contempla controles flotantes vinculados a su
   ventana, distingue ventanas maximizadas con marco propio y atiende cambios de

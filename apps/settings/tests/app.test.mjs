@@ -28,6 +28,8 @@ const base = {
   language: "en", menuBar: true, notifications: true, notificationDuration: 5,
   notificationPosition: "top-right", iconSize: 48, magnifiedSize: 77,
   magnification: true, dockPosition: "bottom", genie: true, genieSpeed: "normal",
+  dockDensity: "normal", dockAutoHideSpeed: "normal", showStart: true,
+  showTrash: true, pinExplorer: true,
   menuBarIslandStyle: "notch", menuBarSearch: null, menuBarTaskView: null,
   menuBarWidgets: null, menuBarBatteryPercent: null, checkUpdates: false,
   pinned: [], recent: [], mutedApps: [], shortcutsFolder: null,
@@ -171,5 +173,29 @@ test("confirming reset cancels its old confirmation timer", async () => {
     await settle();
     view.button(texts.en.resetButton);
     assert.equal([...view.timers.values()].filter((timer) => timer.delay === 4000).length, 1);
+  } finally { unmount(); }
+});
+
+test("dock choices save only the selected preferences and preserve icon size", async () => {
+  const view = fixture("dock", { autoHide: true, iconSize: 64 });
+  const unmount = await view.mount();
+  try {
+    view.change(texts.en.showStart, false);
+    view.change(texts.en.pinExplorer, false);
+    view.change(texts.en.showTrash, false);
+    view.change(texts.en.dockDensity, "compact");
+    view.change(texts.en.dockAutoHideSpeed, "fast");
+    view.fire(60);
+    await settle();
+    assert.deepEqual(view.calls, [{ showStart: false, pinExplorer: false, showTrash: false,
+      dockDensity: "compact", dockAutoHideSpeed: "fast" }]);
+    const controls = [...elements(view.body())];
+    for (const label of [texts.en.showStart, texts.en.pinExplorer, texts.en.showTrash]) {
+      assert.equal(controls.find((node) => node.props.label === label && "checked" in node.props).props.checked, false);
+    }
+    assert.equal(controls.find((node) => node.props.label === texts.en.size && "value" in node.props).props.value, 64);
+    const html = renderToStaticMarkup(view.body());
+    assert.ok(html.includes('checked="" value="compact"'));
+    assert.ok(html.includes('checked="" value="fast"'));
   } finally { unmount(); }
 });

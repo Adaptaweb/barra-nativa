@@ -196,10 +196,15 @@ impl NotificationQueue {
         self.items.len()
     }
 
-    /// Clears all notifications and badges.
-    pub fn clear_all(&mut self) {
+    /// Removes banners when Do Not Disturb is enabled, preserving unread badges.
+    pub fn clear_banners(&mut self) {
         self.items.clear();
         self.hovered_id = None;
+    }
+
+    /// Clears all notifications and badges.
+    pub fn clear_all(&mut self) {
+        self.clear_banners();
         self.badges.clear();
     }
 }
@@ -248,6 +253,39 @@ pub fn banner_close_button_bounds(banner_rect: Rect, scale: f32) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enabling_dnd_drops_old_banners_but_preserves_unread_badges() {
+        let mut queue = NotificationQueue::default();
+        queue.push(
+            "app".into(),
+            "App".into(),
+            "Title".into(),
+            "Body".into(),
+            None,
+            None,
+            5000,
+            false,
+            false,
+        );
+        queue.clear_banners();
+        assert!(queue.visible_items().is_empty());
+        assert_eq!(queue.badge_count("app"), 1);
+        queue.push(
+            "app".into(),
+            "App".into(),
+            "Silent".into(),
+            "Body".into(),
+            None,
+            None,
+            5000,
+            true,
+            false,
+        );
+        assert!(queue.tick(6000).is_empty());
+        assert!(queue.visible_items().is_empty());
+        assert_eq!(queue.badge_count("app"), 2);
+    }
 
     #[test]
     fn test_push_and_expiration() {
