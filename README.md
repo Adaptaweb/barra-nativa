@@ -2,7 +2,7 @@
   
 <img width="50%" alt="Frame 1116606779" src="https://github.com/user-attachments/assets/8c715a53-a0df-4780-9dd4-09ce3ccd9043" />
 
-  **A lightweight, macOS-inspired dock for Windows 10 and 11.**
+### A lightweight, macOS-inspired dock for Windows 10 and 11
 
   Muelle replaces the Windows taskbar with a customizable dock and an optional
   macOS-style menu bar.
