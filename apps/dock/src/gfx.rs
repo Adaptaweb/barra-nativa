@@ -700,6 +700,72 @@ impl Gfx {
         })
     }
 
+    /// Circular "✕" close button for preview thumbnails and notification banners.
+    pub fn close_button_brush(
+        &self,
+        side: u32,
+        hovered: bool,
+        light: bool,
+    ) -> Result<CompositionSurfaceBrush> {
+        let size = side as f32;
+        self.draw(side, side, |dc| {
+            let center = size / 2.0;
+            let radius = (size / 2.0) - 1.0;
+            let ellipse = D2D1_ELLIPSE {
+                point: Vector2 {
+                    X: center,
+                    Y: center,
+                },
+                radiusX: radius,
+                radiusY: radius,
+            };
+            // SAFETY: Direct2D drawing calls with valid brushes.
+            unsafe {
+                let (bg_color, cross_color) = if hovered {
+                    // macOS traffic-light close button red when hovered
+                    (rgb(1.0, 0.37, 0.34, 1.0), rgb(1.0, 1.0, 1.0, 0.95))
+                } else if light {
+                    (rgb(0.0, 0.0, 0.0, 0.22), rgb(1.0, 1.0, 1.0, 0.9))
+                } else {
+                    (rgb(1.0, 1.0, 1.0, 0.22), rgb(1.0, 1.0, 1.0, 0.9))
+                };
+                let bg_brush = dc.CreateSolidColorBrush(&bg_color, None)?;
+                dc.FillEllipse(&ellipse, &bg_brush);
+
+                let cross_brush = dc.CreateSolidColorBrush(&cross_color, None)?;
+                let arm = radius * 0.42;
+                let stroke_width = (size * 0.08).max(1.2);
+                dc.DrawLine(
+                    Vector2 {
+                        X: center - arm,
+                        Y: center - arm,
+                    },
+                    Vector2 {
+                        X: center + arm,
+                        Y: center + arm,
+                    },
+                    &cross_brush,
+                    stroke_width,
+                    None,
+                );
+                dc.DrawLine(
+                    Vector2 {
+                        X: center - arm,
+                        Y: center + arm,
+                    },
+                    Vector2 {
+                        X: center + arm,
+                        Y: center - arm,
+                    },
+                    &cross_brush,
+                    stroke_width,
+                    None,
+                );
+            }
+            Ok(())
+        })
+    }
+
     /// Start tile: a 3x3 grid of rounded squares on a blue gradient, in the
     /// style of the other dock icons (no Windows logo: it is a trademark).
     pub fn start_brush(&self, side: u32) -> Result<CompositionSurfaceBrush> {

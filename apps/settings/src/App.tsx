@@ -385,6 +385,13 @@ export function App() {
                     onChange={(showMinimized) => update({ showMinimized })}
                   />
                 </Row>
+                <Row label={t.showPreviewCloseButton} hint={t.showPreviewCloseButtonHint}>
+                  <Toggle
+                    label={t.showPreviewCloseButton}
+                    checked={config.showPreviewCloseButton}
+                    onChange={(showPreviewCloseButton) => update({ showPreviewCloseButton })}
+                  />
+                </Row>
               </Card>
             </>
           ) : section === "menubar" ? (

@@ -101,7 +101,7 @@ use crate::{
     mascot,
     menu::{self, MenuItem},
     menubar::MenuBar,
-    multi_window_view::MultiWindowView,
+    multi_window_view::{MultiWindowAction, MultiWindowView},
     scene::{Drag, Frame, Scene, SceneInput, SlotContent, Theme},
     shell_work::{self, Action as ShellAction},
     strings::{self, text},
@@ -1753,15 +1753,19 @@ impl App {
         let index = self.hovered?;
         let entry = self.entries.get(index)?;
         let id = entry.id.as_deref()?;
-        (entry.role == Role::App
-            && entry.running
-            && self
+        let has_windows = match entry.role {
+            Role::App if entry.running => self
                 .windows
                 .iter()
                 .filter(|window| window.app_id == id)
-                .nth(1)
-                .is_some())
-        .then_some((id, index))
+                .nth(0)
+                .is_some(),
+            Role::Window => {
+                window_of(id).is_some_and(|hwnd| self.windows.iter().any(|w| w.hwnd == hwnd))
+            }
+            _ => false,
+        };
+        has_windows.then_some((id, index))
     }
 
     fn aim_preview(&mut self) {
@@ -1838,7 +1842,14 @@ impl App {
             right: stage.dock_origin.x + (rect.x + rect.width).round() as i32,
             bottom: stage.dock_origin.y + (rect.y + rect.height).round() as i32,
         };
-        let windows = self.preview_order.windows_of(&self.windows, &candidate);
+        let windows = if let Some(hwnd) = window_of(&candidate) {
+            vec![hwnd]
+        } else {
+            self.preview_order.windows_of(&self.windows, &candidate)
+        };
+        if windows.is_empty() {
+            return Ok(());
+        }
         self.preview = Some(MultiWindowView::show(
             &self.gfx,
             candidate,
@@ -1847,6 +1858,7 @@ impl App {
             stage.key.screen,
             stage.scale,
             Theme::for_system(stage.key.light, stage.key.glass),
+            self.config.show_preview_close_button,
         )?);
         // The view owns its animation and dismissal timer while it is open.
         self.render()?;
@@ -3194,6 +3206,14 @@ impl App {
         let Some(entry) = self.hovered.and_then(|index| self.entries.get(index)) else {
             return Ok(None);
         };
+        if entry.role == Role::Window {
+            if let Some(id) = &entry.id
+                && let Some(hwnd) = window_of(id)
+            {
+                muelle_shell::tracker::request_close_window(hwnd);
+            }
+            return Ok(None);
+        }
         let (Some(id), Role::App) = (entry.id.clone(), entry.role) else {
             return Ok(None);
         };
@@ -4201,19 +4221,50 @@ pub fn multi_window_view_press() {
 
 pub fn multi_window_view_release() {
     with_app_then("abrir ventana", |app| {
-        let selected = match &mut app.preview {
+        let action = match &mut app.preview {
             Some(view) => view.release()?,
             None => None,
         };
-        if let Some(hwnd) = selected {
-            app.close_preview();
-            // Resolve against the current tracker snapshot: a closed window
-            // must never select a different entry by its former index.
-            if app.windows.iter().any(|window| window.hwnd == hwnd) {
-                return Ok(app.activating(vec![hwnd]));
+        match action {
+            Some(MultiWindowAction::Activate(hwnd)) => {
+                app.close_preview();
+                // Resolve against the current tracker snapshot: a closed window
+                // must never select a different entry by its former index.
+                if app.windows.iter().any(|window| window.hwnd == hwnd) {
+                    return Ok(app.activating(vec![hwnd]));
+                }
             }
+            Some(MultiWindowAction::Close(hwnd)) => {
+                muelle_shell::tracker::request_close_window(hwnd);
+                if let Some(view) = &mut app.preview {
+                    let still_open = view.remove_window(&app.gfx, hwnd)?;
+                    if !still_open {
+                        app.close_preview();
+                    }
+                }
+            }
+            None => {}
         }
         Ok(None)
+    });
+}
+
+pub fn multi_window_view_middle_click() {
+    with_app("cerrar ventana por clic central", |app| {
+        let target = match &mut app.preview {
+            Some(view) => view.middle_click()?,
+            None => None,
+        };
+        if let Some(hwnd) = target {
+            muelle_shell::tracker::request_close_window(hwnd);
+            if let Some(view) = &mut app.preview {
+                let still_open = view.remove_window(&app.gfx, hwnd)?;
+                if !still_open {
+                    app.close_preview();
+                }
+            }
+        }
+        Ok(())
     });
 }
 

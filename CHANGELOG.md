@@ -10,6 +10,15 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Hover previews on dock icons now display a close button ("✕") at the top-left
+  corner on hover with localized tooltip ("Close window"), allowing closing
+  individual windows gracefully via WM_CLOSE without activating them.
+- Middle-clicking any window preview thumbnail or minimized window in the dock
+  now closes that window directly.
+- Window previews now support single-window apps as well as multi-window apps,
+  automatically re-layout when windows close, and close the popup when all
+  windows have closed.
+- New setting in Settings → Windows: "Show close button on previews" (on by default).
 - The menu bar now follows Windows' Battery percentage setting, showing the
   charge next to the battery icon when enabled. Preference changes apply
   without restarting Muelle, through registry notifications rather than polling.
@@ -22,6 +31,17 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Las previsualizaciones al pasar el cursor sobre los iconos del dock ahora muestran
+  un botón de cerrar («✕») en la esquina superior izquierda al posarse sobre ellas
+  con mensaje localizado («Cerrar ventana»), permitiendo cerrar ventanas individuales
+  de forma ordenada mediante WM_CLOSE sin activarlas.
+- Hacer clic central en cualquier miniatura de previsualización o en ventanas
+  minimizadas en el dock ahora cierra esa ventana directamente.
+- Las previsualizaciones ahora admiten tanto apps de una sola ventana como multi-ventana,
+  recalculando la disposición automáticamente al cerrarse ventanas y cerrando la ventana
+  emergente cuando no quedan más ventanas abiertas.
+- Nuevo ajuste en Ajustes → Ventanas: «Mostrar botón de cerrar en previsualizaciones»
+  (activado por defecto).
 - La barra superior respeta la opción Porcentaje de batería de Windows y
   muestra la carga junto al icono cuando está activada. Los cambios se aplican
   sin reiniciar Muelle, mediante notificaciones del registro, sin sondeo.

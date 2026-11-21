@@ -16,6 +16,8 @@
   "genieOffAction": "Open Windows settings",
   "showMinimized": "Show minimized windows",
   "showMinimizedHint": "As thumbnails on the right side of the Dock, instead of inside their app's icon.",
+  "showPreviewCloseButton": "Show close button on previews",
+  "showPreviewCloseButtonHint": "Displays a close button on window hover previews and allows middle-clicking to close.",
   "menuBar": "Menu bar",
   "menuBarHint": "Time, battery, and access to the Windows quick settings and notifications.",
   "menuBarAutoHide": "Automatically hide and show the menu bar",

@@ -16,6 +16,8 @@
   "genieOffAction": "Abrir la configuración de Windows",
   "showMinimized": "Mostrar ventanas minimizadas",
   "showMinimizedHint": "Como miniaturas a la derecha del Dock, en lugar de dentro del icono de su app.",
+  "showPreviewCloseButton": "Mostrar botón de cerrar en previsualizaciones",
+  "showPreviewCloseButtonHint": "Muestra un botón de cerrar en las previsualizaciones y permite cerrar con clic central.",
   "menuBar": "Barra superior",
   "menuBarHint": "Hora, batería y acceso a los ajustes rápidos y las notificaciones de Windows.",
   "menuBarAutoHide": "Ocultar y mostrar la barra superior automáticamente",

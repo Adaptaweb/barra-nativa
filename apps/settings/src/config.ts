@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type Language = "auto" | "es" | "en" | "fr";
+export type NotificationPosition = "top-right" | "bottom-right";
 
 /** Mirrors `muelle_config::Config`. */
 export interface Config {
@@ -13,12 +14,20 @@ export interface Config {
   magnifiedSize: number;
   genie: boolean;
   showMinimized: boolean;
+  showPreviewCloseButton: boolean;
   menuBar: boolean;
   menuBarAutoHide: boolean;
   aiUsage: boolean;
   showIndicators: boolean;
   showRecents: boolean;
   bounceOnOpen: boolean;
+  notifications: boolean;
+  notificationPosition: NotificationPosition;
+  notificationDuration: number;
+  notificationBadges: boolean;
+  notificationBounce: boolean;
+  notificationDnd: boolean;
+  mutedApps: string[];
   mascot: boolean;
   checkUpdates: boolean;
   autoUpdate: boolean;

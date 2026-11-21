@@ -8,7 +8,9 @@ use muelle_shell::{system::animations_enabled, tracker};
 use windows::{
     UI::{
         Color,
-        Composition::{ContainerVisual, Desktop::DesktopWindowTarget, SpriteVisual},
+        Composition::{
+            CompositionSurfaceBrush, ContainerVisual, Desktop::DesktopWindowTarget, SpriteVisual,
+        },
     },
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
@@ -19,7 +21,7 @@ use windows::{
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, HWND_TOPMOST,
                 IDC_ARROW, KillTimer, LoadCursorW, MA_NOACTIVATE, RegisterClassW, SWP_NOACTIVATE,
-                SWP_SHOWWINDOW, SetTimer, SetWindowPos, WM_LBUTTONDOWN, WM_LBUTTONUP,
+                SWP_SHOWWINDOW, SetTimer, SetWindowPos, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP,
                 WM_MOUSEACTIVATE, WM_MOUSEWHEEL, WM_RBUTTONUP, WM_TIMER, WNDCLASSW,
                 WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
                 WS_POPUP,
@@ -106,6 +108,25 @@ impl MultiWindowLayout {
         self.cards.iter().position(|rect| contains(*rect, point))
     }
 
+    fn hit_close(&self, point: POINT, scale: f32) -> Option<usize> {
+        self.cards.iter().position(|rect| {
+            let card_rect = muelle_core::layout::Rect {
+                x: rect.left as f32,
+                y: rect.top as f32,
+                width: (rect.right - rect.left) as f32,
+                height: (rect.bottom - rect.top) as f32,
+            };
+            let bounds = muelle_core::preview::close_button_bounds(card_rect, scale);
+            muelle_core::preview::contains(
+                bounds.hit,
+                muelle_core::preview::Point {
+                    x: point.x as f32,
+                    y: point.y as f32,
+                },
+            )
+        })
+    }
+
     fn keeps_open(&self, anchor: RECT, point: POINT) -> bool {
         if contains(self.bounds, point) || contains(anchor, point) {
             return true;
@@ -128,9 +149,19 @@ fn contains(rect: RECT, point: POINT) -> bool {
     point.x >= rect.left && point.x < rect.right && point.y >= rect.top && point.y < rect.bottom
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MultiWindowAction {
+    Activate(isize),
+    Close(isize),
+}
+
 struct Card {
     root: ContainerVisual,
     highlight: SpriteVisual,
+    close_btn: Option<SpriteVisual>,
+    close_normal_brush: Option<CompositionSurfaceBrush>,
+    close_hover_brush: Option<CompositionSurfaceBrush>,
+    close_tooltip: Option<SpriteVisual>,
 }
 
 pub struct MultiWindowView {
@@ -149,11 +180,15 @@ pub struct MultiWindowView {
     animated: bool,
     left_at: Option<Instant>,
     pressed: Option<usize>,
+    show_close: bool,
+    close_hovered: Option<usize>,
+    close_pressed: Option<usize>,
     mouse_was_down: bool,
     foreground: isize,
 }
 
 impl MultiWindowView {
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         gfx: &Gfx,
         app_id: String,
@@ -162,6 +197,7 @@ impl MultiWindowView {
         screen: RECT,
         scale: f32,
         theme: Theme,
+        show_close: bool,
     ) -> Result<Self> {
         // SAFETY: Class and window belong to this UI thread. Once created,
         // `view` owns the HWND even if subsequent graphics setup fails.
@@ -206,6 +242,9 @@ impl MultiWindowView {
             animated: animations_enabled(),
             left_at: None,
             pressed: None,
+            show_close,
+            close_hovered: None,
+            close_pressed: None,
             mouse_was_down: false,
             foreground: tracker::foreground_window(),
         };
@@ -371,10 +410,69 @@ impl MultiWindowView {
                 Z: 0.0,
             })?;
             card.Children()?.InsertAtTop(&caption)?;
+
+            let (close_btn, close_normal_brush, close_hover_brush, close_tooltip) = if self
+                .show_close
+            {
+                let card_rect = muelle_core::layout::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: size.X,
+                    height: size.Y,
+                };
+                let btn_bounds = muelle_core::preview::close_button_bounds(card_rect, self.scale);
+                let btn_side = btn_bounds.visual.width as u32;
+                let normal_brush = gfx.close_button_brush(btn_side, false, self.theme.light)?;
+                let hover_brush = gfx.close_button_brush(btn_side, true, self.theme.light)?;
+
+                let btn_visual = c.CreateSpriteVisual()?;
+                btn_visual.SetBrush(&normal_brush)?;
+                btn_visual.SetSize(Vector2 {
+                    X: btn_bounds.visual.width,
+                    Y: btn_bounds.visual.height,
+                })?;
+                btn_visual.SetOffset(Vector3 {
+                    X: btn_bounds.visual.x,
+                    Y: btn_bounds.visual.y,
+                    Z: 0.0,
+                })?;
+                btn_visual.SetOpacity(0.0)?;
+                card.Children()?.InsertAtTop(&btn_visual)?;
+
+                let tip_text = text().close_window.replace('&', "");
+                let tip_label = gfx.label_brush(&tip_text, self.scale, self.theme.light)?;
+                let tip_visual = c.CreateSpriteVisual()?;
+                tip_visual.SetBrush(&tip_label.brush)?;
+                tip_visual.SetSize(Vector2 {
+                    X: tip_label.width,
+                    Y: tip_label.height,
+                })?;
+                tip_visual.SetOffset(Vector3 {
+                    X: btn_bounds.visual.x + btn_bounds.visual.width + 4.0 * self.scale,
+                    Y: btn_bounds.visual.y,
+                    Z: 0.0,
+                })?;
+                tip_visual.SetOpacity(0.0)?;
+                card.Children()?.InsertAtTop(&tip_visual)?;
+
+                (
+                    Some(btn_visual),
+                    Some(normal_brush),
+                    Some(hover_brush),
+                    Some(tip_visual),
+                )
+            } else {
+                (None, None, None, None)
+            };
+
             layers.InsertAtTop(&card)?;
             self.cards.push(Card {
                 root: card,
                 highlight,
+                close_btn,
+                close_normal_brush,
+                close_hover_brush,
+                close_tooltip,
             });
         }
         if let Some(target) = &self.target {
@@ -392,7 +490,14 @@ impl MultiWindowView {
             1.0
         };
         let eased = 1.0 - (1.0 - progress).powi(3);
-        let hovered = self.layout.hit(self.local_cursor()?);
+        let cursor = self.local_cursor()?;
+        let hovered = self.layout.hit(cursor);
+        let close_hovered = if self.show_close {
+            self.layout.hit_close(cursor, self.scale)
+        } else {
+            None
+        };
+        self.close_hovered = close_hovered;
         let center = (self.anchor.left + (self.anchor.right - self.anchor.left) / 2
             - self.layout.bounds.left) as f32;
         for (index, (card, rect)) in self.cards.iter().zip(&self.layout.cards).enumerate() {
@@ -404,6 +509,23 @@ impl MultiWindowView {
             card.root.SetOpacity(eased)?;
             card.highlight
                 .SetOpacity(if hovered == Some(index) { 1.0 } else { 0.0 })?;
+            if let Some(btn) = &card.close_btn {
+                let is_close_hovered = close_hovered == Some(index);
+                let is_card_hovered = hovered == Some(index);
+                if let (Some(hover_brush), Some(normal_brush)) =
+                    (&card.close_hover_brush, &card.close_normal_brush)
+                {
+                    btn.SetBrush(if is_close_hovered {
+                        hover_brush
+                    } else {
+                        normal_brush
+                    })?;
+                }
+                btn.SetOpacity(if is_card_hovered { 1.0 } else { 0.0 })?;
+                if let Some(tip) = &card.close_tooltip {
+                    tip.SetOpacity(if is_close_hovered { 1.0 } else { 0.0 })?;
+                }
+            }
             if let Some(&hwnd) = self.windows.get(self.page + index) {
                 self.thumbnails.place_preview(
                     hwnd,
@@ -465,23 +587,86 @@ impl MultiWindowView {
 
     fn press_at(&mut self, point: POINT) {
         // Do not select a card while it is still moving past another card.
-        self.pressed = if !self.animated || self.opened.elapsed().as_secs_f32() >= OPEN_SECONDS {
-            self.layout.hit(point)
+        if !self.animated || self.opened.elapsed().as_secs_f32() >= OPEN_SECONDS {
+            if self.show_close
+                && let Some(index) = self.layout.hit_close(point, self.scale)
+            {
+                self.close_pressed = Some(index);
+                self.pressed = None;
+                return;
+            }
+            self.close_pressed = None;
+            self.pressed = self.layout.hit(point);
         } else {
-            None
-        };
+            self.close_pressed = None;
+            self.pressed = None;
+        }
     }
 
-    pub fn release(&mut self) -> Result<Option<isize>> {
+    pub fn release(&mut self) -> Result<Option<MultiWindowAction>> {
         Ok(self.release_at(self.local_cursor()?))
     }
 
-    fn release_at(&mut self, point: POINT) -> Option<isize> {
+    fn release_at(&mut self, point: POINT) -> Option<MultiWindowAction> {
+        if let Some(pressed_close) = self.close_pressed.take()
+            && self.layout.hit_close(point, self.scale) == Some(pressed_close)
+        {
+            return self
+                .windows
+                .get(self.page + pressed_close)
+                .copied()
+                .map(MultiWindowAction::Close);
+        }
         let hit = self.layout.hit(point);
         self.pressed
             .take()
             .filter(|pressed| Some(*pressed) == hit)
             .and_then(|index| self.windows.get(self.page + index).copied())
+            .map(MultiWindowAction::Activate)
+    }
+
+    pub fn middle_click(&mut self) -> Result<Option<isize>> {
+        let point = self.local_cursor()?;
+        let hit = self.layout.hit(point);
+        Ok(hit.and_then(|index| self.windows.get(self.page + index).copied()))
+    }
+
+    pub fn sync_windows(&mut self, gfx: &Gfx, windows: Vec<isize>) -> Result<bool> {
+        self.windows = windows;
+        if self.windows.is_empty() {
+            return Ok(false);
+        }
+        if self.page >= self.windows.len() {
+            self.page = self.page.saturating_sub(self.layout.per_page);
+        }
+        let screen = RECT {
+            left: self.layout.bounds.left,
+            top: self.layout.bounds.top,
+            right: self.layout.bounds.right,
+            bottom: self.layout.bounds.bottom,
+        };
+        self.layout = MultiWindowLayout::new(screen, self.anchor, self.scale, self.windows.len());
+        let bounds = self.layout.bounds;
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                Some(HWND_TOPMOST),
+                bounds.left,
+                bounds.top,
+                bounds.right - bounds.left,
+                bounds.bottom - bounds.top,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            )?;
+        }
+        self.rebuild(gfx)?;
+        self.update()?;
+        Ok(true)
+    }
+
+    pub fn remove_window(&mut self, gfx: &Gfx, hwnd: isize) -> Result<bool> {
+        let mut windows = self.windows.clone();
+        windows.retain(|&h| h != hwnd);
+        self.sync_windows(gfx, windows)
     }
 
     pub fn scroll(&mut self, gfx: &Gfx, previous: bool) -> Result<()> {
@@ -525,6 +710,7 @@ unsafe extern "system" fn multi_window_view_proc(
         WM_TIMER if w.0 == TIMER => app::multi_window_view_tick(),
         WM_LBUTTONDOWN => app::multi_window_view_press(),
         WM_LBUTTONUP => app::multi_window_view_release(),
+        WM_MBUTTONUP => app::multi_window_view_middle_click(),
         WM_RBUTTONUP => app::multi_window_view_dismiss(),
         WM_MOUSEWHEEL => app::multi_window_view_scroll(((w.0 >> 16) as i16) > 0),
         _ => return unsafe { DefWindowProcW(hwnd, msg, w, l) },
@@ -618,6 +804,7 @@ mod tests {
                 },
                 1.0,
                 theme,
+                true,
             )?;
             view.animated = false;
             view.update()?;
@@ -646,7 +833,10 @@ mod tests {
                 y: (rect.top + rect.bottom) / 2,
             };
             view.press_at(point);
-            assert_eq!(view.release_at(point), Some(windows[view.layout.per_page]));
+            assert_eq!(
+                view.release_at(point),
+                Some(MultiWindowAction::Activate(windows[view.layout.per_page]))
+            );
             view.press_at(point);
             assert_eq!(
                 view.release_at(POINT { x: 0, y: 0 }),
@@ -655,7 +845,10 @@ mod tests {
             );
             view.scroll(&gfx, true)?;
             view.press_at(point);
-            assert_eq!(view.release_at(point), Some(windows[0]));
+            assert_eq!(
+                view.release_at(point),
+                Some(MultiWindowAction::Activate(windows[0]))
+            );
             drop(view);
             assert!(
                 !unsafe { IsWindow(Some(hwnd)) }.as_bool(),

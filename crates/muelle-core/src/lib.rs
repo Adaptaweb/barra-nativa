@@ -4,5 +4,6 @@ pub mod bounce;
 pub mod genie;
 pub mod layout;
 pub mod magnify;
+pub mod preview;
 pub mod roster;
 pub mod spring;

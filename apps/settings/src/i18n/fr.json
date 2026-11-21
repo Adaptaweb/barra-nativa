@@ -16,6 +16,8 @@
   "genieOffAction": "Ouvrir les paramètres de Windows",
   "showMinimized": "Afficher les fenêtres réduites",
   "showMinimizedHint": "Sous forme de miniatures à droite du Dock, plutôt que dans l'icône de leur app.",
+  "showPreviewCloseButton": "Afficher le bouton de fermeture sur les aperçus",
+  "showPreviewCloseButtonHint": "Affiche un bouton de fermeture sur les aperçus et permet de fermer avec le clic du milieu.",
   "menuBar": "Barre de menus",
   "menuBarHint": "Heure, batterie et accès aux paramètres rapides et aux notifications de Windows.",
   "menuBarAutoHide": "Masquer et afficher automatiquement la barre de menus",
