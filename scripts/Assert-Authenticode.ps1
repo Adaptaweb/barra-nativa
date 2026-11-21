@@ -17,6 +17,7 @@ $reports = [Collections.Generic.List[object]]::new()
 try {
     foreach ($file in $Path) {
         $resolved = (Resolve-Path -LiteralPath $file).Path
+        Write-Host "Reading Authenticode signature: $resolved"
         $signature = Get-AuthenticodeSignature -LiteralPath $resolved
         $cert = $signature.SignerCertificate
         $row = [ordered]@{
@@ -30,6 +31,7 @@ try {
             thumbprint = if ($cert) { $cert.Thumbprint } else { $null }
             status = [string]$signature.Status
             message = $signature.StatusMessage
+            stage = 'initial-status'
         }
         $reports.Add($row)
         Write-Host ($row | ConvertTo-Json -Compress)
@@ -44,12 +46,27 @@ try {
                 throw 'Test certificate trust may only be installed temporarily on a GitHub-hosted Actions runner.'
             }
             if (-not $store) {
-                $store = [Security.Cryptography.X509Certificates.X509Store]::new('Root', 'CurrentUser')
+                # CurrentUser\Root can open a Security Warning confirmation,
+                # which cannot be answered by an unattended runner. Only this
+                # disposable, GitHub-hosted VM may trust the pinned test root.
+                $row.stage = 'opening-test-root-store'
+                Write-Host 'Opening temporary test trust: LocalMachine\Root (GitHub-hosted runner only).'
+                $store = [Security.Cryptography.X509Certificates.X509Store]::new('Root', 'LocalMachine')
                 $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+                $row.stage = 'finding-test-root'
+                Write-Host "Checking pinned test root: $testThumbprint"
                 $existing = $store.Certificates.Find(
                     [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $testThumbprint, $false)
-                if ($existing.Count -eq 0) { $store.Add($cert); $added = $true }
+                if ($existing.Count -eq 0) {
+                    $row.stage = 'adding-test-root'
+                    Write-Host 'Installing the pinned test root temporarily.'
+                    $store.Add($cert)
+                    $added = $true
+                    Write-Host 'Temporary test root installed.'
+                }
             }
+            $row.stage = 'rechecking-signature'
+            Write-Host "Rechecking Authenticode with temporary test trust: $file"
             $signature = Get-AuthenticodeSignature -LiteralPath $resolved
         } elseif ($cert.Thumbprint -eq $testThumbprint -or $cert.Subject -eq $cert.Issuer) {
             throw "$file uses a test/self-signed certificate and cannot be released. Configure the production certificate in SignPath."
@@ -58,16 +75,19 @@ try {
         }
         $row.status = [string]$signature.Status
         $row.message = $signature.StatusMessage
+        $row.stage = 'final-status'
         Write-Host "Final Authenticode status for ${file}: $($signature.Status): $($signature.StatusMessage)"
         if ($signature.Status -ne 'Valid') {
             throw "Authenticode verification failed for ${file}: $($signature.Status): $($signature.StatusMessage). See signature-report.json; do not bypass this check."
         }
+        $row.stage = 'complete'
     }
 } finally {
     try {
         if ($store) {
             try {
                 if ($added) {
+                    Write-Host 'Removing the temporary pinned test root.'
                     foreach ($certificate in $store.Certificates.Find(
                         [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $testThumbprint, $false)) {
                         $store.Remove($certificate)

@@ -88,6 +88,22 @@ try {
         throw 'Test lane must never generate an updater signature.'
     }
     Write-Host 'PASS: tests cannot prepare release files, updater signatures or draft releases'
+    # A native verification call can wait on Windows UI or certificate services.
+    # Bound every step containing one, independently of SignPath approval waits.
+    foreach ($entry in @(
+        @{ Name = 'Verify both signed programs'; Minutes = 5 },
+        @{ Name = 'Rebuild the installer around the signed programs'; Minutes = 10 },
+        @{ Name = 'Verify and use the signed installer'; Minutes = 5 }
+    )) {
+        $block = "- name: " + [regex]::Escape($entry.Name) + "\r?\n        if: env.SIGNING_MODE != 'Unsigned'\r?\n        timeout-minutes: " + $entry.Minutes + "\r?\n"
+        if ($workflow -notmatch $block) { throw "$($entry.Name) must have a bounded timeout." }
+    }
+    Write-Host 'PASS: native verification steps have bounded timeouts'
+    $verifier = Get-Content $verifyScript -Raw
+    if (-not $verifier.Contains("::new('Root', 'LocalMachine')") -or $verifier.Contains("::new('Root', 'CurrentUser')")) {
+        throw 'Hosted test trust must avoid the interactive CurrentUser root store.'
+    }
+    Write-Host 'PASS: hosted test trust avoids the interactive CurrentUser root store'
 } finally {
     $env:GITHUB_ACTIONS = $savedActions
     $env:RUNNER_ENVIRONMENT = $savedRunner

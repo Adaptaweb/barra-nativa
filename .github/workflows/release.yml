@@ -106,6 +106,7 @@ jobs:
 
       - name: Verify both signed programs
         if: env.SIGNING_MODE != 'Unsigned'
+        timeout-minutes: 5
         shell: pwsh
         env:
           PRODUCTION_THUMBPRINT: ${{ vars.SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT }}
@@ -119,6 +120,7 @@ jobs:
       # (checked locally with a test certificate).
       - name: Rebuild the installer around the signed programs
         if: env.SIGNING_MODE != 'Unsigned'
+        timeout-minutes: 10
         shell: pwsh
         env:
           PRODUCTION_THUMBPRINT: ${{ vars.SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT }}
@@ -160,6 +162,7 @@ jobs:
 
       - name: Verify and use the signed installer
         if: env.SIGNING_MODE != 'Unsigned'
+        timeout-minutes: 5
         shell: pwsh
         env:
           PRODUCTION_THUMBPRINT: ${{ vars.SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT }}
