@@ -22,10 +22,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use muelle_config::{Config, DockGroup};
+use muelle_config::{Config, DockGroup, DockPosition};
 use muelle_core::{
     attention::Attention,
     bounce,
+    frame::{DockEdge, Frame as DockFrame},
     layout::{ItemKind, Layout, Metrics, Rect, layout},
     magnify::{Magnifier, magnify},
     roster::{Group, Roster},
@@ -103,7 +104,7 @@ use crate::{
     mascot,
     menu::{self, MenuItem},
     menubar::{MenuBar, MenuBarWidgets},
-    multi_window_view::MultiWindowView,
+    multi_window_view::{self, MultiWindowView},
     scene::{Drag, Frame, Scene, SceneInput, SlotContent, Theme},
     shell_work::{self, Action as ShellAction},
     strings::{self, text},
@@ -164,6 +165,8 @@ const ATTENTION_HOPS: f32 = 3.0;
 const FLOAT_MARGIN: f32 = 8.0;
 const SHADOW_ROOM: f32 = 44.0;
 const LABEL_ROOM: f32 = 60.0;
+/// Widest room kept beside a side dock for an app's name, in logical pixels.
+const SIDE_LABEL_MAX: f32 = 320.0;
 /// Hysteresis distances: the effect starts at the first distance and ends at the second.
 const ENTER_HALO: f32 = 5.0;
 const LEAVE_HALO: f32 = 15.0;
@@ -422,10 +425,11 @@ enum Outside {
         copy: bool,
     },
     Menu(MenuRequest),
-    /// The shortcuts folder's contents, as a menu above its icon.
+    /// The shortcuts folder's contents, as a menu beside its icon.
     FolderMenu {
         folder: String,
         anchor: POINT,
+        placement: menu::Placement,
         dark: bool,
     },
     InputMenu {
@@ -446,6 +450,7 @@ struct MenuRequest {
     target: MenuTarget,
     items: Vec<MenuItem>,
     anchor: POINT,
+    placement: menu::Placement,
     dark: bool,
 }
 
@@ -550,6 +555,11 @@ struct Bounce {
 #[derive(PartialEq)]
 struct StageKey {
     screen: RECT,
+    /// The screen edge the dock sits on.
+    edge: DockEdge,
+    /// The menu bar's strip at the top of this screen: a side dock is
+    /// centred in the height below it.
+    top_inset: i32,
     scale: f32,
     light: bool,
     glass: bool,
@@ -647,15 +657,90 @@ struct Stage {
     icon: f32,
     gap: f32,
     scale: f32,
-    dock_origin: POINT,
-    /// Position of the resting dock inside the visual window.
-    origin: (f32, f32),
+    /// The resting dock on the screen: maps dock coordinates (along, across)
+    /// to screen pixels and back, whatever edge it is on.
+    frame: DockFrame,
+    /// The same, inside the visual window.
+    window_frame: DockFrame,
     rest_zone: RECT,
     hover_zone: RECT,
     /// Thin strip at the screen edge that reveals the dock when auto-hide is on.
     edge_zone: RECT,
-    /// How far the dock slides down to hide completely.
+    /// How far the dock slides toward its screen edge to hide completely.
     slide_distance: f32,
+}
+
+impl Stage {
+    /// Dock coordinates (along, across) of a screen point. Across is
+    /// negative away from the screen edge.
+    fn to_dock(&self, point: POINT) -> (f32, f32) {
+        self.frame.to_dock(point.x as f32, point.y as f32)
+    }
+
+    /// The screen box of a box in dock coordinates.
+    fn screen_rect(&self, rect: Rect) -> RECT {
+        let rect = self.frame.rect(rect);
+        RECT {
+            left: rect.x.round() as i32,
+            top: rect.y.round() as i32,
+            right: (rect.x + rect.width).round() as i32,
+            bottom: (rect.y + rect.height).round() as i32,
+        }
+    }
+
+    /// The screen point `gap` pixels off the box `rect` (dock coordinates)
+    /// on its side away from the screen edge, centred: where menus and
+    /// popups for an icon hang.
+    fn beside(&self, rect: Rect, gap: i32) -> POINT {
+        let r = self.frame.rect(rect);
+        let (middle_x, middle_y) = (
+            (r.x + r.width / 2.0).round() as i32,
+            (r.y + r.height / 2.0).round() as i32,
+        );
+        match self.frame.edge {
+            DockEdge::Bottom => POINT {
+                x: middle_x,
+                y: r.y.round() as i32 - gap,
+            },
+            DockEdge::Left => POINT {
+                x: (r.x + r.width).round() as i32 + gap,
+                y: middle_y,
+            },
+            DockEdge::Right => POINT {
+                x: r.x.round() as i32 - gap,
+                y: middle_y,
+            },
+        }
+    }
+
+    /// Which way a menu or popup for an icon opens: away from the edge.
+    fn menu_placement(&self) -> menu::Placement {
+        match self.frame.edge {
+            DockEdge::Bottom => menu::Placement::Above,
+            DockEdge::Left => menu::Placement::Right,
+            DockEdge::Right => menu::Placement::Left,
+        }
+    }
+
+    /// Where the dock starts along the screen axis it runs on.
+    fn along_origin(&self) -> f32 {
+        if self.frame.edge.is_vertical() {
+            self.frame.origin.1
+        } else {
+            self.frame.origin.0
+        }
+    }
+
+    /// Whether `point` is within the span of the reveal strip (the pointer
+    /// came out of it toward the dock rather than past its end).
+    fn spans_reveal(&self, point: POINT) -> bool {
+        let zone = self.edge_zone;
+        if self.frame.edge.is_vertical() {
+            point.y >= zone.top && point.y < zone.bottom
+        } else {
+            point.x >= zone.left && point.x < zone.right
+        }
+    }
 }
 
 struct ReorderMotion {
@@ -694,7 +779,9 @@ struct App {
     attention_enabled: bool,
     assets: HashMap<String, Asset>,
     /// Scale, theme and icon pixel size the cached assets were drawn for.
-    assets_for: (f32, bool, u32),
+    /// Scale, theme, icon size and dock edge the assets were drawn for
+    /// (labels point at their icon, so they depend on the edge).
+    assets_for: (f32, bool, u32, DockEdge),
     placeholder: Option<CompositionSurfaceBrush>,
     remove_label: Option<LabelBrush>,
     config: Config,
@@ -982,15 +1069,15 @@ impl App {
     }
 
     /// `wanted` is the pixel side icons are drawn at: their magnified size.
-    fn prepare_assets(&mut self, wanted: u32, scale: f32, light: bool) {
-        if self.assets_for != (scale, light, wanted) {
+    fn prepare_assets(&mut self, wanted: u32, scale: f32, light: bool, edge: DockEdge) {
+        if self.assets_for != (scale, light, wanted, edge) {
             self.assets.clear();
             self.remove_label = None;
             self.placeholder = None;
-            self.assets_for = (scale, light, wanted);
+            self.assets_for = (scale, light, wanted, edge);
         }
         if self.remove_label.is_none() {
-            self.remove_label = self.gfx.label_brush(text().remove, scale, light).ok();
+            self.remove_label = self.gfx.label_brush(text().remove, scale, light, edge).ok();
         }
         if self.placeholder.is_none() {
             self.placeholder = self.gfx.placeholder_brush(wanted, light).ok();
@@ -1035,7 +1122,12 @@ impl App {
                     .collect();
                 let label = self
                     .gfx
-                    .label_brush(&shorten(&names.join(", "), GROUP_LABEL_CHARS), scale, light)
+                    .label_brush(
+                        &shorten(&names.join(", "), GROUP_LABEL_CHARS),
+                        scale,
+                        light,
+                        edge,
+                    )
                     .inspect_err(|error| eprintln!("muelle: etiqueta del grupo `{id}`: {error:#}"))
                     .ok();
                 self.assets.insert(
@@ -1067,7 +1159,7 @@ impl App {
             }
             if let Some(hwnd) = window_of(id) {
                 let title = shorten(&tracker::title(hwnd), WINDOW_TITLE_CHARS);
-                let label = self.gfx.label_brush(&title, scale, light).ok();
+                let label = self.gfx.label_brush(&title, scale, light, edge).ok();
                 self.assets.insert(
                     id.clone(),
                     Asset {
@@ -1080,7 +1172,7 @@ impl App {
             }
             if id == START_ID {
                 let icon = self.gfx.start_brush(wanted).ok();
-                let label = self.gfx.label_brush(text().start, scale, light).ok();
+                let label = self.gfx.label_brush(text().start, scale, light, edge).ok();
                 self.assets.insert(
                     id.clone(),
                     Asset {
@@ -1104,7 +1196,7 @@ impl App {
             let name = visual.map_or_else(|| fallback_name(id), |visual| visual.name.clone());
             let label = self
                 .gfx
-                .label_brush(&name, scale, light)
+                .label_brush(&name, scale, light, edge)
                 .inspect_err(|error| eprintln!("muelle: etiqueta de `{id}`: {error:#}"))
                 .ok();
             self.assets.insert(
@@ -1169,8 +1261,11 @@ impl App {
         let monitor = self
             .dock_monitor()
             .context("no se pudo consultar el monitor del dock")?;
+        let edge = self.position();
         let key = StageKey {
             screen: monitor.screen,
+            edge,
+            top_inset: self.menu_bar_inset(monitor.screen, edge),
             scale: monitor.scale,
             light: uses_light_theme(),
             // A backdrop brush made while Windows had transparency off stays
@@ -1208,13 +1303,33 @@ impl App {
         let px = |logical: f32| (logical * scale).round();
         let screen = monitor.screen;
         let screen_width = (screen.right - screen.left) as f32;
+        // On a side, the dock runs down the height left under the menu bar.
+        let span_start = (screen.top + key.top_inset) as f32;
+        let length_room = if edge.is_vertical() {
+            screen.bottom as f32 - span_start
+        } else {
+            screen_width
+        };
         let kinds: Vec<ItemKind> = key.entries.iter().map(|entry| entry.kind).collect();
         let mut dock = layout(&kinds, &metrics);
-        let available = (screen_width - 2.0 * px(FLOAT_MARGIN)).max(1.0);
-        if dock.width > available {
+        let available = (length_room - 2.0 * px(FLOAT_MARGIN)).max(1.0);
+        // A side dock often fills the height. Magnified, it spreads by up to
+        // half its growth past each end, which would put the first icon
+        // under the menu bar and the last off screen: room is kept for it.
+        // It scales with the icons, so one ratio fits both exactly.
+        let spread = if edge.is_vertical() {
+            Magnifier {
+                range: RANGE_IN_ICONS * (metrics.icon + metrics.gap),
+                max_scale,
+            }
+            .max_growth()
+        } else {
+            0.0
+        };
+        if dock.width + spread > available {
             // Keep the roster reachable on a smaller display without
             // changing the user's saved icon size.
-            metrics = metrics.scaled(available / dock.width);
+            metrics = metrics.scaled(available / (dock.width + spread));
             dock = layout(&kinds, &metrics);
         }
         dock.width = dock.width.round();
@@ -1225,6 +1340,7 @@ impl App {
             (metrics.icon * max_scale).round().max(1.0) as u32,
             scale,
             theme.light,
+            edge,
         );
 
         let magnifier = Magnifier {
@@ -1237,26 +1353,81 @@ impl App {
 
         // Position relative to the screen, not the work area; the work area
         // already excludes the strip reserved by the dock.
-        let dock_x = screen.left as f32 + ((screen_width - dock.width) / 2.0).round();
-        let dock_y = screen.bottom as f32 - px(FLOAT_MARGIN) - dock.height;
+        let margin = px(FLOAT_MARGIN);
+        let centred = span_start + ((length_room - dock.width) / 2.0).round();
+        let (dock_x, dock_y) = match edge {
+            DockEdge::Bottom => (
+                screen.left as f32 + ((screen_width - dock.width) / 2.0).round(),
+                screen.bottom as f32 - margin - dock.height,
+            ),
+            DockEdge::Left => (screen.left as f32 + margin, centred),
+            DockEdge::Right => (screen.right as f32 - margin - dock.height, centred),
+        };
+        let frame = DockFrame::new(edge, (dock_x, dock_y), dock.height);
         // A hidden dock leaves the whole screen to maximized windows.
         let strip = if self.config.auto_hide {
             0
         } else {
-            (dock.height + 2.0 * px(FLOAT_MARGIN)) as i32
+            (dock.height + 2.0 * margin) as i32
         };
-        let (dock_right, dock_bottom) = (dock_x + dock.width, dock_y + dock.height);
-        let zone = move |left: f32, top: f32, right: f32, bottom: f32| RECT {
-            left: (dock_x - left) as i32,
-            top: (dock_y - top) as i32,
-            right: (dock_right + right) as i32,
-            // A display below this one must not receive the sliding dock
-            // or its mouse input while the animation crosses the edge.
-            bottom: ((dock_bottom + bottom) as i32).min(screen.bottom),
+        // The resting dock's box on screen: across the edge it is as deep as
+        // the layout is tall.
+        let (box_width, box_height) = if edge.is_vertical() {
+            (dock.height, dock.width)
+        } else {
+            (dock.width, dock.height)
+        };
+        let (dock_right, dock_bottom) = (dock_x + box_width, dock_y + box_height);
+        // Room around the dock, in its own terms: before and after it along
+        // the edge, inward (where icons grow and labels show) and outward.
+        // Outward never passes the screen edge: a display beyond it must not
+        // receive the sliding dock or its mouse input while it slides.
+        let zone = move |before: f32, inward: f32, after: f32, outward: f32| match edge {
+            DockEdge::Bottom => RECT {
+                left: (dock_x - before) as i32,
+                top: (dock_y - inward) as i32,
+                right: (dock_right + after) as i32,
+                bottom: ((dock_bottom + outward) as i32).min(screen.bottom),
+            },
+            DockEdge::Left => RECT {
+                left: ((dock_x - outward) as i32).max(screen.left),
+                top: (dock_y - before) as i32,
+                right: (dock_right + inward) as i32,
+                bottom: (dock_bottom + after) as i32,
+            },
+            DockEdge::Right => RECT {
+                left: (dock_x - inward) as i32,
+                top: (dock_y - before) as i32,
+                right: ((dock_right + outward) as i32).min(screen.right),
+                bottom: (dock_bottom + after) as i32,
+            },
         };
 
         let room = px(SHADOW_ROOM);
-        let (room_x, room_top) = (room + side_growth, rise + px(LABEL_ROOM));
+        // Labels show inward of the icon: above it on the bottom, beside it
+        // on a side, where they need their full width.
+        let label_room = if edge.is_vertical() {
+            let widest = self
+                .assets
+                .values()
+                .filter_map(|asset| asset.label.as_ref())
+                .chain(&self.remove_label)
+                .map(|label| label.width)
+                .fold(0.0_f32, f32::max);
+            px(12.0) + widest.min(px(SIDE_LABEL_MAX))
+        } else {
+            px(LABEL_ROOM)
+        };
+        let (room_x, room_top) = (room + side_growth, rise + label_room);
+        let window_zone = zone(room_x, room_top, room_x, room);
+        let window_frame = DockFrame::new(
+            edge,
+            (
+                dock_x - window_zone.left as f32,
+                dock_y - window_zone.top as f32,
+            ),
+            dock.height,
+        );
         let contents: Vec<SlotContent<'_>> = self
             .entries
             .iter()
@@ -1284,7 +1455,7 @@ impl App {
                 contents: &contents,
                 theme,
                 scale,
-                origin: (room_x, room_top),
+                frame: window_frame,
                 remove_label: self.remove_label.as_ref(),
             },
         )?;
@@ -1292,6 +1463,7 @@ impl App {
             // Do not interpolate between monitors or on a theme-only rebuild.
             if self.fullscreen
                 || previous.key.screen != key.screen
+                || previous.key.edge != key.edge
                 || previous.scale != scale
                 || previous
                     .key
@@ -1329,10 +1501,10 @@ impl App {
                     };
                     // Start from the currently drawn icon, including any earlier
                     // move still in progress when the user crosses another slot.
-                    previous
-                        .scene
-                        .slot_x(index)
-                        .map_or(0.0, |x| previous.dock_origin.x as f32 + x - dock_x - rect.x)
+                    let along = if edge.is_vertical() { dock_y } else { dock_x };
+                    previous.scene.slot_along(index).map_or(0.0, |drawn| {
+                        previous.along_origin() + drawn - along - rect.x
+                    })
                 })
                 .collect();
             offsets
@@ -1348,18 +1520,15 @@ impl App {
         let (enter, leave) = (px(ENTER_HALO), px(LEAVE_HALO));
         let stage = Stage {
             key,
-            window_zone: zone(room_x, room_top, room_x, room),
+            window_zone,
             scene,
             reorder,
             magnifier,
             icon: metrics.icon,
             gap: metrics.gap,
             scale,
-            origin: (room_x, room_top),
-            dock_origin: POINT {
-                x: dock_x as i32,
-                y: dock_y as i32,
-            },
+            frame,
+            window_frame,
             rest_zone: zone(enter, enter, enter, enter),
             hover_zone: zone(
                 side_growth + leave,
@@ -1367,11 +1536,27 @@ impl App {
                 side_growth + leave,
                 leave,
             ),
-            edge_zone: RECT {
-                left: (dock_x - side_growth) as i32,
-                top: screen.bottom - REVEAL_STRIP,
-                right: (dock_right + side_growth) as i32,
-                bottom: screen.bottom,
+            // The thin strip at the screen edge that reveals a hidden dock,
+            // as long as the dock (plus how far its icons spread).
+            edge_zone: match edge {
+                DockEdge::Bottom => RECT {
+                    left: (dock_x - side_growth) as i32,
+                    top: screen.bottom - REVEAL_STRIP,
+                    right: (dock_right + side_growth) as i32,
+                    bottom: screen.bottom,
+                },
+                DockEdge::Left => RECT {
+                    left: screen.left,
+                    top: (dock_y - side_growth) as i32,
+                    right: screen.left + REVEAL_STRIP,
+                    bottom: (dock_bottom + side_growth) as i32,
+                },
+                DockEdge::Right => RECT {
+                    left: screen.right - REVEAL_STRIP,
+                    top: (dock_y - side_growth) as i32,
+                    right: screen.right,
+                    bottom: (dock_bottom + side_growth) as i32,
+                },
             },
             slide_distance: dock.height + px(FLOAT_MARGIN) + room,
             layout: dock,
@@ -1391,7 +1576,12 @@ impl App {
             } else {
                 screen
             };
-            appbar.reserve(Edge::Bottom, reservation, strip);
+            let side = match edge {
+                DockEdge::Bottom => Edge::Bottom,
+                DockEdge::Left => Edge::Left,
+                DockEdge::Right => Edge::Right,
+            };
+            appbar.reserve(side, reservation, strip);
         }
         Ok(())
     }
@@ -1478,10 +1668,7 @@ impl App {
                     .entries
                     .iter()
                     .position(|entry| entry.id.as_deref() == Some(drag.id.as_str()))?,
-                center: (
-                    (drag.point.x - stage.dock_origin.x) as f32,
-                    (drag.point.y - stage.dock_origin.y) as f32,
-                ),
+                center: stage.to_dock(drag.point),
                 removing: drag.removing,
                 ghost: drag.from_group,
             })
@@ -1525,12 +1712,9 @@ impl App {
         let visible = !self.fullscreen;
         for (entry, rect) in self.entries.iter().zip(&state.rects) {
             if let Some(hwnd) = entry.id.as_deref().and_then(window_of) {
-                let slot = (
-                    stage.origin.0 + rect.x,
-                    stage.origin.1 + rect.y + slide,
-                    rect.width,
-                    rect.height,
-                );
+                let box_ = stage.window_frame.rect(*rect);
+                let (slide_x, slide_y) = stage.window_frame.outward(slide);
+                let slot = (box_.x + slide_x, box_.y + slide_y, box_.width, box_.height);
                 let has_badge = self
                     .windows
                     .iter()
@@ -1574,14 +1758,14 @@ impl App {
                     .iter()
                     .position(|entry| entry.members.contains(&id))
             })?;
-        let rect = stage.layout.slots.get(index)?.rect;
+        let rect = stage.frame.rect(stage.layout.slots.get(index)?.rect);
         let (width, height) = if aspect >= 1.0 {
             (rect.width, rect.width / aspect)
         } else {
             (rect.height * aspect, rect.height)
         };
-        let left = stage.dock_origin.x as f32 + rect.x + (rect.width - width) / 2.0;
-        let top = stage.dock_origin.y as f32 + rect.y + (rect.height - height) / 2.0;
+        let left = rect.x + (rect.width - width) / 2.0;
+        let top = rect.y + (rect.height - height) / 2.0;
         Some(RECT {
             left: left as i32,
             top: top as i32,
@@ -1697,6 +1881,7 @@ impl App {
                 slot,
                 screen,
                 self.config.genie_speed.seconds(),
+                self.position(),
             )
         });
         let Some(flight) = flight else {
@@ -1757,6 +1942,7 @@ impl App {
                 frame,
                 screen,
                 self.config.genie_speed.seconds(),
+                self.position(),
             ) {
                 self.flights.push(flight);
                 self.last_frame = Instant::now();
@@ -1773,9 +1959,9 @@ impl App {
         // SAFETY: `point` remains alive for the duration of the call.
         unsafe { GetCursorPos(&mut point)? };
 
-        let origin_x = stage.dock_origin.x;
+        let (along, _) = stage.to_dock(point);
         if self.update_drag(point) {
-            self.cursor = (point.x - origin_x) as f32;
+            self.cursor = along;
             return self.drag_to(point);
         }
         let Some(stage) = &self.stage else {
@@ -1784,12 +1970,12 @@ impl App {
 
         // Keep the active-area boundary aligned with the icons as they grow.
         let rise = stage.icon * (stage.magnifier.max_scale - 1.0) * self.amount.value;
-        let ceiling = stage.dock_origin.y as f32 - rise - LEAVE_HALO * stage.scale;
-        if self.hovering && (point.y as f32) < ceiling {
+        let (along, across) = stage.to_dock(point);
+        if self.hovering && across < -rise - LEAVE_HALO * stage.scale {
             return self.on_mouse_leave();
         }
 
-        self.cursor = (point.x - stage.dock_origin.x) as f32;
+        self.cursor = along;
         if !self.hovering {
             self.hovering = true;
             self.amount.target = 1.0;
@@ -1904,19 +2090,17 @@ impl App {
             &stage.magnifier,
         );
         let rect = &state.rects[index];
-        let anchor = RECT {
-            left: stage.dock_origin.x + rect.x.round() as i32,
-            top: stage.dock_origin.y + rect.y.round() as i32,
-            right: stage.dock_origin.x + (rect.x + rect.width).round() as i32,
-            bottom: stage.dock_origin.y + (rect.y + rect.height).round() as i32,
-        };
+        let anchor = stage.screen_rect(*rect);
         let windows = self.preview_order.windows_of(&self.windows, &candidate);
         self.preview = Some(MultiWindowView::show(
             &self.gfx,
             candidate,
             windows,
-            anchor,
-            stage.key.screen,
+            &multi_window_view::Anchor {
+                icon: anchor,
+                screen: stage.key.screen,
+                edge: stage.frame.edge,
+            },
             stage.scale,
             Theme::for_system(stage.key.light, stage.key.glass),
         )?);
@@ -2313,16 +2497,27 @@ impl App {
         }
     }
 
-    /// The top edge of the dock, for the crab to walk on. An auto-hidden
+    /// The dock's inner rim, for the crab to walk on. An auto-hidden
     /// dock comes up for the act and goes down after it, as the macOS Dock
     /// does when something asks for attention.
     fn dock_edge(&self) -> Option<mascot::Place> {
         let stage = self.stage.as_ref()?;
         let margin = (stage.icon / 2.0) as i32;
+        let frame = stage.frame;
+        // The rim is the dock's side away from the screen edge (dock
+        // coordinate across = 0), and the walk runs the dock's length.
+        let start = frame.point(0.0, 0.0);
+        let end = frame.point(stage.layout.width, 0.0);
+        let (from, to, rim) = if frame.edge.is_vertical() {
+            (start.1, end.1, start.0)
+        } else {
+            (start.0, end.0, start.1)
+        };
         Some(mascot::Place::Along {
-            left: stage.dock_origin.x - margin,
-            right: stage.dock_origin.x + stage.layout.width as i32 + margin,
-            top: stage.dock_origin.y,
+            left: from as i32 - margin,
+            right: to as i32 + margin,
+            top: rim as i32,
+            edge: frame.edge,
         })
     }
 
@@ -2454,7 +2649,7 @@ impl App {
                 return Ok(None);
             }
         }
-        self.hover_at(point.x)?;
+        self.hover_at(point)?;
         self.track_leave()?;
         Ok(Some(point))
     }
@@ -2508,9 +2703,9 @@ impl App {
         let id = drag.id.clone();
         let pinned = self.roster.is_pinned(&id);
         let group = self.roster.is_group(&id);
-        let top = stage.dock_origin.y as f32
-            - stage.icon * (stage.magnifier.max_scale - 1.0 + REMOVE_DISTANCE);
-        let above = (point.y as f32) < top;
+        // How far the pointer is from the dock, away from the screen edge.
+        let (_, across) = stage.to_dock(point);
+        let above = across < -stage.icon * (stage.magnifier.max_scale - 1.0 + REMOVE_DISTANCE);
         // A group never leaves the dock this way (it can be ungrouped from
         // its menu), and an app taken out of a group stays in the dock,
         // where it was last placed, wherever it is released.
@@ -2528,7 +2723,7 @@ impl App {
         );
         let explorer = explorer_id();
         let rise = stage.icon * (stage.magnifier.max_scale - 1.0);
-        let in_dock = (point.y as f32) >= stage.dock_origin.y as f32 - rise;
+        let in_dock = across >= -rise;
         if !group && in_dock {
             drag.merge = self
                 .entries
@@ -2539,11 +2734,7 @@ impl App {
                         && entry.id.as_ref().is_some_and(|other| {
                             *other != id && *other != explorer && self.roster.is_pinned(other)
                         })
-                        && group_drop_contains(
-                            rect,
-                            self.cursor,
-                            (point.y - stage.dock_origin.y) as f32,
-                        )
+                        && group_drop_contains(rect, self.cursor, across)
                 })
                 .and_then(|(entry, _)| entry.id.clone());
             if drag.merge.is_some() {
@@ -2607,11 +2798,11 @@ impl App {
 
     /// Hover driven by a drag from another app: OLE takes the mouse, so the
     /// dock gets no WM_MOUSEMOVE meanwhile.
-    fn hover_at(&mut self, x: i32) -> Result<()> {
+    fn hover_at(&mut self, point: POINT) -> Result<()> {
         let Some(stage) = &self.stage else {
             return Ok(());
         };
-        self.cursor = (x - stage.dock_origin.x) as f32;
+        self.cursor = stage.to_dock(point).0;
         if !self.hovering {
             self.hovering = true;
             self.amount.target = 1.0;
@@ -2679,7 +2870,7 @@ impl App {
         DropAction::Pin { id, before }
     }
 
-    fn on_drag_enter(&mut self, incoming: Vec<String>, x: i32) -> Result<DROPEFFECT> {
+    fn on_drag_enter(&mut self, incoming: Vec<String>, point: POINT) -> Result<DROPEFFECT> {
         self.close_preview();
         // What a single dropped app or shortcut would pin, worked out once:
         // drag-over runs on every mouse move, and reading a shortcut is a
@@ -2691,11 +2882,11 @@ impl App {
         };
         self.incoming = incoming;
         self.drag_over = true;
-        self.on_drag_over(x)
+        self.on_drag_over(point)
     }
 
-    fn on_drag_over(&mut self, x: i32) -> Result<DROPEFFECT> {
-        self.hover_at(x)?;
+    fn on_drag_over(&mut self, point: POINT) -> Result<DROPEFFECT> {
+        self.hover_at(point)?;
         self.aim_spring();
         Ok(self.drop_action().effect())
     }
@@ -2770,9 +2961,9 @@ impl App {
         Ok(self.activating(windows))
     }
 
-    fn on_drop(&mut self, x: i32) -> Result<DROPEFFECT> {
+    fn on_drop(&mut self, point: POINT) -> Result<DROPEFFECT> {
         self.end_drag_over();
-        self.hover_at(x)?;
+        self.hover_at(point)?;
         let action = self.drop_action();
         let effect = action.effect();
         let files = std::mem::take(&mut self.incoming);
@@ -2990,9 +3181,13 @@ impl App {
     /// The shortcuts folder's menu, above its icon. The label hides while
     /// the menu is open, as for the context menu.
     fn folder_menu(&mut self, folder: String) -> Result<Option<Outside>> {
-        let Some(anchor) = self.hovered.and_then(|index| self.anchor_above(index)) else {
+        let Some(anchor) = self.hovered.and_then(|index| self.anchor_beside(index)) else {
             return Ok(None);
         };
+        let placement = self
+            .stage
+            .as_ref()
+            .map_or(menu::Placement::Above, Stage::menu_placement);
         self.close_preview();
         self.close_group_view();
         self.hovered = None;
@@ -3001,12 +3196,14 @@ impl App {
         Ok(Some(Outside::FolderMenu {
             folder,
             anchor,
+            placement,
             dark: !uses_light_theme(),
         }))
     }
 
-    /// Where a menu for the icon at `index` opens: centered just above it.
-    fn anchor_above(&self, index: usize) -> Option<POINT> {
+    /// Where a menu for the icon at `index` opens: just off it, on the side
+    /// away from the screen edge (see `Stage::menu_placement`).
+    fn anchor_beside(&self, index: usize) -> Option<POINT> {
         let stage = self.stage.as_ref()?;
         let state = magnify(
             &stage.layout,
@@ -3016,10 +3213,7 @@ impl App {
         );
         let rect = state.rects.get(index)?;
         let gap = (stage.gap / 2.0).round() as i32;
-        Some(POINT {
-            x: stage.dock_origin.x + (rect.x + rect.width / 2.0).round() as i32,
-            y: stage.dock_origin.y + rect.y.round() as i32 - gap,
-        })
+        Some(stage.beside(*rect, gap))
     }
 
     /// What clicking the app `id` does, in the dock or in an unfolded group:
@@ -3064,7 +3258,7 @@ impl App {
         }
     }
 
-    /// Unfolds the group `id` above its icon.
+    /// Unfolds the group `id` beside its icon, away from the screen edge.
     fn open_group_view(&mut self, id: &str) -> Result<()> {
         self.close_preview();
         self.close_group_view();
@@ -3087,17 +3281,11 @@ impl App {
         let Some(rect) = state.rects.get(index) else {
             return Ok(());
         };
-        let anchor = RECT {
-            left: stage.dock_origin.x + rect.x.round() as i32,
-            top: stage.dock_origin.y + rect.y.round() as i32,
-            right: stage.dock_origin.x + (rect.x + rect.width).round() as i32,
-            bottom: stage.dock_origin.y + (rect.y + rect.height).round() as i32,
-        };
+        let anchor = stage.screen_rect(*rect);
         let (icon, scale) = (stage.icon.round(), stage.scale);
         let theme = Theme::for_system(stage.key.light, stage.key.glass);
-        let Some(monitor) = primary_monitor() else {
-            return Ok(());
-        };
+        // The dock's own display, which a hidden dock can move between.
+        let (screen, edge) = (stage.key.screen, stage.frame.edge);
         let items = self.group_items(id, icon as u32);
         self.group_view = Some(GroupView::show(
             &self.gfx,
@@ -3105,7 +3293,8 @@ impl App {
             &items,
             &Placement {
                 anchor,
-                screen: monitor.screen,
+                screen,
+                edge,
                 scale,
                 icon,
                 theme,
@@ -3205,7 +3394,7 @@ impl App {
         });
         self.refresh()?;
         if let Some(stage) = &self.stage {
-            self.cursor = (point.x - stage.dock_origin.x) as f32;
+            self.cursor = stage.to_dock(point).0;
         }
         // SAFETY: Capture keeps mouse input while dragging outside the dock.
         unsafe {
@@ -3263,6 +3452,7 @@ impl App {
             },
             items,
             anchor,
+            placement: menu::Placement::Above,
             dark: !uses_light_theme(),
         })))
     }
@@ -3310,14 +3500,12 @@ impl App {
             Some((entry.id.clone()?, entry.role, *state.rects.get(index)?))
         });
         let gap = (stage.gap / 2.0).round() as i32;
+        let stage_placement = stage.menu_placement();
 
         let (target, items, anchor) = match target_entry {
             Some((id, role, rect)) => {
                 let windows = self.windows_of(&id);
-                let anchor = POINT {
-                    x: stage.dock_origin.x + (rect.x + rect.width / 2.0).round() as i32,
-                    y: stage.dock_origin.y + rect.y.round() as i32 - gap,
-                };
+                let anchor = stage.beside(rect, gap);
                 let (items, end_task) = self.entry_menu(&id, role, &windows);
                 (
                     MenuTarget::Entry {
@@ -3331,10 +3519,15 @@ impl App {
                 )
             }
             None => {
-                let anchor = POINT {
-                    x: stage.dock_origin.x + self.cursor.round() as i32,
-                    y: stage.dock_origin.y - gap,
-                };
+                let anchor = stage.beside(
+                    Rect {
+                        x: self.cursor,
+                        y: 0.0,
+                        width: 0.0,
+                        height: stage.layout.height,
+                    },
+                    gap,
+                );
                 let hiding = if self.config.auto_hide {
                     text().turn_hiding_off
                 } else {
@@ -3360,6 +3553,7 @@ impl App {
             target,
             items,
             anchor,
+            placement: stage_placement,
             dark: !uses_light_theme(),
         })))
     }
@@ -3583,7 +3777,7 @@ impl App {
         if config.language != self.config.language {
             strings::set_language(config.language);
             // Labels are drawn text: redraw them in the new language.
-            self.assets_for = (0.0, false, 0);
+            self.assets_for = (0.0, false, 0, DockEdge::Bottom);
         }
         if !config.genie {
             self.restore_transitions();
@@ -3593,7 +3787,12 @@ impl App {
             self.slide.target = if config.auto_hide { 1.0 } else { 0.0 };
             self.last_frame = Instant::now();
         }
+        let moved = config.dock_position != self.config.dock_position;
         self.config = config;
+        if moved {
+            // A hidden dock comes out of its new edge on every display.
+            self.apply_edge_settings();
+        }
         // Updates may have been turned on or off.
         self.schedule_update();
         self.sync_thumbnails();
@@ -4011,6 +4210,33 @@ impl App {
         self.apply_edge_settings();
     }
 
+    /// The screen edge chosen in Settings.
+    fn position(&self) -> DockEdge {
+        match self.config.dock_position {
+            DockPosition::Bottom => DockEdge::Bottom,
+            DockPosition::Left => DockEdge::Left,
+            DockPosition::Right => DockEdge::Right,
+        }
+    }
+
+    /// How much of `screen`'s top the menu bar keeps, for a dock on a side
+    /// edge to start below it. Zero on the bottom edge (not needed there),
+    /// when the bar is off or hides itself, and on other displays (the bar
+    /// is on the primary one).
+    fn menu_bar_inset(&self, screen: RECT, edge: DockEdge) -> i32 {
+        if !edge.is_vertical() {
+            return 0;
+        }
+        // From the settings, not the live bar: at startup the dock is placed
+        // before the bar exists, and it must not move once the bar appears.
+        if !self.config.menu_bar || self.config.menu_bar_auto_hide {
+            return 0;
+        }
+        primary_monitor()
+            .filter(|primary| primary.screen == screen)
+            .map_or(0, |primary| MenuBar::strip_height(primary.scale))
+    }
+
     fn dock_monitor(&self) -> Option<Monitor> {
         self.dock_display
             .filter(|_| self.config.auto_hide)
@@ -4032,7 +4258,7 @@ impl App {
             // One display already has the dock's own reveal strip.
             screens.clear();
         }
-        edge_watch::set_dock_monitors(screens);
+        edge_watch::set_dock_monitors(screens, self.position());
         let enabled = watch_dock || (self.menubar.is_some() && self.config.menu_bar_auto_hide);
         if enabled && self.edge_watch.is_none() {
             self.edge_watch = EdgeWatch::start(self.visual)
@@ -4139,7 +4365,7 @@ impl App {
         if self
             .stage
             .as_ref()
-            .is_some_and(|stage| point.x >= stage.edge_zone.left && point.x < stage.edge_zone.right)
+            .is_some_and(|stage| stage.spans_reveal(point))
         {
             return self.on_mouse_move();
         }
@@ -4601,20 +4827,24 @@ pub fn menu_bar_tick() {
     });
 }
 
-pub fn drag_enter(files: Vec<String>, x: i32, _y: i32) -> DROPEFFECT {
-    with_app_value("arrastre de archivos", |app| app.on_drag_enter(files, x))
+pub fn drag_enter(files: Vec<String>, x: i32, y: i32) -> DROPEFFECT {
+    with_app_value("arrastre de archivos", |app| {
+        app.on_drag_enter(files, POINT { x, y })
+    })
 }
 
-pub fn drag_over(x: i32, _y: i32) -> DROPEFFECT {
-    with_app_value("arrastre de archivos", |app| app.on_drag_over(x))
+pub fn drag_over(x: i32, y: i32) -> DROPEFFECT {
+    with_app_value("arrastre de archivos", |app| {
+        app.on_drag_over(POINT { x, y })
+    })
 }
 
 pub fn drag_leave() {
     with_app("arrastre de archivos", App::on_drag_leave);
 }
 
-pub fn drop_files(x: i32, _y: i32) -> DROPEFFECT {
-    with_app_value("soltar archivos", |app| app.on_drop(x))
+pub fn drop_files(x: i32, y: i32) -> DROPEFFECT {
+    with_app_value("soltar archivos", |app| app.on_drop(POINT { x, y }))
 }
 
 /// Checks the recycle bin on a background thread by scanning each drive
@@ -4775,6 +5005,7 @@ fn run_outside(outside: Outside) {
                 &request.items,
                 request.anchor,
                 request.dark,
+                request.placement,
             );
             with_app("menú cerrado", App::after_menu);
             if let Some(command) = chosen {
@@ -4786,13 +5017,14 @@ fn run_outside(outside: Outside) {
         Outside::FolderMenu {
             folder,
             anchor,
+            placement,
             dark,
         } => {
             with_app("abrir carpeta de accesos directos", |app| {
                 app.menu_open = true;
                 app.render()
             });
-            let chosen = folder_menu::show(main_window(), &folder, anchor, dark);
+            let chosen = folder_menu::show(main_window(), &folder, anchor, dark, placement);
             with_app("menú cerrado", App::after_menu);
             if let Some(path) = chosen {
                 submit(ShellAction::Open { id: path });
@@ -5167,7 +5399,7 @@ pub fn run() -> Result<()> {
             attention: Attention::default(),
             attention_enabled: status::taskbar_badges_enabled(),
             assets: HashMap::new(),
-            assets_for: (0.0, false, 0),
+            assets_for: (0.0, false, 0, DockEdge::Bottom),
             placeholder: None,
             remove_label: None,
             config,

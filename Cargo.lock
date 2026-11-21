@@ -3803,6 +3803,7 @@ name = "spikes"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "muelle-core",
  "muelle-shell",
  "serde",
  "serde_json",

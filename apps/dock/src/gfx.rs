@@ -2,6 +2,7 @@
 //! icons and masks to be drawn on compositor surfaces.
 
 use anyhow::{Context, Result};
+use muelle_core::frame::DockEdge;
 use muelle_shell::icons::IconImage;
 use windows::{
     Foundation::Size,
@@ -397,9 +398,16 @@ impl Gfx {
         })
     }
 
-    /// Creates an app-name label: a dark pill (light in light theme) with a
-    /// downward-pointing arrow.
-    pub fn label_brush(&self, text: &str, scale: f32, light: bool) -> Result<LabelBrush> {
+    /// Creates an app-name label: a dark pill (light in light theme) with an
+    /// arrow pointing at the icon: down on a bottom dock, toward the screen
+    /// edge on a side dock (the label sits beside the icon there).
+    pub fn label_brush(
+        &self,
+        text: &str,
+        scale: f32,
+        light: bool,
+        edge: DockEdge,
+    ) -> Result<LabelBrush> {
         let (pad_x, pad_y, arrow) = (11.0 * scale, 5.0 * scale, 6.0 * scale);
         let (fill, ink) = if light {
             (rgb(0.96, 0.96, 0.97, 0.92), rgb(0.0, 0.0, 0.0, 0.88))
@@ -428,51 +436,65 @@ impl Gfx {
         };
 
         let body_height = (metrics.height + 2.0 * pad_y).ceil();
-        let width = (metrics.width + 2.0 * pad_x).ceil();
-        let height = body_height + arrow;
+        let body_width = (metrics.width + 2.0 * pad_x).ceil();
+        let (width, height) = if edge.is_vertical() {
+            (body_width + arrow, body_height)
+        } else {
+            (body_width, body_height + arrow)
+        };
+        // Where the pill starts: after the arrow on a left dock's label.
+        let body_left = if edge == DockEdge::Left { arrow } else { 0.0 };
+        // The arrow: its base on the pill (1 px into it, so no seam shows)
+        // and its tip pointing at the icon.
+        let (base_a, base_b, tip) = match edge {
+            DockEdge::Bottom => (
+                (width / 2.0 - arrow, body_height - 1.0),
+                (width / 2.0 + arrow, body_height - 1.0),
+                (width / 2.0, height),
+            ),
+            DockEdge::Left => (
+                (arrow + 1.0, height / 2.0 - arrow),
+                (arrow + 1.0, height / 2.0 + arrow),
+                (0.0, height / 2.0),
+            ),
+            DockEdge::Right => (
+                (body_width - 1.0, height / 2.0 - arrow),
+                (body_width - 1.0, height / 2.0 + arrow),
+                (width, height / 2.0),
+            ),
+        };
         let brush = self.draw(width as u32, height as u32, |dc| {
             let body = D2D1_ROUNDED_RECT {
                 rect: D2D_RECT_F {
-                    left: 0.0,
+                    left: body_left,
                     top: 0.0,
-                    right: width,
+                    right: body_left + body_width,
                     bottom: body_height,
                 },
                 radiusX: 7.0 * scale,
                 radiusY: 7.0 * scale,
             };
-            let middle = width / 2.0;
             // SAFETY: All created objects remain alive until the end of the block.
             unsafe {
                 let fill = dc.CreateSolidColorBrush(&fill, None)?;
                 dc.FillRoundedRectangle(&body, &fill);
 
-                // The arrow triangle hangs from the center of the pill and
-                // overlaps it by 1 px to avoid a visible seam.
                 let triangle = dc.GetFactory()?.CreatePathGeometry()?;
                 let sink = triangle.Open()?;
-                sink.BeginFigure(
-                    Vector2 {
-                        X: middle - arrow,
-                        Y: body_height - 1.0,
-                    },
-                    D2D1_FIGURE_BEGIN_FILLED,
-                );
-                sink.AddLine(Vector2 {
-                    X: middle + arrow,
-                    Y: body_height - 1.0,
-                });
-                sink.AddLine(Vector2 {
-                    X: middle,
-                    Y: height,
-                });
+                let point = |(x, y): (f32, f32)| Vector2 { X: x, Y: y };
+                sink.BeginFigure(point(base_a), D2D1_FIGURE_BEGIN_FILLED);
+                sink.AddLine(point(base_b));
+                sink.AddLine(point(tip));
                 sink.EndFigure(D2D1_FIGURE_END_CLOSED);
                 sink.Close()?;
                 dc.FillGeometry(&triangle, &fill, None);
 
                 let ink = dc.CreateSolidColorBrush(&ink, None)?;
                 dc.DrawTextLayout(
-                    Vector2 { X: pad_x, Y: pad_y },
+                    Vector2 {
+                        X: body_left + pad_x,
+                        Y: pad_y,
+                    },
                     &layout,
                     &ink,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,

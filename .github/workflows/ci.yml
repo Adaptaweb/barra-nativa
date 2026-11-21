@@ -25,6 +25,10 @@ jobs:
         shell: pwsh
         run: ./scripts/Test-WingetAutomation.ps1
 
+      - name: Check code-signing policy without network, credentials or trust changes
+        shell: pwsh
+        run: ./scripts/Test-CodeSigning.ps1
+
       # The settings app embeds its built front end at compile time.
       - name: Build settings UI
         working-directory: apps/settings

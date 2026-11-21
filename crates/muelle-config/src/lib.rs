@@ -56,6 +56,9 @@ pub struct Config {
     pub magnification: bool,
     /// Side of the icon under the cursor, in logical pixels.
     pub magnified_size: u32,
+    /// The screen edge the dock sits on. Bottom by default, as on macOS;
+    /// never the top, which belongs to the menu bar.
+    pub dock_position: DockPosition,
     /// Genie effect when minimizing. On by default; while enabled, the dock
     /// turns off the system's own window transitions (see plan, "Efecto genio").
     pub genie: bool,
@@ -121,6 +124,19 @@ pub struct DockGroup {
 
 /// Speed of the genie. Three steps, not a slider: a duration in milliseconds
 /// would ask the user to guess, and these three cover what anyone asked for.
+/// The screen edge the dock sits on: the three macOS offers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockPosition {
+    Left,
+    Right,
+    /// Also what an unknown value from a newer version reads as (serde
+    /// needs this fallback last).
+    #[default]
+    #[serde(other)]
+    Bottom,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GenieSpeed {
@@ -210,6 +226,7 @@ impl Default for Config {
             auto_hide: false,
             icon_size: 48,
             magnification: true,
+            dock_position: DockPosition::Bottom,
             magnified_size: 77,
             genie: true,
             genie_speed: GenieSpeed::Normal,
@@ -622,6 +639,16 @@ mod tests {
     fn genie_should_be_on_by_default() {
         assert!(Config::default().genie);
         assert_eq!(Config::default().genie_speed, GenieSpeed::Normal);
+    }
+
+    #[test]
+    fn the_dock_stays_at_the_bottom_unless_moved() {
+        for json in [r#"{}"#, r#"{"dockPosition":"top"}"#] {
+            let config: Config = serde_json::from_str(json).unwrap_or_default();
+            assert_eq!(config.dock_position, DockPosition::Bottom);
+        }
+        let left: Config = serde_json::from_str(r#"{"dockPosition":"left"}"#).unwrap_or_default();
+        assert_eq!(left.dock_position, DockPosition::Left);
     }
 
     #[test]

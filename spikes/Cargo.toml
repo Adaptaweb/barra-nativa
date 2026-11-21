@@ -58,6 +58,7 @@ windows = { workspace = true, features = [
 windows-numerics.workspace = true
 anyhow.workspace = true
 windows-core.workspace = true
+muelle-core.workspace = true
 muelle-shell.workspace = true
 windows-collections = "0.3"
 serde.workspace = true

@@ -5,6 +5,7 @@ use std::cell::Cell;
 
 use anyhow::Result;
 use muelle_core::{
+    frame::{DockEdge, Frame as DockFrame},
     layout::{ItemKind, Layout, Rect},
     magnify::Magnified,
 };
@@ -211,7 +212,9 @@ pub struct SceneInput<'a> {
     pub contents: &'a [SlotContent<'a>],
     pub theme: Theme,
     pub scale: f32,
-    pub origin: (f32, f32),
+    /// Where the resting dock sits in the visual window, and on which edge:
+    /// every position the scene draws goes through it.
+    pub frame: DockFrame,
     /// Shown above an icon dragged out of the dock.
     pub remove_label: Option<&'a LabelBrush>,
 }
@@ -348,7 +351,7 @@ mod attention_tests {
                         contents: &contents,
                         theme: Theme::for_system(light, true),
                         scale,
-                        origin: (0.0, 0.0),
+                        frame: DockFrame::new(DockEdge::Bottom, (0.0, 0.0), layout.height),
                         remove_label: None,
                     },
                 )?;
@@ -404,7 +407,7 @@ mod attention_tests {
 #[derive(Clone, Copy)]
 pub struct Drag {
     pub index: usize,
-    /// Icon center, relative to the resting dock origin.
+    /// Icon center in dock coordinates (along, across the dock).
     pub center: (f32, f32),
     /// Released here, the icon would leave the dock.
     pub removing: bool,
@@ -422,7 +425,8 @@ pub struct Frame<'a> {
     pub drag: Option<Drag>,
     /// The icon the dragged app would join in a group if released now.
     pub target: Option<usize>,
-    /// Vertical offset of the whole dock (auto-hide), in pixels.
+    /// How far the whole dock has slid toward the screen edge (auto-hide),
+    /// in pixels.
     pub slide: f32,
     /// Align to whole pixels; only at rest, where sharpness matters.
     pub snap: bool,
@@ -450,7 +454,7 @@ impl Label {
 
 pub struct Scene {
     pub root: ContainerVisual,
-    origin: (f32, f32),
+    frame: DockFrame,
     height: f32,
     stroke: f32,
     label_gap: f32,
@@ -478,8 +482,21 @@ pub struct Scene {
 }
 
 impl Scene {
-    pub fn slot_x(&self, index: usize) -> Option<f32> {
-        Some(self.slots.get(index)?.Offset().ok()?.X)
+    /// Where the slot is drawn now, along the dock, in dock coordinates.
+    pub fn slot_along(&self, index: usize) -> Option<f32> {
+        let offset = self.slots.get(index)?.Offset().ok()?;
+        let size = self.slots.get(index)?.Size().ok()?;
+        // The box's top-left maps from a different dock corner on each edge;
+        // its centre maps from its centre on all of them.
+        let (along, _) = self
+            .frame
+            .to_dock(offset.X + size.X / 2.0, offset.Y + size.Y / 2.0);
+        let length = if self.frame.edge.is_vertical() {
+            size.Y
+        } else {
+            size.X
+        };
+        Some(along - length / 2.0)
     }
 
     pub fn build(gfx: &Gfx, input: &SceneInput<'_>) -> Result<Self> {
@@ -488,7 +505,7 @@ impl Scene {
             layout,
             theme,
             scale,
-            origin,
+            frame,
             ..
         } = *input;
         let radius = layout.height * 0.36;
@@ -519,8 +536,8 @@ impl Scene {
         layers.InsertAtTop(&glass)?;
         layers.InsertAtTop(&rim)?;
 
+        // Children are placed in window coordinates through `frame`.
         let content = c.CreateContainerVisual()?;
-        content.SetOffset(v3(origin.0, origin.1))?;
         let children = content.Children()?;
         let indicator_size = (4.0 * scale).round();
         let dot = c.CreateEllipseGeometry()?;
@@ -592,7 +609,7 @@ impl Scene {
 
         Ok(Self {
             root,
-            origin,
+            frame,
             height: layout.height,
             stroke,
             label_gap: 8.0 * scale,
@@ -647,7 +664,9 @@ impl Scene {
             snap,
         } = *frame;
         let fit = |value: f32| if snap { value.round() } else { value };
-        self.root.SetOffset(v3(0.0, slide))?;
+        let place = |rect: Rect| self.frame.rect(rect);
+        let (slide_x, slide_y) = self.frame.outward(slide);
+        self.root.SetOffset(v3(slide_x, slide_y))?;
         self.raise(drag.map(|drag| drag.index))?;
         self.place_merge(target.and_then(|index| {
             Some((
@@ -656,8 +675,14 @@ impl Scene {
             ))
         }))?;
 
-        let size = v2(fit(state.right - state.left), self.height);
-        let offset = v3(self.origin.0 + fit(state.left), self.origin.1);
+        let plate = place(Rect {
+            x: fit(state.left),
+            y: 0.0,
+            width: fit(state.right - state.left),
+            height: self.height,
+        });
+        let size = v2(plate.width, plate.height);
+        let offset = v3(plate.x, plate.y);
         for frame in &self.frames {
             frame.SetSize(size)?;
             frame.SetOffset(offset)?;
@@ -678,6 +703,24 @@ impl Scene {
                 Some(drag) => (drag.center.0 - width / 2.0, drag.center.1 - height / 2.0),
                 None => (x, y - lifts.get(index).copied().unwrap_or(0.0)),
             };
+            // In dock coordinates up to here; from here on, in the window.
+            let dot = place(Rect {
+                x: x + (width - self.indicator_size) / 2.0,
+                y: self.indicator_y,
+                width: self.indicator_size,
+                height: self.indicator_size,
+            });
+            let Rect {
+                x,
+                y,
+                width,
+                height,
+            } = place(Rect {
+                x,
+                y,
+                width,
+                height,
+            });
 
             if let Some(visual) = self.slots.get(index) {
                 visual.SetOffset(v3(fit(x), fit(y)))?;
@@ -718,22 +761,35 @@ impl Scene {
             }
             if let Some(Some(indicator)) = self.indicators.get(index) {
                 indicator.SetIsVisible(dragged.is_none())?;
-                indicator.SetOffset(v3(
-                    fit(x + (width - self.indicator_size) / 2.0),
-                    self.indicator_y,
-                ))?;
+                indicator.SetOffset(v3(fit(dot.x), fit(dot.y)))?;
             }
             if let Some(Some(label)) = self.labels.get(index) {
                 let shown = hovered == Some(index) && drag.is_none();
                 label.visual.SetIsVisible(shown)?;
                 if shown {
-                    self.place_label(label, x, y, width)?;
+                    self.place_label(
+                        label,
+                        Rect {
+                            x,
+                            y,
+                            width,
+                            height,
+                        },
+                    )?;
                 }
             }
             if let (Some(label), Some(drag)) = (&self.remove_label, dragged) {
                 label.visual.SetIsVisible(drag.removing)?;
                 if drag.removing {
-                    self.place_label(label, x, y, width)?;
+                    self.place_label(
+                        label,
+                        Rect {
+                            x,
+                            y,
+                            width,
+                            height,
+                        },
+                    )?;
                 }
             }
         }
@@ -775,10 +831,13 @@ impl Scene {
             self.merge.SetIsVisible(false)?;
             return Ok(());
         };
+        let rect = self.frame.rect(Rect {
+            y: rect.y - lift,
+            ..rect
+        });
         let pad = (rect.width * 0.1).round();
         let size = v2(rect.width + 2.0 * pad, rect.height + 2.0 * pad);
-        self.merge
-            .SetOffset(v3(rect.x - pad, rect.y - pad - lift))?;
+        self.merge.SetOffset(v3(rect.x - pad, rect.y - pad))?;
         self.merge.SetSize(size)?;
         self.merge_geometry
             .SetSize(v2(size.X - self.merge_stroke, size.Y - self.merge_stroke))?;
@@ -788,11 +847,25 @@ impl Scene {
         Ok(())
     }
 
-    fn place_label(&self, label: &Label, x: f32, y: f32, width: f32) -> Result<()> {
-        label.visual.SetOffset(v3(
-            (x + (width - label.width) / 2.0).round(),
-            (y - self.label_gap - label.height).round(),
-        ))?;
+    /// Beside the icon, on the side away from the screen edge: above it on
+    /// a bottom dock, to its right on a left dock, to its left on a right one.
+    fn place_label(&self, label: &Label, icon: Rect) -> Result<()> {
+        let Rect {
+            x,
+            y,
+            width,
+            height,
+        } = icon;
+        let middle = y + (height - label.height) / 2.0;
+        let (left, top) = match self.frame.edge {
+            DockEdge::Bottom => (
+                x + (width - label.width) / 2.0,
+                y - self.label_gap - label.height,
+            ),
+            DockEdge::Left => (x + width + self.label_gap, middle),
+            DockEdge::Right => (x - self.label_gap - label.width, middle),
+        };
+        label.visual.SetOffset(v3(left.round(), top.round()))?;
         Ok(())
     }
 }

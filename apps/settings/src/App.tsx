@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Config,
+  type DockPosition,
   type GenieSpeed,
   type IslandStyle,
   type Language,
@@ -312,6 +313,18 @@ export function App() {
                     onChange={(magnifiedSize) => update({ magnifiedSize })}
                   />
                 </SubRow>
+                <Row label={t.dockPosition}>
+                  <Segmented<DockPosition>
+                    label={t.dockPosition}
+                    value={config.dockPosition}
+                    options={[
+                      { value: "left", label: t.dockPositionLeft },
+                      { value: "bottom", label: t.dockPositionBottom },
+                      { value: "right", label: t.dockPositionRight },
+                    ]}
+                    onChange={(dockPosition) => update({ dockPosition })}
+                  />
+                </Row>
               </Card>
               <Card title={t.groupBehavior}>
                 <Row label={t.autoHide} hint={t.autoHideHint}>

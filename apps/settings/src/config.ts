@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export type Language = "auto" | "es" | "en" | "fr";
 export type IslandStyle = "notch" | "bubble";
 export type GenieSpeed = "normal" | "fast" | "faster";
+export type DockPosition = "left" | "bottom" | "right";
 
 /** Mirrors `muelle_config::Config`. */
 export interface Config {
@@ -13,6 +14,7 @@ export interface Config {
   iconSize: number;
   magnification: boolean;
   magnifiedSize: number;
+  dockPosition: DockPosition;
   genie: boolean;
   genieSpeed: GenieSpeed;
   showMinimized: boolean;

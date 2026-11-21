@@ -55,10 +55,18 @@ fn main() {
             .collect();
         let exact = match (std::env::args().nth(3).as_deref(), numbers.as_slice()) {
             (Some("under"), [x, top]) => Some(mascot::Place::Under { x: *x, top: *top }),
+            // A trailing `left` or `right` plays it on a side dock's inner
+            // wall: `left`/`right` then span the dock vertically and `top` is
+            // the wall's x.
             (Some("along"), [left, right, top]) => Some(mascot::Place::Along {
                 left: *left,
                 right: *right,
                 top: *top,
+                edge: match std::env::args().nth(7).as_deref() {
+                    Some("left") => muelle_core::frame::DockEdge::Left,
+                    Some("right") => muelle_core::frame::DockEdge::Right,
+                    _ => muelle_core::frame::DockEdge::Bottom,
+                },
             }),
             _ => None,
         };
@@ -80,6 +88,7 @@ fn main() {
                     left: 560,
                     right: 1360,
                     top: 900,
+                    edge: muelle_core::frame::DockEdge::Bottom,
                 },
                 RECT {
                     left: 540,

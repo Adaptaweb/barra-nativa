@@ -10,6 +10,16 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Settings → Dock → Position on screen: Left, Bottom or Right, as on macOS.
+  Bottom stays the default. On a side the dock runs top to bottom below the
+  menu bar, icons grow and show their names inward, menus, groups and window
+  previews open beside the icon, the genie flies sideways into the dock, a
+  hidden dock comes out of its side edge (on any display), and maximized
+  windows end beside it. No top position: that edge belongs to the menu bar.
+- Separated manual SignPath test builds from public releases and updater output.
+  Signature verification now records Windows' detailed result and the file hash,
+  checks the expected signer, and keeps strict integrity checks in both modes.
+  Test-certificate trust is temporary and restricted to GitHub-hosted runners.
 - Settings → Menu bar → Show what's playing (issue #28). The music half of
   the island could not be turned off; now it can, and with AI usage off too
   the menu bar shows no island at all. Off, Muelle also stops following media
@@ -18,6 +28,10 @@ copia la sección de la versión que se publica a la release de GitHub.
   inside dock groups (issue #26). Force termination runs outside the UI thread
   against process handles captured for that menu. Explorer, critical/shared hosts
   and inaccessible processes are excluded; cancelling the menu changes nothing.
+- Hardened "End task" against windows closed or added while its menu is open,
+  including independent windows outside the dock's current desktop. All selected
+  processes are checked before termination; an outdated selection is refused
+  instead of ending a background process or partially applying the request.
 - Settings → Windows → Genie speed (issue #27): Normal, Fast or Faster.
   Normal is the speed the genie always had (0.5 s, close to the macOS Dock)
   and stays the default; Fast takes 0.35 s and Faster 0.25 s, minimizing and
@@ -63,6 +77,17 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Ajustes → Dock → Posición en la pantalla: Izquierda, Abajo o Derecha, como
+  en macOS. Abajo sigue siendo la predeterminada. En un lateral el dock va de
+  arriba abajo bajo la barra superior, los iconos crecen y muestran su nombre
+  hacia dentro, los menús, grupos y vistas previas se abren junto al icono, el
+  genio vuela de lado hacia el dock, el dock oculto sale por su borde lateral
+  (en cualquier pantalla) y las ventanas maximizadas terminan a su lado. No hay
+  posición arriba: ese borde es de la barra superior.
+- Separadas las pruebas manuales de SignPath de las releases y el actualizador.
+  La verificación registra el detalle de Windows y el hash, comprueba el firmante
+  previsto y exige firmas válidas en ambos modos. La confianza del certificado
+  de prueba es temporal y se limita a runners alojados de GitHub.
 - Ajustes → Barra superior → Mostrar lo que se reproduce (issue #28). La parte
   de música de la isla no se podía apagar; ahora sí, y si también desactivas el
   uso de IA la barra superior no muestra ninguna isla. Apagado, Muelle deja
@@ -72,6 +97,10 @@ copia la sección de la versión que se publica a la release de GitHub.
   del hilo de interfaz y usa los procesos capturados para ese menú. Se excluyen
   Explorer, procesos críticos/hosts compartidos y procesos sin permisos; cancelar
   el menú no realiza ninguna acción.
+- Reforzado «Finalizar tarea» si se cierran o aparecen ventanas mientras el menú
+  sigue abierto, también fuera del escritorio que muestra el dock. Se comprueban
+  todos los procesos antes de finalizar: una selección antigua se rechaza en vez
+  de terminar un proceso en segundo plano o aplicar parcialmente la petición.
 - Ajustes → Ventanas → Velocidad del genio (issue #27): Normal, Rápida o Muy
   rápida. Normal es la velocidad de siempre (0,5 s, cercana al Dock de macOS)
   y sigue siendo la predeterminada; Rápida dura 0,35 s y Muy rápida 0,25 s,

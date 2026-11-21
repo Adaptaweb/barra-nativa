@@ -9,14 +9,18 @@ use std::{
 
 use windows::{
     Win32::{
-        Foundation::{HANDLE, HWND, WAIT_OBJECT_0},
+        Foundation::{HANDLE, HWND, LPARAM, WAIT_OBJECT_0},
         Storage::Packaging::Appx::GetApplicationUserModelId,
         System::Threading::{
             GetCurrentProcessId, IsProcessCritical, OpenProcess, PROCESS_NAME_WIN32,
             PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
             QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject,
         },
-        UI::WindowsAndMessaging::{GetShellWindow, GetWindowThreadProcessId},
+        UI::WindowsAndMessaging::{
+            EnumWindows, GW_OWNER, GWL_EXSTYLE, GetShellWindow, GetWindow, GetWindowLongW,
+            GetWindowThreadProcessId, IsWindowVisible, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW,
+        },
     },
     core::{BOOL, PWSTR},
 };
@@ -24,7 +28,32 @@ use windows::{
 use crate::tracker::{self, TrackedWindow};
 
 pub struct PreparedEndTask {
-    processes: Vec<OwnedHandle>,
+    processes: Vec<(u32, OwnedHandle)>,
+    windows: Vec<(isize, u32)>,
+}
+
+fn independent_windows() -> windows::core::Result<Vec<(isize, u32)>> {
+    unsafe extern "system" fn collect(hwnd: HWND, data: LPARAM) -> BOOL {
+        // SAFETY: EnumWindows keeps the local Vec alive for this callback.
+        let windows = unsafe { &mut *(data.0 as *mut Vec<(isize, u32)>) };
+        let style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32;
+        if unsafe { IsWindowVisible(hwnd) }.as_bool()
+            && style & WS_EX_TOOLWINDOW.0 == 0
+            && (style & WS_EX_APPWINDOW.0 != 0
+                || (style & WS_EX_NOACTIVATE.0 == 0
+                    && unsafe { GetWindow(hwnd, GW_OWNER) }.is_err()))
+        {
+            let raw = hwnd.0 as isize;
+            windows.push((raw, window_pid(raw)));
+        }
+        true.into()
+    }
+    let mut windows = Vec::new();
+    // SAFETY: A read-only enumeration, no title/COM/message calls into the apps.
+    unsafe {
+        EnumWindows(Some(collect), LPARAM(&raw mut windows as isize))?;
+    }
+    Ok(windows)
 }
 
 fn window_pid(window: isize) -> u32 {
@@ -70,6 +99,7 @@ impl PreparedEndTask {
             .collect();
         let mut seen = HashSet::new();
         let mut processes = Vec::new();
+        let mut selected = Vec::new();
         for &window in windows {
             let pid = window_pid(window);
             if pid == 0 {
@@ -78,6 +108,7 @@ impl PreparedEndTask {
             if protected_pid(pid, own, shell) {
                 return None;
             }
+            selected.push((window, pid));
             if seen.contains(&pid) {
                 continue;
             }
@@ -143,16 +174,68 @@ impl PreparedEndTask {
                 return None;
             }
             seen.insert(pid);
-            processes.push(handle);
+            processes.push((pid, handle));
         }
-        (!processes.is_empty()).then_some(Self { processes })
+        let selection = Self {
+            processes,
+            windows: selected,
+        };
+        if selection.processes.is_empty() {
+            return None;
+        }
+        // Also covers windows outside the current virtual desktop, which the
+        // visible dock roster intentionally excludes. Never terminate through
+        // an incomplete selection of independent windows sharing that process.
+        if !selection.includes(&independent_windows().ok()?) {
+            return None;
+        }
+        Some(selection)
+    }
+
+    fn includes(&self, current: &[(isize, u32)]) -> bool {
+        !current.iter().any(|&(window, pid)| {
+            self.processes.iter().any(|(target, _)| *target == pid)
+                && !self.windows.contains(&(window, pid))
+        })
+    }
+
+    fn validate(&self) -> windows::core::Result<()> {
+        let denied =
+            || windows::core::Error::from_hresult(windows::Win32::Foundation::E_ACCESSDENIED);
+        if !self.includes(&independent_windows()?) {
+            return Err(denied());
+        }
+        // Validate every target before ending any. A background process whose
+        // selected windows all closed must survive a stale context menu.
+        for (pid, process) in &self.processes {
+            let handle = HANDLE(process.as_raw_handle());
+            if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
+                continue;
+            }
+            if !self
+                .windows
+                .iter()
+                .any(|&(window, owner)| owner == *pid && window_pid(window) == *pid)
+            {
+                return Err(denied());
+            }
+            let mut critical = BOOL::default();
+            unsafe {
+                IsProcessCritical(handle, &mut critical)?;
+            }
+            if critical.as_bool() {
+                return Err(denied());
+            }
+        }
+        Ok(())
     }
 
     /// Requests termination without waiting on the UI or calling into a hung
     /// window. Natural exits during an open menu are harmless no-ops.
     pub fn terminate(self) -> windows::core::Result<()> {
+        self.validate()?;
         let mut failure = None;
-        for process in self.processes {
+        for (_, process) in self.processes {
             let handle = HANDLE(process.as_raw_handle());
             if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
                 continue;
@@ -189,13 +272,14 @@ mod tests {
         io::{BufRead, BufReader, Write},
         os::windows::process::CommandExt,
         process::{Child, Command, Stdio},
-        sync::mpsc,
+        sync::mpsc::{self, Receiver},
         time::Duration,
     };
 
     struct Fixture {
         child: Child,
         windows: [isize; 2],
+        events: Receiver<String>,
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
@@ -213,28 +297,26 @@ mod tests {
                     "--nocapture",
                 ])
                 .creation_flags(0x0800_0000)
+                .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .spawn()?;
+            let mut child = child;
+            let stdout = child.stdout.take().ok_or("missing fixture stdout")?;
+            let (send, receive) = mpsc::channel();
             let mut fixture = Self {
                 child,
                 windows: [0, 0],
+                events: receive,
             };
-            let stdout = fixture
-                .child
-                .stdout
-                .take()
-                .ok_or("missing fixture stdout")?;
-            let (send, receive) = mpsc::channel();
             std::thread::spawn(move || {
                 for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                     if let Some(handles) = line.strip_prefix("MUELLE_END_TASK_FIXTURE ") {
                         let _ = send.send(handles.to_owned());
-                        break;
                     }
                 }
             });
-            let handles = receive.recv_timeout(Duration::from_secs(5))?;
+            let handles = fixture.events.recv_timeout(Duration::from_secs(5))?;
             let handles: Vec<isize> = handles
                 .split_whitespace()
                 .map(str::parse)
@@ -243,6 +325,16 @@ mod tests {
                 .try_into()
                 .map_err(|_| "wrong fixture window count")?;
             Ok(fixture)
+        }
+        fn command(&mut self, command: &str) -> Result<(), Box<dyn std::error::Error>> {
+            let stdin = self.child.stdin.as_mut().ok_or("missing fixture stdin")?;
+            writeln!(stdin, "{command}")?;
+            stdin.flush()?;
+            let reply = self.events.recv_timeout(Duration::from_secs(5))?;
+            if reply != "OK" {
+                return Err("unexpected fixture reply".into());
+            }
+            Ok(())
         }
         fn app() -> Result<String, Box<dyn std::error::Error>> {
             Ok(tracker::normalize_id(
@@ -255,7 +347,8 @@ mod tests {
     #[ignore = "Internal subprocess fixture, started only by the native end-task tests"]
     fn end_task_frozen_fixture() -> windows::core::Result<()> {
         use windows::Win32::UI::WindowsAndMessaging::{
-            CreateWindowExW, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW,
+            CreateWindowExW, DestroyWindow, SW_SHOWNOACTIVATE, ShowWindow, WS_EX_APPWINDOW,
+            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW,
         };
         let create = || unsafe {
             CreateWindowExW(
@@ -281,7 +374,35 @@ mod tests {
         );
         let _ = std::io::stdout().flush();
         // Deliberately no message pump: Quit/WM_CLOSE cannot make progress.
-        std::thread::sleep(Duration::from_secs(60));
+        // Commands mutate test-owned HWNDs on their owning thread only.
+        for command in std::io::stdin().lock().lines().map_while(Result::ok) {
+            match command.as_str() {
+                "close" => unsafe {
+                    let _ = DestroyWindow(first);
+                    let _ = DestroyWindow(second);
+                },
+                "new" => unsafe {
+                    let added = CreateWindowExW(
+                        WS_EX_APPWINDOW | WS_EX_NOACTIVATE,
+                        windows::core::w!("STATIC"),
+                        windows::core::w!("Muelle extra window test"),
+                        WS_OVERLAPPEDWINDOW,
+                        -32000,
+                        -32000,
+                        160,
+                        120,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )?;
+                    let _ = ShowWindow(added, SW_SHOWNOACTIVATE);
+                },
+                _ => {}
+            }
+            println!("MUELLE_END_TASK_FIXTURE OK");
+            let _ = std::io::stdout().flush();
+        }
         Ok(())
     }
 
@@ -351,6 +472,82 @@ mod tests {
         let mut replacement = Fixture::spawn()?;
         stale.terminate()?;
         assert!(replacement.child.try_wait()?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Uses test-owned children; never closes user applications"]
+    fn native_end_task_refuses_closed_windows_and_windows_added_while_the_menu_is_open()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let app = Fixture::app()?;
+        let mut closed = Fixture::spawn()?;
+        let selection =
+            PreparedEndTask::capture(&app, &closed.windows, &[]).ok_or("capture failed")?;
+        closed.command("close")?;
+        assert!(selection.terminate().is_err());
+        assert!(closed.child.try_wait()?.is_none());
+        let mut changed = Fixture::spawn()?;
+        let selection =
+            PreparedEndTask::capture(&app, &changed.windows, &[]).ok_or("capture failed")?;
+        changed.command("new")?;
+        assert!(selection.terminate().is_err());
+        assert!(changed.child.try_wait()?.is_none());
+        assert!(PreparedEndTask::capture(&app, &changed.windows, &[]).is_none());
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Uses test-owned children to check all targets before any termination"]
+    fn native_end_task_does_not_partially_end_a_multi_process_selection_that_changed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let app = Fixture::app()?;
+        let mut first = Fixture::spawn()?;
+        let mut second = Fixture::spawn()?;
+        let windows: Vec<isize> = first.windows.into_iter().chain(second.windows).collect();
+        let selection = PreparedEndTask::capture(&app, &windows, &[]).ok_or("capture failed")?;
+        second.command("new")?;
+        assert!(selection.terminate().is_err());
+        assert!(first.child.try_wait()?.is_none());
+        assert!(second.child.try_wait()?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Measures native menu preparation and handle release on test-owned processes"]
+    fn native_end_task_menu_preparation_releases_handles_after_repeated_cancellation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
+        let mut fixture = Fixture::spawn()?;
+        let app = Fixture::app()?;
+        let handles = || -> windows::core::Result<u32> {
+            let mut count = 0;
+            unsafe {
+                GetProcessHandleCount(GetCurrentProcess(), &mut count)?;
+            }
+            Ok(count)
+        };
+        // Repeating handles simulates the largest permitted multi-window menu
+        // without creating 128 real windows on the user's desktop.
+        let windows: Vec<isize> = fixture.windows.into_iter().cycle().take(128).collect();
+        drop(PreparedEndTask::capture(&app, &windows, &[]).ok_or("capture failed")?);
+        let before = handles()?;
+        let mut times = Vec::new();
+        for _ in 0..64 {
+            let started = std::time::Instant::now();
+            let selection =
+                PreparedEndTask::capture(&app, &windows, &[]).ok_or("capture failed")?;
+            assert_eq!(selection.processes.len(), 1);
+            drop(selection);
+            times.push(started.elapsed().as_micros());
+        }
+        assert_eq!(handles()?, before, "cancelled menus leaked process handles");
+        assert!(fixture.child.try_wait()?.is_none());
+        times.sort_unstable();
+        println!(
+            "end-task capture, 128 slots/1 process, 64 cancelled menus: median={} us, max={} us, handle delta=0",
+            times[times.len() / 2],
+            times[times.len() - 1]
+        );
         Ok(())
     }
 

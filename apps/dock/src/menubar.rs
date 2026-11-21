@@ -1033,6 +1033,12 @@ impl MenuBar {
     }
 
     /// Hidden while an app is full screen.
+    /// How tall the bar is at `scale`: the strip it keeps at the top of the
+    /// primary display unless it hides itself. A side dock starts below it.
+    pub fn strip_height(scale: f32) -> i32 {
+        (HEIGHT * scale).round() as i32
+    }
+
     pub fn set_visible(&mut self, visible: bool) -> Result<()> {
         if self.visible == visible {
             return Ok(());
