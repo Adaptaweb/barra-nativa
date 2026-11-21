@@ -252,19 +252,19 @@ mod tests {
     #[test]
     fn test_push_and_expiration() {
         let mut queue = NotificationQueue::new();
-        let id1 = queue
-            .push(
-                "slack".into(),
-                "Slack".into(),
-                "New message".into(),
-                "Hello!".into(),
-                None,
-                None,
-                5000,
-                false,
-                false,
-            )
-            .unwrap();
+        let Some(id1) = queue.push(
+            "slack".into(),
+            "Slack".into(),
+            "New message".into(),
+            "Hello!".into(),
+            None,
+            None,
+            5000,
+            false,
+            false,
+        ) else {
+            panic!("should push notification");
+        };
 
         assert_eq!(queue.visible_items().len(), 1);
         assert_eq!(queue.badge_count("slack"), 1);
@@ -285,19 +285,19 @@ mod tests {
     #[test]
     fn test_hover_pauses_timer() {
         let mut queue = NotificationQueue::new();
-        let id = queue
-            .push(
-                "teams".into(),
-                "Teams".into(),
-                "Meeting".into(),
-                "Starting now".into(),
-                None,
-                None,
-                5000,
-                false,
-                false,
-            )
-            .unwrap();
+        let Some(id) = queue.push(
+            "teams".into(),
+            "Teams".into(),
+            "Meeting".into(),
+            "Starting now".into(),
+            None,
+            None,
+            5000,
+            false,
+            false,
+        ) else {
+            panic!("should push notification");
+        };
 
         // Hover pauses
         queue.set_hovered(Some(id));
@@ -380,19 +380,19 @@ mod tests {
 
         for i in 0..count {
             let app = if i % 2 == 0 { "app_a" } else { "app_b" };
-            let id = queue
-                .push(
-                    app.into(),
-                    format!("App {app}"),
-                    format!("Title {i}"),
-                    format!("Body {i}"),
-                    None,
-                    None,
-                    5000,
-                    false,
-                    false,
-                )
-                .expect("should push notification");
+            let Some(id) = queue.push(
+                app.into(),
+                format!("App {app}"),
+                format!("Title {i}"),
+                format!("Body {i}"),
+                None,
+                None,
+                5000,
+                false,
+                false,
+            ) else {
+                panic!("should push notification");
+            };
             ids.push(id);
         }
 

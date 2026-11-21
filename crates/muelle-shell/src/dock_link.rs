@@ -127,7 +127,9 @@ mod tests {
             duration_secs: 10,
         };
         let encoded = payload.encode();
-        let decoded = NotificationPayload::decode(&encoded).expect("should decode valid json");
+        let Some(decoded) = NotificationPayload::decode(&encoded) else {
+            panic!("should decode valid payload");
+        };
         assert_eq!(decoded.app_id, payload.app_id);
         assert_eq!(decoded.app_name, payload.app_name);
         assert_eq!(decoded.title, payload.title);
