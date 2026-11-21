@@ -6,8 +6,10 @@ use crate::layout::Rect;
 pub const MIN_CLOSE_HIT_TARGET: f32 = 20.0;
 /// Nominal diameter of the visible close circle at scale 1.0.
 pub const CLOSE_BUTTON_DIAMETER: f32 = 18.0;
-/// Padding from the top and left edges of the card.
-pub const CLOSE_BUTTON_INSET: f32 = 6.0;
+/// Corner radius used by the preview card's rounded clip.
+pub const PREVIEW_CARD_CORNER_RADIUS: f32 = 12.0;
+/// Keeps the close button inside the preview card's rounded-corner clip.
+pub const CLOSE_BUTTON_INSET: f32 = PREVIEW_CARD_CORNER_RADIUS;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Point {
@@ -36,7 +38,7 @@ pub struct CloseButtonBounds {
 pub fn close_button_bounds(card: Rect, scale: f32) -> CloseButtonBounds {
     let scale = scale.max(0.5);
     let visual_size = (CLOSE_BUTTON_DIAMETER * scale).round();
-    let inset = (CLOSE_BUTTON_INSET * scale).round();
+    let inset = (CLOSE_BUTTON_INSET * scale).ceil();
 
     let visual = Rect {
         x: card.x + inset,
@@ -145,6 +147,22 @@ mod tests {
             assert!(bounds.visual.x >= card.x);
             assert!(bounds.visual.y >= card.y);
             assert!(bounds.visual.x + bounds.visual.width <= card.x + card.width);
+        }
+    }
+
+    #[test]
+    fn close_button_visual_stays_inside_rounded_corner_clip_at_all_scales() {
+        let card = Rect {
+            x: 100.0,
+            y: 200.0,
+            width: 216.0,
+            height: 164.0,
+        };
+        for scale in [0.75, 1.0, 1.1, 1.25, 1.5, 2.0] {
+            let bounds = close_button_bounds(card, scale);
+            let safe_inset = PREVIEW_CARD_CORNER_RADIUS * scale;
+            assert!(bounds.visual.x - card.x >= safe_inset);
+            assert!(bounds.visual.y - card.y >= safe_inset);
         }
     }
 

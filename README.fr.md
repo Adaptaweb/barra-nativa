@@ -26,6 +26,8 @@ Agrandissement fluide, aperçus des fenêtres en direct et effet génie facultat
 ## Fonctionnalités
 
 - Dock effet verre, avec un agrandissement fluide des icônes sous le pointeur.
+- Choisissez le bord de l'écran dans Réglages → Dock → *Position à l'écran* :
+  gauche, bas ou droite. Le bas est la position par défaut.
 - Lancer, épingler, réorganiser et gérer les apps, y compris les apps récentes
   et les fenêtres ouvertes.
 - Regrouper des apps épinglées dans une seule icône du dock : déposez une app
@@ -46,14 +48,18 @@ Agrandissement fluide, aperçus des fenêtres en direct et effet génie facultat
   un sous-menu pour chaque dossier qu'il contient, comme une barre d'outils de
   la barre des tâches de Windows 10.
 - Masquage automatique facultatif.
+- Niveau de batterie facultatif pour les souris et casques compatibles
+  connectés. Activez Réglages → Barre de menus → *Afficher la batterie des
+  accessoires* ; l'option est désactivée par défaut.
 - Une barre de menus en haut de l'écran avec l'app au premier plan, l'heure, le
   réseau, le volume et la batterie, la langue de saisie, le micro et la caméra
   en cours d'utilisation, les icônes masquées de la zone de notification, ainsi
   que les boutons Rechercher, Affichage des tâches et Widgets s'ils figurent
   dans votre barre des tâches Windows.
 - Un îlot arrondi dans la barre de menus pour les limites d'utilisation de
-  Claude Code, Codex, OpenCode Go, Gemini CLI et Antigravity. Les quotas Gemini
-  Pro et Flash s'affichent séparément quand ils sont disponibles.
+  Claude Code, Codex, OpenCode Go, Z.ai GLM Coding Plan, Gemini CLI et
+  Antigravity. Z.ai affiche ses quotas sur 5 heures et sur une semaine ; les
+  quotas Gemini Pro et Flash s'affichent séparément quand ils sont disponibles.
 - Une app Réglages séparée, aux changements appliqués en direct, en espagnol,
   anglais et français, avec une animation de réduction façon génie
   configurable.
@@ -168,7 +174,9 @@ au projet. Il fait deux sortes de requêtes réseau, toutes deux facultatives :
   Antigravity, les quotas Gemini Pro et Flash s'affichent séparément quand ils
   sont disponibles ; Antigravity est interrogé via son service local. Les
   identifiants restent en mémoire et ne sont jamais enregistrés par Muelle.
-  Désactivez-la dans Réglages → Barre de menus → *Afficher l'utilisation des
-  fournisseurs d'IA*.
+  Pour Z.ai Coding Plan, Muelle lit la clé dans le fichier local `auth.json`
+  d'OpenCode ou dans `ZAI_API_KEY` / `ZHIPU_API_KEY`, puis l'envoie au service
+  de quotas de Z.ai. Désactivez les requêtes dans Réglages → Barre de menus →
+  *Afficher l'utilisation des fournisseurs d'IA*.
 
 Détails : [muelle.crafter.run/privacy](https://muelle.crafter.run/privacy).

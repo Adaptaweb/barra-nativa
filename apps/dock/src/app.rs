@@ -74,19 +74,20 @@ use windows::{
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DispatchMessageW, EVENT_OBJECT_CLOAKED,
-                EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND,
-                EVENT_SYSTEM_MINIMIZESTART, FindWindowW, GetCursorPos, GetMessageW,
-                GetSystemMetrics, HMENU, HWND_TOPMOST, IDC_ARROW, KillTimer, LoadCursorW,
-                MA_ACTIVATE, MA_NOACTIVATE, MSG, OBJID_WINDOW, PM_REMOVE, PeekMessageW,
-                PostMessageW, PostQuitMessage, RegisterClassW, RegisterShellHookWindow,
-                RegisterWindowMessageW, SM_CXDRAG, SM_SWAPBUTTON, SWP_HIDEWINDOW, SWP_NOACTIVATE,
-                SWP_SHOWWINDOW, SetTimer, SetWindowPos, WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT,
-                WINEVENT_SKIPOWNPROCESS, WM_APP, WM_CAPTURECHANGED, WM_CLOSE, WM_COPYDATA,
-                WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN,
-                WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-                WM_QUIT, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
-                WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-                WS_EX_TRANSPARENT, WS_POPUP,
+                EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND,
+                EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, FindWindowW, GetCursorPos,
+                GetMessageW, GetSystemMetrics, HMENU, HWND_TOPMOST, IDC_ARROW, KillTimer,
+                LoadCursorW, MA_ACTIVATE, MA_NOACTIVATE, MSG, OBJID_WINDOW, PM_REMOVE,
+                PeekMessageW, PostMessageW, PostQuitMessage, RegisterClassW,
+                RegisterShellHookWindow, RegisterWindowMessageW, SM_CXDRAG, SM_SWAPBUTTON,
+                SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetTimer, SetWindowPos,
+                WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP,
+                WM_CAPTURECHANGED, WM_CLOSE, WM_COPYDATA, WM_DESTROY, WM_DISPLAYCHANGE,
+                WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+                WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_QUIT, WM_RBUTTONUP,
+                WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+                WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+                WS_POPUP,
             },
         },
     },
@@ -296,6 +297,7 @@ static DROP_WINDOW: AtomicIsize = AtomicIsize::new(0);
 static MINIMIZE_HOOK: AtomicIsize = AtomicIsize::new(0);
 static CLOAK_HOOK: AtomicIsize = AtomicIsize::new(0);
 static FOREGROUND_HOOK: AtomicIsize = AtomicIsize::new(0);
+static LOCATION_HOOK: AtomicIsize = AtomicIsize::new(0);
 /// The window in front before the Alt+Tab switcher opened.
 static LAST_FRONT: AtomicIsize = AtomicIsize::new(0);
 
@@ -1974,6 +1976,14 @@ impl App {
     }
 
     fn on_mouse_move(&mut self) -> Result<()> {
+        // A player or browser can enter full screen without changing focus.
+        // Do not let a stale reveal-strip message raise the dock above it.
+        if !self.hovering {
+            self.update_fullscreen()?;
+        }
+        if self.fullscreen {
+            return Ok(());
+        }
         let Some(stage) = &self.stage else {
             return Ok(());
         };
@@ -4757,7 +4767,7 @@ unsafe extern "system" fn on_win_event(
     event: u32,
     hwnd: HWND,
     object: i32,
-    _child: i32,
+    child: i32,
     _thread: u32,
     _time: u32,
 ) {
@@ -4777,6 +4787,13 @@ unsafe extern "system" fn on_win_event(
         } else if !tracker::is_switch_transient(hwnd) {
             LAST_FRONT.store(hwnd.0 as isize, Ordering::Relaxed);
             with_app("ventana activa", App::on_foreground_changed);
+        }
+    } else if event == EVENT_OBJECT_LOCATIONCHANGE {
+        // Only the foreground top-level window matters. Ignore child controls,
+        // carets and background animations, and coalesce resize bursts using
+        // the existing full-screen timer, without enumerating apps or polling.
+        if child == 0 && hwnd.0 as isize == tracker::foreground_window() {
+            unsafe { SetTimer(Some(main_window()), FULLSCREEN_TIMER, SYNC_DELAY_MS, None) };
         }
     } else if event == EVENT_OBJECT_CLOAKED || event == EVENT_OBJECT_UNCLOAKED {
         // Shows the windows of the virtual desktop in front, as the Windows
@@ -5781,6 +5798,16 @@ pub fn run() -> Result<()> {
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
         );
         FOREGROUND_HOOK.store(foreground_hook.0 as isize, Ordering::Relaxed);
+        let location_hook = SetWinEventHook(
+            EVENT_OBJECT_LOCATIONCHANGE,
+            EVENT_OBJECT_LOCATIONCHANGE,
+            None,
+            Some(on_win_event),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        );
+        LOCATION_HOOK.store(location_hook.0 as isize, Ordering::Relaxed);
         LAST_FRONT.store(tracker::foreground_window(), Ordering::Relaxed);
         let target: IDropTarget = DropTarget.into();
         RegisterDragDrop(input, &target)?;
@@ -5805,7 +5832,12 @@ pub fn run() -> Result<()> {
     // SAFETY: The drop target was registered on this window in this thread.
     unsafe {
         let _ = RevokeDragDrop(HWND(DROP_WINDOW.load(Ordering::Relaxed) as *mut _));
-        for hook in [&MINIMIZE_HOOK, &CLOAK_HOOK, &FOREGROUND_HOOK] {
+        for hook in [
+            &MINIMIZE_HOOK,
+            &CLOAK_HOOK,
+            &FOREGROUND_HOOK,
+            &LOCATION_HOOK,
+        ] {
             let _ = UnhookWinEvent(HWINEVENTHOOK(hook.load(Ordering::Relaxed) as *mut _));
         }
     }

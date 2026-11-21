@@ -10,6 +10,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Fixed the dock appearing over full-screen playback controls (#33). Full-screen
+  detection now follows owned controls, distinguishes custom-frame maximized
+  windows, and reacts to in-place size changes without permanent polling.
 - Added Z.ai GLM Coding Plan usage limits to the menu bar island. The 5-hour rolling quota and weekly plan limits appear alongside their reset times whenever OpenCode CLI is active with a configured Z.ai Coding Plan key.
 - Fixed notification controls and stray conditional text appearing in Menu Bar
   settings. Each page now starts at the top when selected. Failed preference
@@ -37,6 +40,10 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Corregido el dock que aparecía sobre los controles de reproducción en pantalla
+  completa (#33). La detección contempla controles flotantes vinculados a su
+  ventana, distingue ventanas maximizadas con marco propio y atiende cambios de
+  tamaño sin sondeo permanente.
 - Incorporado el uso del plan Z.ai GLM Coding Plan a la isla de la barra superior. El cupo móvil de 5 horas y el límite semanal aparecen junto con sus horas de reinicio cuando OpenCode CLI está en ejecución con una clave de Z.ai Coding Plan configurada.
 - Corregidas las opciones de Notificaciones y el texto de una condición que
   aparecían en Barra superior. Cada sección comienza arriba al seleccionarla.

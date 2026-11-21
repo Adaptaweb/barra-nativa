@@ -18,6 +18,8 @@ en desarrollo activo.
 ## Funciones
 
 - Dock de cristal con ampliación suave de los iconos bajo el cursor.
+- Elige en Ajustes → Dock → *Posición en pantalla* si el dock va a la izquierda,
+  abajo o a la derecha. Abajo es la posición predeterminada.
 - Abrir, fijar, reordenar y gestionar apps, incluidas las recientes y las ventanas abiertas.
 - Agrupar apps fijadas en un solo icono del dock: suelta una app sobre otra, haz
   clic en el grupo para desplegar sus apps en abanico y arrastra una fuera del
@@ -31,13 +33,16 @@ en desarrollo activo.
   como un menú, con un submenú para cada carpeta, como una barra de
   herramientas de la barra de tareas de Windows 10.
 - Ocultación automática opcional.
+- Porcentaje de batería de ratones y auriculares compatibles. Se activa en
+  Ajustes → Barra superior → *Mostrar batería de accesorios*; viene desactivado.
 - Barra superior con la app en primer plano, hora, red, volumen y batería, el idioma
   del teclado, el micrófono/cámara en uso y los iconos ocultos de la bandeja,
   además de los botones de búsqueda, Vista de tareas y Widgets si los tienes en la barra
   de Windows.
 - Una isla curva en la barra superior con los límites de Claude Code, Codex,
-  OpenCode Go, Z.ai GLM Coding Plan, Gemini CLI y Antigravity. Las cuotas de
-  Gemini Pro y Flash aparecen por separado cuando están disponibles.
+  OpenCode Go, Z.ai GLM Coding Plan, Gemini CLI y Antigravity. Z.ai muestra
+  sus límites de 5 horas y de la semana; las cuotas de Gemini Pro y Flash
+  aparecen por separado cuando están disponibles.
 - App de Ajustes aparte, con cambios en vivo, en español, inglés y francés, y efecto genio configurable.
 - Un proceso guardián devuelve la barra de tareas de Windows si el dock se cierra de forma inesperada.
 
@@ -149,8 +154,10 @@ dos tipos de conexión de red, ambas opcionales:
   su proveedor cada cinco minutos mientras está visible, o al pulsar Actualizar.
   Gemini CLI y Antigravity pueden mostrar por separado las cuotas de Gemini Pro
   y Flash; Antigravity se consulta mediante su servicio local. Las credenciales
-  permanecen en memoria; Muelle no las guarda. Se desactiva en Ajustes → Barra
-  superior → *Mostrar uso de proveedores de IA*.
+  permanecen en memoria; Muelle no las guarda. Para Z.ai Coding Plan, Muelle
+  lee la clave del `auth.json` local de OpenCode o de `ZAI_API_KEY` /
+  `ZHIPU_API_KEY` y la envía al servicio de cuotas de Z.ai. Desactiva las
+  consultas en Ajustes → Barra superior → *Mostrar uso de proveedores de IA*.
 - **Notificaciones:** el contenido y los avisos de las notificaciones se procesan exclusivamente en la memoria local de tu equipo; nunca se escriben en disco, ni se guardan en registros ni se transmiten por la red.
 
 Detalles: [muelle.crafter.run/privacy](https://muelle.crafter.run/privacy).

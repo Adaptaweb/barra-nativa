@@ -25,6 +25,8 @@ Smooth magnification, live window previews, and an optional Genie-style minimize
 ## Features
 
 - Glass-style dock with smooth, cursor-based icon magnification.
+- Choose the dock's screen edge in Settings → Dock → *Position on screen*:
+  left, bottom, or right. Bottom is the default.
 - Launch, pin, reorder, and manage apps, including recent apps and open windows.
 - Group pinned apps into a single dock icon: drop one app onto another, click
   the group to fan its apps out, and drag one out of the fan to take it back.
@@ -39,12 +41,15 @@ Smooth magnification, live window previews, and an optional Genie-style minimize
 - A shortcuts folder at the right of the dock: its contents open as a menu,
   with a submenu for each folder inside, like a Windows 10 taskbar toolbar.
 - Optional auto-hide.
+- Optional battery levels for compatible connected mice and headsets. Enable
+  Settings → Menu bar → *Show accessory battery*; it is off by default.
 - A top menu bar with the app in front, clock, network, volume and battery, the
   input language, microphone/camera in use, the hidden tray icons, plus
   the Search, Task View and Widgets buttons if you have them on the Windows taskbar.
 - A curved island in the menu bar for usage limits from Claude Code, Codex,
-  OpenCode Go, Z.ai GLM Coding Plan, Gemini CLI, and Antigravity. Gemini Pro
-  and Flash quotas appear separately when available.
+  OpenCode Go, Z.ai GLM Coding Plan, Gemini CLI, and Antigravity. Z.ai shows
+  its 5-hour and weekly limits; Gemini Pro and Flash quotas appear separately
+  when available.
 - Separate Settings app with live changes, Spanish, English and French, and a
   configurable Genie-style minimize animation.
 - A watchdog restores the Windows taskbar if the dock exits unexpectedly.
@@ -151,8 +156,10 @@ project. It makes two kinds of network requests, both optional:
   every five minutes while visible, or when you press Refresh. For Gemini CLI
   and Antigravity, Gemini Pro and Flash quotas are shown separately when
   available; Antigravity is queried through its local service. Credentials stay
-  in memory and are never stored by Muelle. Turn it off in Settings → Menu bar
-  → *Show AI provider usage*.
+  in memory and are never stored by Muelle. For Z.ai Coding Plan, Muelle reads
+  the key from OpenCode's local `auth.json` or `ZAI_API_KEY` /
+  `ZHIPU_API_KEY`, then sends it to Z.ai's quota service. Turn usage queries
+  off in Settings → Menu bar → *Show AI provider usage*.
 - **Notifications:** notification content and banners are processed strictly in memory on your local machine and are never written to disk, saved in log files, or transmitted over the network.
 
 Details: [muelle.crafter.run/privacy](https://muelle.crafter.run/privacy).

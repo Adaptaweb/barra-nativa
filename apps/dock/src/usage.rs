@@ -778,10 +778,10 @@ fn zai_token(
         return Some(key.to_owned());
     }
     for path in zai_auth_paths(data_home, home) {
-        if let Some(auth) = read_opencode_auth(&path) {
-            if let Some(key) = zai_key(None, Some(&auth)) {
-                return Some(key.to_owned());
-            }
+        if let Some(auth) = read_opencode_auth(&path)
+            && let Some(key) = zai_key(None, Some(&auth))
+        {
+            return Some(key.to_owned());
         }
     }
     None
