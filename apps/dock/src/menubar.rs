@@ -154,6 +154,7 @@ pub(crate) mod glyph {
     pub const HIDDEN_ICONS: char = '\u{E70E}';
     pub const MICROPHONE: char = '\u{E720}';
     pub const CAMERA: char = '\u{E722}';
+    pub const FOCUS: char = '\u{E708}';
     pub const MOUSE: char = '\u{E962}';
     pub const HEADSET: char = '\u{E95B}';
     pub const BLUETOOTH: char = '\u{E702}';
@@ -164,6 +165,7 @@ enum Action {
     AccessoryIndicator,
     QuickSettings,
     Notifications,
+    ToggleDnd,
     Sound,
     Search,
     TaskView,
@@ -1727,6 +1729,12 @@ impl MenuBar {
             Some(Action::AccessoryIndicator) => {}
             Some(Action::QuickSettings) => launcher::open_quick_settings(),
             Some(Action::Notifications) => launcher::open_notifications(),
+            Some(Action::ToggleDnd) => {
+                crate::app::with_app("toggle dnd", |app| {
+                    app.toggle_dnd();
+                    Ok(())
+                });
+            }
             Some(Action::Sound) => launcher::open_sound(),
             Some(Action::Search) => launcher::open_search(),
             Some(Action::TaskView) => launcher::open_task_view(),
@@ -1965,6 +1973,7 @@ impl MenuBar {
                 Action::Notifications,
             ),
             (gfx.control_center_brush(scale, ink)?, Action::QuickSettings),
+            (symbol(&[(glyph::FOCUS, 1.0)])?, Action::ToggleDnd),
         ];
         // Privacy indicators, as the Windows tray shows them: something is
         // using the microphone or camera right now.

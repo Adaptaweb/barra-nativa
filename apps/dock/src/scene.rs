@@ -205,6 +205,8 @@ pub struct SlotContent<'a> {
     pub running: bool,
     /// App icon shown in the corner of a minimized-window thumbnail.
     pub badge: Option<&'a CompositionSurfaceBrush>,
+    /// Red notification count badge in the top-right corner.
+    pub notify_badge: Option<&'a LabelBrush>,
 }
 
 pub struct SceneInput<'a> {
@@ -473,6 +475,7 @@ pub struct Scene {
     raised: Cell<Option<usize>>,
     slots: Vec<SpriteVisual>,
     badges: Vec<Option<SpriteVisual>>,
+    notify_badges: Vec<Option<Label>>,
     attention: Vec<Option<AttentionBadge>>,
     attention_theme: Theme,
     scale: f32,
@@ -560,6 +563,7 @@ impl Scene {
 
         let mut slots = Vec::with_capacity(layout.slots.len());
         let mut badges = Vec::with_capacity(layout.slots.len());
+        let mut notify_badges = Vec::with_capacity(layout.slots.len());
         let mut indicators = Vec::with_capacity(layout.slots.len());
         let mut labels = Vec::with_capacity(layout.slots.len());
         for (slot, item) in layout.slots.iter().zip(input.contents) {
@@ -583,6 +587,8 @@ impl Scene {
                 None => None,
             });
 
+            notify_badges.push(item.notify_badge.map(|b| Label::new(c, b)).transpose()?);
+
             indicators.push(if item.running {
                 let shape = c.CreateSpriteShapeWithGeometry(&dot)?;
                 shape.SetFillBrush(&dot_brush)?;
@@ -602,6 +608,9 @@ impl Scene {
             .remove_label
             .map(|label| Label::new(c, label))
             .transpose()?;
+        for nb in notify_badges.iter().flatten() {
+            children.InsertAtTop(&nb.visual)?;
+        }
         for label in labels.iter().flatten().chain(&remove_label) {
             children.InsertAtTop(&label.visual)?;
         }
@@ -625,6 +634,7 @@ impl Scene {
             raised: Cell::new(None),
             slots,
             badges,
+            notify_badges,
             attention: (0..layout.slots.len()).map(|_| None).collect(),
             attention_theme: theme,
             scale,
@@ -738,6 +748,13 @@ impl Scene {
                 badge.SetOffset(v3(
                     fit(x + width - side * BADGE_INSIDE),
                     fit(y + height - side * BADGE_INSIDE),
+                ))?;
+            }
+            if let Some(Some(nb)) = self.notify_badges.get(index) {
+                nb.visual.SetIsVisible(dragged.is_none())?;
+                nb.visual.SetOffset(v3(
+                    fit(x + width - nb.width * 0.7),
+                    fit(y - nb.height * 0.25),
                 ))?;
             }
             if let Some(Some(notice)) = self.attention.get(index) {

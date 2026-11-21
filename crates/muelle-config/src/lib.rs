@@ -110,6 +110,30 @@ pub struct Config {
     /// menu, with a submenu for each folder inside, like a Windows 10 taskbar
     /// toolbar. Only one: the user arranges the folder as they like.
     pub shortcuts_folder: Option<String>,
+    /// Show a close button ("X") on hover in window preview cards.
+    pub show_preview_close_button: bool,
+    /// Desktop notifications system.
+    pub notifications: bool,
+    /// Position of notification banners on screen.
+    pub notification_position: NotificationPosition,
+    /// Auto-dismiss banner duration in seconds.
+    pub notification_duration: u32,
+    /// Red count badge on app icon when notifications / attention are unread.
+    pub notification_badges: bool,
+    /// Icon bounce in dock when app requests attention.
+    pub notification_bounce: bool,
+    /// Do Not Disturb / Focus mode: silences banners, keeps dock badges.
+    pub notification_dnd: bool,
+    /// List of app identifiers whose notifications are muted.
+    pub muted_apps: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NotificationPosition {
+    #[default]
+    TopRight,
+    BottomRight,
 }
 
 /// Pinned apps the user gathered in one dock icon by dropping one on
@@ -201,6 +225,7 @@ impl Config {
             .shortcuts_folder
             .map(|folder| folder.trim().to_owned())
             .filter(|folder| !folder.is_empty());
+        self.notification_duration = self.notification_duration.clamp(1, 30);
         self
     }
 
@@ -250,6 +275,14 @@ impl Default for Config {
             auto_update: true,
             language: Language::Auto,
             shortcuts_folder: None,
+            show_preview_close_button: true,
+            notifications: true,
+            notification_position: NotificationPosition::TopRight,
+            notification_duration: 5,
+            notification_badges: true,
+            notification_bounce: true,
+            notification_dnd: false,
+            muted_apps: Vec::new(),
         }
     }
 }

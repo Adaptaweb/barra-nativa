@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT},
+        Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, WPARAM},
         Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute},
         Storage::{
             EnhancedStorage::PKEY_AppUserModel_ID, Packaging::Appx::GetApplicationUserModelId,
@@ -22,11 +22,11 @@ use windows::{
             WindowsAndMessaging::{
                 EnumWindows, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow,
                 GetWindow, GetWindowLongW, GetWindowPlacement, GetWindowRect, GetWindowTextLengthW,
-                GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed,
-                SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE,
-                SWP_NOOWNERZORDER, SWP_NOSIZE, SetWindowPos, WINDOWPLACEMENT,
-                WPF_RESTORETOMAXIMIZED, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-                WS_EX_TOPMOST, WS_MAXIMIZE, WS_THICKFRAME,
+                GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible,
+                IsZoomed, PostMessageW, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SWP_ASYNCWINDOWPOS,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SetWindowPos,
+                WINDOWPLACEMENT, WM_CLOSE, WPF_RESTORETOMAXIMIZED, WS_EX_APPWINDOW,
+                WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_MAXIMIZE, WS_THICKFRAME,
             },
         },
     },
@@ -580,6 +580,21 @@ fn window_aumid(hwnd: HWND) -> Option<String> {
     };
     let aumid = value.to_string();
     (!aumid.is_empty()).then_some(aumid)
+}
+
+/// Requests a window to close gracefully by posting `WM_CLOSE`.
+/// Returns `true` if the message was successfully posted.
+///
+/// Never terminates the process; the application can prompt the user to save changes.
+pub fn request_close_window(hwnd: isize) -> bool {
+    let hwnd = HWND(hwnd as *mut _);
+    // SAFETY: Read-only window validation and posting WM_CLOSE message.
+    unsafe {
+        if !IsWindow(Some(hwnd)).as_bool() {
+            return false;
+        }
+        PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok()
+    }
 }
 
 #[cfg(test)]
