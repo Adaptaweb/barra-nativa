@@ -1,9 +1,10 @@
 //! Windows media sessions are read on a dedicated MTA worker. Event callbacks
 //! only mark the state dirty and wake the worker, even during bursts.
 
+use muelle_shell::{icons::IconImage, imagery};
 use std::{
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicIsize, AtomicU8, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
@@ -17,6 +18,7 @@ use windows::{
         GlobalSystemMediaTransportControlsSessionManager as Manager,
         GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
     },
+    Storage::Streams::{DataReader, IRandomAccessStreamReference},
     Win32::{
         Foundation::{HWND, LPARAM, WPARAM},
         System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize},
@@ -38,7 +40,7 @@ pub enum Control {
     Next,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct Track {
     generation: u64,
     pub title: String,
@@ -47,6 +49,62 @@ pub struct Track {
     pub previous: bool,
     pub toggle: bool,
     pub next: bool,
+    pub artwork: Option<Arc<IconImage>>,
+}
+
+#[cfg(test)]
+impl Track {
+    pub fn test_fixture() -> Self {
+        Self {
+            title: "A deliberately long track title for clipping".into(),
+            artist: "Artist".into(),
+            playing: true,
+            previous: true,
+            toggle: true,
+            next: true,
+            ..Default::default()
+        }
+    }
+}
+
+/// The supplied fallback is bundled, so it works offline and after installation.
+pub fn artwork(track: &Track) -> Option<&IconImage> {
+    static FALLBACK: OnceLock<Option<IconImage>> = OnceLock::new();
+    track.artwork.as_deref().or_else(|| {
+        FALLBACK
+            .get_or_init(|| {
+                imagery::decode(
+                    include_bytes!("../../../assets/media-fallback.png"),
+                    128,
+                    1_000_000,
+                )
+                .map(imagery::circular)
+            })
+            .as_ref()
+    })
+}
+
+fn read_artwork(thumbnail: IRandomAccessStreamReference) -> Option<Arc<IconImage>> {
+    let stream =
+        complete_with_timeout(thumbnail.OpenReadAsync().ok()?, Duration::from_millis(400))?;
+    let size = stream.Size().ok()?;
+    // Reject oversized streams before allocating or asking Windows to decode.
+    if size == 0 || size > 2 * 1024 * 1024 {
+        return None;
+    }
+    let reader = DataReader::CreateDataReader(&stream.GetInputStreamAt(0).ok()?).ok()?;
+    if complete_with_timeout(
+        reader.LoadAsync(size as u32).ok()?,
+        Duration::from_millis(400),
+    )? != size as u32
+    {
+        return None;
+    }
+    let mut bytes = vec![0; size as usize];
+    reader.ReadBytes(&mut bytes).ok()?;
+    imagery::decode(&bytes, 128, 16_000_000)
+        .map(imagery::circular)
+        .map(Arc::new)
 }
 
 #[derive(Clone)]
@@ -120,15 +178,27 @@ impl Drop for Watch {
     }
 }
 
-fn complete<T: RuntimeType + Send>(operation: IAsyncOperation<T>) -> Option<T> {
+fn complete<T: RuntimeType>(operation: IAsyncOperation<T>) -> Option<T> {
+    complete_with_timeout(operation, TIMEOUT)
+}
+
+fn complete_with_timeout<T: RuntimeType>(
+    operation: IAsyncOperation<T>,
+    timeout: Duration,
+) -> Option<T> {
     let (send, receive) = mpsc::channel();
     operation
-        .when(move |result| {
-            let _ = send.send(result);
-        })
+        .SetCompleted(&windows_future::AsyncOperationCompletedHandler::<T>::new(
+            move |_, _| {
+                // Only a wake-up crosses threads. Non-agile streams and all other
+                // WinRT results are retrieved on the worker's original apartment.
+                let _ = send.send(());
+                Ok(())
+            },
+        ))
         .ok()?;
-    match receive.recv_timeout(TIMEOUT) {
-        Ok(result) => result.ok(),
+    match receive.recv_timeout(timeout) {
+        Ok(()) => operation.GetResults().ok(),
         Err(_) => {
             let _ = operation.Cancel();
             None
@@ -142,6 +212,7 @@ struct Current {
     playback_event: Option<i64>,
     title: String,
     artist: String,
+    artwork: Option<Arc<IconImage>>,
 }
 
 impl Current {
@@ -166,10 +237,12 @@ impl Current {
             playback_event,
             title: String::new(),
             artist: String::new(),
+            artwork: None,
         }
     }
 
     fn update_track(&mut self) {
+        self.artwork = None;
         if let Some(properties) = self
             .session
             .TryGetMediaPropertiesAsync()
@@ -184,6 +257,7 @@ impl Current {
                 .Artist()
                 .map(|value| value.to_string_lossy())
                 .unwrap_or_default();
+            self.artwork = properties.Thumbnail().ok().and_then(read_artwork);
         }
     }
 
@@ -199,6 +273,7 @@ impl Current {
             generation,
             title: self.title.clone(),
             artist: self.artist.clone(),
+            artwork: self.artwork.clone(),
             playing,
             previous: controls.IsPreviousEnabled().unwrap_or(false),
             next: controls.IsNextEnabled().unwrap_or(false),
@@ -340,6 +415,70 @@ fn run(
 #[cfg(test)]
 mod native_probe {
     use super::*;
+
+    #[test]
+    #[ignore = "Read-only artwork probe of the current Windows media session"]
+    fn native_artwork_stream_stays_on_its_apartment_and_fallback_decodes()
+    -> windows::core::Result<()> {
+        unsafe {
+            RoInitialize(RO_INIT_MULTITHREADED)?;
+        }
+        let result = (|| {
+            use windows::{
+                Storage::Streams::{
+                    DataWriter, InMemoryRandomAccessStream, RandomAccessStreamReference,
+                },
+                core::Interface,
+            };
+            let check_stream = || -> Option<()> {
+                let stream = InMemoryRandomAccessStream::new().ok()?;
+                let writer =
+                    DataWriter::CreateDataWriter(&stream.GetOutputStreamAt(0).ok()?).ok()?;
+                writer
+                    .WriteBytes(include_bytes!("../../../assets/media-fallback.png"))
+                    .ok()?;
+                complete(writer.StoreAsync().ok()?)?;
+                let reference = RandomAccessStreamReference::CreateFromStream(&stream).ok()?;
+                let image = read_artwork(reference.cast().ok()?)?;
+                assert!(image.width > 0 && image.width <= 128 && image.width == image.height);
+                Some(())
+            };
+            assert!(
+                check_stream().is_some(),
+                "Known local thumbnail stream did not decode"
+            );
+            let fallback = artwork(&Track::default())
+                .is_some_and(|image| image.width > 0 && image.width <= 128);
+            let Some(manager) = Manager::RequestAsync().ok().and_then(complete) else {
+                return fallback;
+            };
+            if let Ok(session) = manager.GetCurrentSession() {
+                let (wake, _inbox) = mpsc::sync_channel(1);
+                let events = Events {
+                    wake,
+                    dirty: Arc::new(AtomicU8::new(0)),
+                };
+                let mut current = Current::new(session, &events);
+                current.update_track();
+                if let Some(image) = &current.artwork {
+                    assert!(image.width <= 128 && image.height <= 128);
+                    eprintln!("Windows media artwork: {}x{}", image.width, image.height);
+                } else {
+                    eprintln!(
+                        "Current session provides no readable artwork; bundled fallback is available"
+                    );
+                }
+            } else {
+                eprintln!("No active media session; bundled fallback is available");
+            }
+            fallback
+        })();
+        unsafe {
+            RoUninitialize();
+        }
+        assert!(result);
+        Ok(())
+    }
 
     #[test]
     #[ignore = "Requires the Windows media session service"]

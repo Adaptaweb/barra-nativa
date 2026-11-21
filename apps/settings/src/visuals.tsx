@@ -29,14 +29,15 @@ const PATHS = {
 } satisfies Record<string, ReactNode>;
 
 export function SettingIcon({ name, size = 18 }: { name: keyof typeof PATHS; size?: number }) {
-  return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{PATHS[name]}</svg>;
+  return <svg viewBox="0 0 24 24" width={size} height={size} fill={name === "star" ? "#f5c344" : "none"} stroke={name === "star" ? "#d69b16" : "currentColor"} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{PATHS[name]}</svg>;
 }
 
 const MINI_ICONS = <><i /><i /><i /><i /><i /></>;
 
 /** Illustrations only: no window capture, network, timers or animation loop. */
-export function DockPreview({ position, iconSize }: { position: DockPosition; iconSize: number }) {
+export function DockPreview({ position, iconSize, wallpaper }: { position: DockPosition; iconSize: number; wallpaper: string | null }) {
   return <span className="preview-screen">
+    {wallpaper ? <img className="preview-wallpaper" src={wallpaper} alt="" /> : null}
     <span className="preview-topbar"><i /><i /><i /></span>
     <span className="preview-window"><i /><i /><i /></span>
     <span className="preview-dock" data-position={position}
@@ -44,12 +45,17 @@ export function DockPreview({ position, iconSize }: { position: DockPosition; ic
   </span>;
 }
 
-export function IslandPreview({ style }: { style: IslandStyle }) {
+export function IslandPreview({ style, wallpaper }: { style: IslandStyle; wallpaper: string | null }) {
   return <span className="preview-screen preview-screen-island">
+    {wallpaper ? <img className="preview-wallpaper" src={wallpaper} alt="" /> : null}
     <span className="preview-topbar"><i /><i /><i /></span>
     <span className="preview-island" data-style={style}>
-      {style === "notch" ? <svg viewBox="0 0 72 18"><path d="M0 0h72c-12 0-6 18-20 18H20C6 18 12 0 0 0" fill="currentColor" /></svg> : null}
-      <span className="preview-island-content"><i /><i /><i /></span>
+      {style === "notch" ? <svg viewBox="0 0 100 24"><path d="M0 0h100c-12 0-8 24-24 24H24C8 24 12 0 0 0" fill="currentColor" /></svg> : null}
+      <span className="preview-island-content">
+        <span className="preview-album"><svg viewBox="0 0 16 16"><path d="M6 11V4l6-1v7M6 6l6-1" /><ellipse cx="4" cy="12" rx="2" ry="1.5" /><ellipse cx="10" cy="11" rx="2" ry="1.5" /></svg></span>
+        <span className="preview-song"><i /><i /></span>
+        <span className="preview-wave"><i /><i /><i /></span>
+      </span>
     </span>
     <span className="preview-window"><i /><i /><i /></span>
   </span>;

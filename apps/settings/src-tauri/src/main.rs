@@ -181,6 +181,43 @@ async fn open_repository() -> Result<(), String> {
     .map_err(|error| error.to_string())?
 }
 
+/// A small data URI, never a path or screenshot of the user's desktop.
+#[tauri::command]
+async fn wallpaper_preview(window: tauri::WebviewWindow) -> Option<String> {
+    let hwnd = window.hwnd().ok()?.0 as isize;
+    tauri::async_runtime::spawn_blocking(move || {
+        use base64::Engine;
+        let image = muelle_shell::imagery::wallpaper_preview(hwnd)?;
+        let mut rgba = image.bgra;
+        for pixel in rgba.as_chunks_mut::<4>().0 {
+            // Wallpaper decodes are opaque in normal use. Unpremultiply when
+            // a PNG wallpaper does carry alpha, before encoding straight RGBA.
+            let alpha = u32::from(pixel[3]);
+            pixel.swap(0, 2);
+            for value in &mut pixel[..3] {
+                *value = (u32::from(*value) * 255)
+                    .checked_div(alpha)
+                    .unwrap_or(0)
+                    .min(255) as u8;
+            }
+        }
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, image.width, image.height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.write_header().ok()?.write_image_data(&rgba).ok()?;
+        }
+        Some(format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        ))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// Downloads the signed installer and runs it; the installer stops the dock,
 /// replaces both apps and starts the dock again. This process exits.
 #[tauri::command]
@@ -298,7 +335,8 @@ fn main() {
             check_update,
             install_update,
             open_release_notes,
-            open_repository
+            open_repository,
+            wallpaper_preview
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {

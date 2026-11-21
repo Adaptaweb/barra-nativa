@@ -14,7 +14,7 @@
 //! Status items, right to left as on a Mac: clock, control center, search,
 //! network, volume, battery, then Task View and Widgets. Search, Task View and
 //! Widgets appear only if the user has them on the Windows taskbar. Network
-//! and volume changes arrive as `STATUS_CHANGED`; nothing polls.
+//! and volume changes arrive through separate notifications; nothing polls.
 
 use anyhow::Result;
 use muelle_config::{IslandStyle, Language};
@@ -27,7 +27,10 @@ use muelle_shell::{
     watch::RegistryWatch,
 };
 use std::{
-    sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 use windows::{
@@ -35,8 +38,9 @@ use windows::{
     UI::{
         Color,
         Composition::{
-            CompositionBatchTypes, CompositionBrush, CompositionScopedBatch, Compositor,
-            ContainerVisual, Desktop::DesktopWindowTarget, SpriteVisual, VisualCollection,
+            CompositionBatchTypes, CompositionBrush, CompositionRoundedRectangleGeometry,
+            CompositionScopedBatch, CompositionSurfaceBrush, Compositor, ContainerVisual,
+            Desktop::DesktopWindowTarget, ShapeVisual, SpriteVisual, VisualCollection,
         },
     },
     Win32::{
@@ -46,15 +50,17 @@ use windows::{
             LibraryLoader::GetModuleHandleW, SystemInformation::GetLocalTime,
             WinRT::Composition::ICompositorDesktopInterop,
         },
-        UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent},
+        UI::Input::KeyboardAndMouse::{
+            GetCapture, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
+        },
         UI::WindowsAndMessaging::{
             CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, HHOOK,
             HWND_TOPMOST, IDC_ARROW, KillTimer, LoadCursorW, MSLLHOOKSTRUCT,
             PBT_POWERSETTINGCHANGE, PostMessageW, RegisterClassW, SWP_HIDEWINDOW, SWP_NOACTIVATE,
             SWP_SHOWWINDOW, SetCursor, SetTimer, SetWindowPos, SetWindowsHookExW,
-            UnhookWindowsHookEx, WH_MOUSE_LL, WM_APP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-            WM_MOUSEMOVE, WM_NCHITTEST, WM_RBUTTONDOWN, WM_SETCURSOR, WM_SETTINGCHANGE,
-            WM_TIMECHANGE, WM_TIMER, WM_XBUTTONDOWN, WNDCLASSW, WS_EX_NOACTIVATE,
+            UnhookWindowsHookEx, WH_MOUSE_LL, WM_APP, WM_CAPTURECHANGED, WM_LBUTTONDOWN,
+            WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_NCHITTEST, WM_RBUTTONDOWN, WM_SETCURSOR,
+            WM_SETTINGCHANGE, WM_TIMECHANGE, WM_TIMER, WM_XBUTTONDOWN, WNDCLASSW, WS_EX_NOACTIVATE,
             WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
@@ -82,6 +88,10 @@ const ITEM_GAP: f32 = 16.0;
 const HIT_SLOP: f32 = 7.0;
 
 const MEDIA_CHANGED: u32 = WM_APP + 28;
+const VOLUME_CAPTURE_LOST: u32 = WM_APP + 31;
+const AUDIO_CHANGED: u32 = WM_APP + 32;
+const AUDIO_TICK: u32 = WM_APP + 33;
+const VOLUME_TIMER: usize = 4;
 const ACCESSORIES_CHANGED: u32 = WM_APP + 30;
 
 const CLOCK_TIMER: usize = 1;
@@ -107,7 +117,7 @@ const WM_POWERBROADCAST: u32 = 0x0218;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 /// AppBar notifications need a message id; the bar ignores them.
 const APPBAR_CALLBACK: u32 = WM_APP + 20;
-/// Posted by the network and audio watches.
+/// Posted by the network watch; audio uses its own coalesced notification.
 const STATUS_CHANGED: u32 = WM_APP + 21;
 /// Posted by the bar to itself to update from the message loop.
 const TICK: u32 = WM_APP + 22;
@@ -120,6 +130,7 @@ const REGISTRY_CHANGED: u32 = WM_APP + 25;
 const SPI_SETWORKAREA: usize = 0x002F;
 /// A `TICK` is already posted.
 static TICK_PENDING: AtomicBool = AtomicBool::new(false);
+static AUDIO_TICK_PENDING: AtomicBool = AtomicBool::new(false);
 static TRIGGERS_LEFT: AtomicI32 = AtomicI32::new(0);
 static TRIGGERS_RIGHT: AtomicI32 = AtomicI32::new(0);
 static PANEL_LEFT: AtomicI32 = AtomicI32::new(0);
@@ -240,7 +251,7 @@ fn accessory_readings(snapshot: &AccessorySnapshot) -> [Option<AccessoryReading>
 impl Look {
     fn panel_height(&self) -> f32 {
         match self.panel {
-            Some(Island::Music) => 136.0,
+            Some(Island::Music) => 184.0,
             Some(Island::Usage) => {
                 74.0 + island_providers(self)
                     .iter()
@@ -274,6 +285,8 @@ impl Span {
 enum IslandAction {
     Toggle(Island),
     Media(MediaControl),
+    Volume(Span),
+    Mute,
     Refresh,
     OpenCodeConnectionHelp,
     OpenCodeConsole,
@@ -294,6 +307,58 @@ impl IslandHit {
 struct ExitAnimation {
     batch: CompositionScopedBatch,
     completed: i64,
+}
+
+/// Only these retained visuals move during a volume gesture. Album artwork,
+/// track labels and the rest of the menu bar keep their existing visual tree.
+struct VolumeControls {
+    fill: CompositionRoundedRectangleGeometry,
+    knob: ShapeVisual,
+    value: SpriteVisual,
+    geometry: IslandGeometry,
+    left: f32,
+    width: f32,
+    position_percent: Option<u8>,
+    label_percent: u8,
+}
+
+impl VolumeControls {
+    fn move_to(&mut self, percent: u8) -> Result<()> {
+        if self.position_percent == Some(percent) {
+            return Ok(());
+        }
+        let px = |v| self.geometry.px(v);
+        let filled = self.width * f32::from(percent) / 100.0;
+        self.fill.SetSize(Vector2::new(filled, px(4.0)))?;
+        self.fill
+            .SetCornerRadius(Vector2::new(px(2.0).min(filled / 2.0), px(2.0)))?;
+        self.knob.SetOffset(Vector3::new(
+            self.left + filled - px(5.0),
+            px(160.0) - px(5.0),
+            0.0,
+        ))?;
+        self.position_percent = Some(percent);
+        Ok(())
+    }
+
+    fn paint(&mut self, gfx: &Gfx, percent: u8) -> Result<()> {
+        self.move_to(percent)?;
+        if self.label_percent != percent {
+            let label = gfx.text_brush_sized(
+                &format!("{percent}%"),
+                self.geometry.scale,
+                10.5,
+                false,
+                self.geometry.ink(),
+            )?;
+            self.value
+                .SetBrush(&label.brush.cast::<CompositionBrush>()?)?;
+            self.value
+                .SetSize(Vector2::new(label.width, label.height))?;
+            self.label_percent = percent;
+        }
+        Ok(())
+    }
 }
 
 impl Drop for ExitAnimation {
@@ -334,6 +399,15 @@ pub struct MenuBar {
     media: Option<media::Watch>,
     /// "Show what is playing": off, nothing listens to media sessions.
     media_enabled: bool,
+    cover: Option<(
+        Option<Arc<muelle_shell::icons::IconImage>>,
+        CompositionSurfaceBrush,
+    )>,
+    volume_drag: Option<Span>,
+    pending_volume: Option<u8>,
+    volume_target: Option<u8>,
+    volume_controls: Option<VolumeControls>,
+    suppress_volume_release: bool,
     panel: Option<Island>,
     visual_height: i32,
     triggers_span: Span,
@@ -353,11 +427,16 @@ pub struct MenuBar {
 
 unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
-        WM_LBUTTONDOWN => launcher::note_menu_bar_press(),
+        WM_LBUTTONDOWN => {
+            launcher::note_menu_bar_press();
+            app::menu_bar_volume_press((l.0 & 0xFFFF) as i16 as f32, (l.0 >> 16) as i16 as f32);
+        }
         WM_LBUTTONUP => {
             let x = (l.0 & 0xFFFF) as i16;
             let y = (l.0 >> 16) as i16;
-            app::menu_bar_clicked(f32::from(x), f32::from(y));
+            if !app::menu_bar_volume_release(Some(f32::from(x))) {
+                app::menu_bar_clicked(f32::from(x), f32::from(y));
+            }
         }
         WM_MOUSEMOVE => {
             let x = (l.0 & 0xFFFF) as i16;
@@ -366,12 +445,36 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         }
         WM_MOUSELEAVE => app::menu_bar_check_pointer(),
         WM_TIMER if w.0 == POINTER_TIMER => app::menu_bar_check_pointer(),
+        WM_TIMER if w.0 == VOLUME_TIMER => app::menu_bar_volume_flush(),
+        WM_CAPTURECHANGED => {
+            // Avoid reentering the app borrow inside Set/ReleaseCapture.
+            unsafe {
+                let _ = PostMessageW(Some(hwnd), VOLUME_CAPTURE_LOST, WPARAM(0), LPARAM(0));
+            }
+        }
+        VOLUME_CAPTURE_LOST => {
+            // A delayed notification must not cancel a newer drag.
+            if unsafe { GetCapture() } != hwnd {
+                app::menu_bar_volume_release(None);
+            }
+        }
         WM_TIMER if w.0 == HIDE_ANIMATION_TIMER => app::menu_bar_finish_hide(None),
         HIDE_ANIMATION_DONE => app::menu_bar_finish_hide(Some(w.0)),
         DISMISS_ISLAND => app::menu_bar_dismiss_island(),
         REGISTRY_CHANGED => app::menu_bar_registry_changed(),
         ACCESSORIES_CHANGED => app::menu_bar_accessories_changed(),
         MEDIA_CHANGED => app::menu_bar_media_changed(),
+        AUDIO_CHANGED => {
+            if !AUDIO_TICK_PENDING.swap(true, Ordering::Relaxed) {
+                unsafe {
+                    let _ = PostMessageW(Some(hwnd), AUDIO_TICK, WPARAM(0), LPARAM(0));
+                }
+            }
+        }
+        AUDIO_TICK => {
+            AUDIO_TICK_PENDING.store(false, Ordering::Relaxed);
+            app::menu_bar_audio_changed();
+        }
         WM_SETCURSOR => {
             // SAFETY: Keep the standard arrow throughout the bar and popups.
             if let Ok(arrow) = unsafe { LoadCursorW(None, IDC_ARROW) } {
@@ -513,6 +616,27 @@ pub(crate) fn add_rounded_box(
     fill: Color,
     border: Option<Color>,
 ) -> Result<()> {
+    retained_rounded_box(
+        compositor, layers, x, y, width, height, radius, fill, border,
+    )
+    .map(|_| ())
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Same rectangle/color inputs as add_rounded_box; retain geometry for small UI updates"
+)]
+fn retained_rounded_box(
+    compositor: &Compositor,
+    layers: &VisualCollection,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    radius: f32,
+    fill: Color,
+    border: Option<Color>,
+) -> Result<(ShapeVisual, CompositionRoundedRectangleGeometry)> {
     let geometry = compositor.CreateRoundedRectangleGeometry()?;
     let inset = if border.is_some() { 0.5 } else { 0.0 };
     geometry.SetOffset(Vector2 { X: inset, Y: inset })?;
@@ -542,7 +666,7 @@ pub(crate) fn add_rounded_box(
     })?;
     visual.Shapes()?.Append(&shape)?;
     layers.InsertAtTop(&visual)?;
-    Ok(())
+    Ok((visual, geometry))
 }
 
 #[expect(
@@ -1006,6 +1130,12 @@ impl MenuBar {
                 .then(|| media::Watch::start(hwnd, MEDIA_CHANGED))
                 .flatten(),
             media_enabled,
+            cover: None,
+            volume_drag: None,
+            pending_volume: None,
+            volume_target: None,
+            volume_controls: None,
+            suppress_volume_release: false,
             panel: None,
             visual_height: 0,
             triggers_span: Span::default(),
@@ -1016,8 +1146,9 @@ impl MenuBar {
             privacy_watch: status::watch_privacy(hwnd.0 as isize, REGISTRY_CHANGED),
             settings_watch: status::watch_taskbar_settings(hwnd.0 as isize, REGISTRY_CHANGED),
             _saver_watch: muelle_shell::power::SaverWatch::new(hwnd.0 as isize),
-            audio: AudioWatch::new(hwnd.0 as isize, STATUS_CHANGED),
+            audio: AudioWatch::new(hwnd.0 as isize, AUDIO_CHANGED),
         };
+        AUDIO_TICK_PENDING.store(false, Ordering::Relaxed);
         bar.update_status();
         bar.refresh(gfx)?;
         bar.schedule_next_minute();
@@ -1040,6 +1171,9 @@ impl MenuBar {
     }
 
     pub fn set_visible(&mut self, visible: bool) -> Result<()> {
+        if !visible {
+            self.release_volume(None)?;
+        }
         if self.visible == visible {
             return Ok(());
         }
@@ -1129,6 +1263,9 @@ impl MenuBar {
 
     /// The pointer reached the top edge or left the bar.
     pub fn hover(&mut self, gfx: &Gfx, inside: bool) -> Result<()> {
+        if self.volume_drag.is_some() && !inside {
+            return Ok(());
+        }
         if !inside && self.panel.take().is_some() {
             self.refresh(gfx)?;
         }
@@ -1298,6 +1435,25 @@ impl MenuBar {
 
     fn pointer_left_at(&mut self, gfx: &Gfx, point: POINT) -> Result<()> {
         let x = (point.x - self.bounds.left) as f32;
+        if let Some(span) = self.volume_drag {
+            self.queue_volume(span, x);
+            // A nonactivating background window may not receive mouse-up
+            // outside its visible bounds. Reuse the existing popup pointer
+            // check to finish the gesture without ever stealing app focus.
+            let pressed = unsafe {
+                use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
+                let primary = if GetSystemMetrics(SM_SWAPBUTTON) == 0 {
+                    0x01
+                } else {
+                    0x02
+                };
+                windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(primary) < 0
+            };
+            if pressed {
+                return self.paint_volume_preview(gfx);
+            }
+            self.release_volume(Some(x))?;
+        }
         let within_bar = point.x >= self.bounds.left
             && point.x < self.bounds.right
             && point.y >= self.bounds.top
@@ -1319,6 +1475,10 @@ impl MenuBar {
 
     /// Leaving the island sideways still stays inside the full-width bar window.
     pub fn pointer_moved(&mut self, gfx: &Gfx, x: f32, y: f32) -> Result<()> {
+        if let Some(span) = self.volume_drag {
+            self.queue_volume(span, x);
+            return self.paint_volume_preview(gfx);
+        }
         let span = if y < (self.bounds.bottom - self.bounds.top) as f32 {
             self.triggers_span
         } else {
@@ -1331,6 +1491,7 @@ impl MenuBar {
     }
 
     pub fn dismiss_island(&mut self, gfx: &Gfx) -> Result<()> {
+        self.release_volume(None)?;
         if self.panel.take().is_some() {
             self.refresh(gfx)?;
         }
@@ -1475,6 +1636,42 @@ impl MenuBar {
         self.refresh(gfx)
     }
 
+    /// Audio notifications never requery the network, registry, providers or
+    /// clock. A default-device change still restarts the accessory reader.
+    pub fn audio_changed(&mut self, gfx: &Gfx) -> Result<()> {
+        let volume = self.audio.as_mut().and_then(AudioWatch::volume);
+        if self
+            .audio
+            .as_ref()
+            .is_some_and(AudioWatch::take_default_changed)
+            && self.accessories_enabled
+        {
+            self.status.volume = volume;
+            self.restart_accessories(gfx)?;
+        }
+        self.apply_volume_reading(gfx, volume)
+    }
+
+    fn apply_volume_reading(&mut self, gfx: &Gfx, volume: Option<Volume>) -> Result<()> {
+        self.status.volume = volume;
+        if let Some(look) = &self.look
+            && same_volume_indicator(look.status.volume, volume)
+        {
+            if let Some(volume) = volume
+                && let Some(controls) = &mut self.volume_controls
+            {
+                controls.paint(gfx, self.volume_target.unwrap_or(volume.percent))?;
+            }
+            if let Some(look) = &mut self.look {
+                look.status.volume = volume;
+            }
+            return Ok(());
+        }
+        // Availability, mute and speaker-glyph changes affect the status bar's
+        // layout. Those rare transitions continue through the normal renderer.
+        self.refresh(gfx)
+    }
+
     fn update_status(&mut self) {
         self.status = Status {
             network: status::network(),
@@ -1543,6 +1740,13 @@ impl MenuBar {
                         media.send(track, control);
                     }
                     return Ok(());
+                }
+                IslandAction::Volume(_) => return Ok(()), // Handled on press/drag.
+                IslandAction::Mute => {
+                    if let Some(audio) = &mut self.audio {
+                        audio.toggle_mute()?;
+                    }
+                    self.update_status();
                 }
             }
             return self.refresh(gfx);
@@ -1662,6 +1866,9 @@ impl MenuBar {
     }
 
     fn apply_look(&mut self, gfx: &Gfx, look: Look) -> Result<()> {
+        if look.panel != Some(Island::Music) {
+            self.release_volume(None)?;
+        }
         if self.look.as_ref() == Some(&look) {
             return Ok(());
         }
@@ -1894,6 +2101,7 @@ impl MenuBar {
         }
 
         self.island_hits.clear();
+        self.volume_controls = None;
         self.triggers_span = Span::default();
         self.panel_span = Span::default();
         self.draw_island(gfx, look, &layers, width, height, left_end, right)?;
@@ -1953,6 +2161,31 @@ impl MenuBar {
     ) -> Result<()> {
         let px = |logical: f32| (logical * look.scale).round();
         let style = look.widgets.island_style;
+        let cover = if let Some(track) = &look.track {
+            let cached =
+                self.cover
+                    .as_ref()
+                    .is_some_and(|(source, _)| match (source, &track.artwork) {
+                        (Some(old), Some(new)) => Arc::ptr_eq(old, new),
+                        (None, None) => true,
+                        _ => false,
+                    });
+            if !cached {
+                self.cover = media::artwork(track)
+                    .map(|image| {
+                        let surface = gfx.image_surface(image)?;
+                        Ok::<_, anyhow::Error>((
+                            track.artwork.clone(),
+                            gfx.compositor.CreateSurfaceBrushWithSurface(&surface)?,
+                        ))
+                    })
+                    .transpose()?;
+            }
+            self.cover.as_ref().map(|(_, brush)| brush.clone())
+        } else {
+            self.cover = None;
+            None
+        };
         let prepared_music = if style == IslandStyle::Bubble
             && let Some(track) = &look.track
         {
@@ -2039,6 +2272,7 @@ impl MenuBar {
                                 geometry.width,
                                 compact_height,
                                 track,
+                                cover.as_ref(),
                             )?,
                             IslandStyle::Bubble => {
                                 if let Some(prepared) = &prepared_music {
@@ -2046,10 +2280,10 @@ impl MenuBar {
                                         gfx,
                                         &content,
                                         geometry,
-                                        geometry.width,
                                         compact_height,
                                         track,
                                         prepared,
+                                        cover.as_ref(),
                                     )?;
                                 }
                             }
@@ -2097,7 +2331,7 @@ impl MenuBar {
             match kind {
                 Island::Music => {
                     if let Some(track) = &look.track {
-                        self.draw_player(gfx, &content, geometry, track)?;
+                        self.draw_player(gfx, &content, geometry, track, cover.as_ref())?;
                     }
                 }
                 Island::Usage => {
@@ -2265,6 +2499,7 @@ impl MenuBar {
         layers: &VisualCollection,
         geometry: IslandGeometry,
         track: &Track,
+        cover: Option<&CompositionSurfaceBrush>,
     ) -> Result<()> {
         let px = |v| geometry.px(v);
         let c = &gfx.compositor;
@@ -2300,27 +2535,9 @@ impl MenuBar {
             IslandAction::Toggle(Island::Music),
         ));
         let tile = px(34.0);
-        add_rounded_box(
-            c,
-            layers,
-            px(25.0),
-            px(46.0),
-            tile,
-            tile,
-            px(10.0),
-            geometry.control_fill(),
-            None,
-        )?;
-        let note = gfx.glyph_brush(&[('\u{E8D6}', 1.0)], geometry.scale, ink)?;
-        add_visual(
-            c,
-            layers,
-            &note.brush.cast()?,
-            px(25.0) + (tile - note.width) / 2.0,
-            px(46.0) + (tile - note.height) / 2.0,
-            note.width,
-            note.height,
-        )?;
+        if let Some(cover) = cover {
+            add_visual(c, layers, &cover.cast()?, px(25.0), px(46.0), tile, tile)?;
+        }
         let available = geometry.width - px(91.0);
         let title = gfx.text_brush_fitted(
             track_title(track),
@@ -2406,8 +2623,235 @@ impl MenuBar {
                     .push(geometry.hit(x, y, size, size, IslandAction::Media(control)));
             }
         }
+        add_panel_text(
+            gfx,
+            layers,
+            strings::text().media_volume,
+            px(25.0),
+            px(135.0),
+            geometry.scale,
+            10.5,
+            false,
+            ink,
+            0.65,
+        )?;
+        if let Some(volume) = self.status.volume {
+            let symbol = if volume.muted {
+                glyph::MUTE
+            } else {
+                glyph::VOLUME[volume.level.min(3) as usize]
+            };
+            let label = gfx.glyph_brush(&[(symbol, 1.0)], geometry.scale, ink)?;
+            add_visual(
+                c,
+                layers,
+                &label.brush.cast()?,
+                px(25.0),
+                px(160.0) - label.height / 2.0,
+                label.width,
+                label.height,
+            )?;
+            self.island_hits.push(geometry.hit(
+                px(18.0),
+                px(148.0),
+                px(32.0),
+                px(27.0),
+                IslandAction::Mute,
+            ));
+            let left = px(59.0);
+            let width = (geometry.width - left - px(66.0)).max(px(1.0));
+            let percent = self.volume_target.unwrap_or(volume.percent);
+            add_rounded_box(
+                c,
+                layers,
+                left,
+                px(158.0),
+                width,
+                px(4.0),
+                px(2.0),
+                geometry.control_fill(),
+                None,
+            )?;
+            let (_, fill) = retained_rounded_box(
+                c,
+                layers,
+                left,
+                px(158.0),
+                width,
+                px(4.0),
+                px(2.0),
+                if geometry.light {
+                    rgba(40, 48, 58, 220)
+                } else {
+                    rgba(240, 244, 250, 235)
+                },
+                None,
+            )?;
+            let dot = px(10.0);
+            let (knob, _) = retained_rounded_box(
+                c,
+                layers,
+                left - dot / 2.0,
+                px(160.0) - dot / 2.0,
+                dot,
+                dot,
+                dot / 2.0,
+                rgba(245, 247, 250, 255),
+                Some(geometry.border()),
+            )?;
+            let label =
+                gfx.text_brush_sized(&format!("{percent}%"), geometry.scale, 10.5, false, ink)?;
+            let value = add_visual(
+                c,
+                layers,
+                &label.brush.cast()?,
+                geometry.width - px(51.0),
+                px(153.0),
+                label.width,
+                label.height,
+            )?;
+            value.SetOpacity(0.8)?;
+            let mut controls = VolumeControls {
+                fill,
+                knob,
+                value,
+                geometry,
+                left,
+                width,
+                position_percent: None,
+                label_percent: percent,
+            };
+            controls.move_to(percent)?;
+            self.volume_controls = Some(controls);
+            self.island_hits.push(geometry.hit(
+                left - px(6.0),
+                px(147.0),
+                width + px(12.0),
+                px(29.0),
+                IslandAction::Volume(Span {
+                    left: geometry.left + left,
+                    right: geometry.left + left + width,
+                }),
+            ));
+        } else {
+            add_panel_text(
+                gfx,
+                layers,
+                strings::text().media_no_output,
+                px(25.0),
+                px(155.0),
+                geometry.scale,
+                11.0,
+                false,
+                ink,
+                0.5,
+            )?;
+        }
         Ok(())
     }
+
+    pub fn press_volume(&mut self, gfx: &Gfx, x: f32, y: f32) -> Result<()> {
+        self.suppress_volume_release = false;
+        let Some(hit) = self
+            .island_hits
+            .iter()
+            .find(|hit| hit.at(x, y) && matches!(hit.action, IslandAction::Volume(_)))
+        else {
+            return Ok(());
+        };
+        let IslandAction::Volume(span) = hit.action else {
+            return Ok(());
+        };
+        self.volume_drag = Some(span);
+        // SAFETY: Capture only for a live slider drag, never to activate the bar.
+        unsafe {
+            SetCapture(self.hwnd);
+        }
+        self.queue_volume(span, x);
+        self.paint_volume_preview(gfx)
+    }
+
+    fn paint_volume_preview(&mut self, gfx: &Gfx) -> Result<()> {
+        if let Some(percent) = self.volume_target
+            && let Some(controls) = &mut self.volume_controls
+        {
+            controls.paint(gfx, percent)?;
+        }
+        Ok(())
+    }
+
+    fn queue_volume(&mut self, span: Span, x: f32) {
+        let percent = volume_percent(span, x);
+        self.volume_target = Some(percent);
+        if let Some(controls) = &mut self.volume_controls {
+            // Optimistic GPU-only feedback is independent of endpoint latency.
+            // Audio writes still proceed if device loss interrupts this paint;
+            // the existing graphics heartbeat owns recovery.
+            let _ = controls.move_to(percent);
+        }
+        if self.pending_volume == Some(percent)
+            || (self.pending_volume.is_none()
+                && self
+                    .status
+                    .volume
+                    .is_some_and(|v| v.percent == percent && !v.muted))
+        {
+            return;
+        }
+        let arm = self.pending_volume.is_none();
+        self.pending_volume = Some(percent);
+        if arm {
+            // At most 30 endpoint writes/second during dragging; no idle timer.
+            unsafe {
+                SetTimer(Some(self.hwnd), VOLUME_TIMER, 33, None);
+            }
+        }
+    }
+
+    pub fn flush_volume(&mut self) -> Result<()> {
+        // SAFETY: Our own short-lived drag timer.
+        unsafe {
+            let _ = KillTimer(Some(self.hwnd), VOLUME_TIMER);
+        }
+        if let Some(percent) = self.pending_volume.take()
+            && let Some(audio) = &mut self.audio
+        {
+            audio.set_percent(percent)?;
+        }
+        Ok(())
+    }
+
+    pub fn release_volume(&mut self, x: Option<f32>) -> Result<bool> {
+        let Some(span) = self.volume_drag.take() else {
+            return Ok(x.is_some() && std::mem::take(&mut self.suppress_volume_release));
+        };
+        self.suppress_volume_release = true;
+        if let Some(x) = x {
+            self.queue_volume(span, x);
+        }
+        // Clear state first: ReleaseCapture posts a capture-lost notification.
+        unsafe {
+            if GetCapture() == self.hwnd {
+                let _ = ReleaseCapture();
+            }
+        }
+        if let Err(error) = self.flush_volume() {
+            muelle_shell::log::line(&format!("ajustar volumen: {error:#}"));
+        }
+        self.volume_target = None;
+        Ok(true)
+    }
+}
+
+fn volume_percent(span: Span, x: f32) -> u8 {
+    if span.width() <= 0.0 || !x.is_finite() {
+        return 0;
+    }
+    (((x - span.left) / span.width()).clamp(0.0, 1.0) * 100.0).round() as u8
+}
+
+fn same_volume_indicator(old: Option<Volume>, new: Option<Volume>) -> bool {
+    old.map(|v| (v.level, v.muted)) == new.map(|v| (v.level, v.muted))
 }
 
 #[derive(Clone, Copy)]
@@ -3048,31 +3492,31 @@ fn draw_compact_player(
     width: f32,
     height: f32,
     track: &Track,
+    cover: Option<&CompositionSurfaceBrush>,
 ) -> Result<()> {
     let c = &gfx.compositor;
     let px = |v| geometry.px(v);
     let ink = geometry.ink();
-    let note = gfx.glyph_brush(
-        &[('\u{E8D6}', if track.playing { 1.0 } else { 0.66 })],
-        geometry.scale,
-        ink,
-    )?;
-    let x = px(23.0) + note.width;
+    let side = px(18.0).min(height).min(width);
+    let x = px(23.0) + side;
     let show_title = width > x + px(18.0);
     let note_x = if show_title {
         px(18.0)
     } else {
-        (width - note.width) / 2.0
+        (width - side) / 2.0
     };
-    add_visual(
-        c,
-        layers,
-        &note.brush.cast()?,
-        note_x,
-        (height - note.height) / 2.0,
-        note.width,
-        note.height,
-    )?;
+    if let Some(cover) = cover {
+        add_visual(
+            c,
+            layers,
+            &cover.cast()?,
+            note_x,
+            (height - side) / 2.0,
+            side,
+            side,
+        )?
+        .SetOpacity(if track.playing { 1.0 } else { 0.7 })?;
+    }
     if show_title {
         let label = gfx.text_brush_fitted(
             track_title(track),
@@ -3096,7 +3540,7 @@ fn draw_compact_player(
 }
 
 struct BubbleMusic {
-    note: LabelBrush,
+    artwork_size: f32,
     label: LabelBrush,
     width: f32,
 }
@@ -3104,55 +3548,60 @@ struct BubbleMusic {
 fn prepare_bubble_music(gfx: &Gfx, look: &Look, track: &Track) -> Result<BubbleMusic> {
     let px = |v: f32| (v * look.scale).round();
     let ink = if look.light { Ink::Dark } else { Ink::Light };
-    let note = gfx.glyph_brush(
-        &[('\u{E8D6}', if track.playing { 1.0 } else { 0.66 })],
-        look.scale,
-        ink,
-    )?;
+    let artwork_size = px(18.0);
     let left_pad = px(10.0);
     let gap = px(6.0);
     let right_pad = px(8.0);
-    let max_text = (px(BUBBLE_MUSIC_WIDTH) - left_pad - note.width - gap - right_pad).max(px(18.0));
+    let max_text =
+        (px(BUBBLE_MUSIC_WIDTH) - left_pad - artwork_size - gap - right_pad).max(px(18.0));
     let label = gfx.text_brush_fitted(track_title(track), look.scale, 11.5, true, ink, max_text)?;
-    let width = (left_pad + note.width + gap + label.width + right_pad)
+    let width = (left_pad + artwork_size + gap + label.width + right_pad)
         .min(px(BUBBLE_MUSIC_WIDTH))
         .ceil();
-    Ok(BubbleMusic { note, label, width })
+    Ok(BubbleMusic {
+        artwork_size,
+        label,
+        width,
+    })
 }
 
 fn draw_bubble_player(
     gfx: &Gfx,
     layers: &VisualCollection,
     geometry: IslandGeometry,
-    width: f32,
     height: f32,
     track: &Track,
     prepared: &BubbleMusic,
+    cover: Option<&CompositionSurfaceBrush>,
 ) -> Result<()> {
+    let width = geometry.width;
     let c = &gfx.compositor;
     let px = |v| geometry.px(v);
     let ink = geometry.ink();
-    let note = &prepared.note;
+    let side = prepared.artwork_size.min(height).min(width);
     let left_pad = px(10.0);
     let gap = px(6.0);
     let right_pad = px(8.0);
-    let text_x = left_pad + note.width + gap;
+    let text_x = left_pad + side + gap;
     let max_label_width = width - text_x - right_pad;
     let show_title = max_label_width >= px(18.0);
     let note_x = if show_title {
         left_pad
     } else {
-        (width - note.width) / 2.0
+        (width - side) / 2.0
     };
-    add_visual(
-        c,
-        layers,
-        &note.brush.cast()?,
-        note_x,
-        (height - note.height) / 2.0,
-        note.width,
-        note.height,
-    )?;
+    if let Some(cover) = cover {
+        add_visual(
+            c,
+            layers,
+            &cover.cast()?,
+            note_x,
+            (height - side) / 2.0,
+            side,
+            side,
+        )?
+        .SetOpacity(if track.playing { 1.0 } else { 0.7 })?;
+    }
     if show_title {
         let fitted;
         let label = if prepared.label.width <= max_label_width {
@@ -3206,6 +3655,221 @@ impl Drop for MenuBar {
 #[cfg(test)]
 mod island_tests {
     use super::*;
+
+    #[test]
+    fn volume_coordinates_clamp_and_round_at_both_ends() {
+        let span = Span {
+            left: 100.0,
+            right: 300.0,
+        };
+        for (x, expected) in [
+            (-100.0, 0),
+            (100.0, 0),
+            (200.0, 50),
+            (299.0, 100),
+            (500.0, 100),
+            (f32::NAN, 0),
+        ] {
+            assert_eq!(volume_percent(span, x), expected);
+        }
+        assert_eq!(volume_percent(Span::default(), 1.0), 0);
+    }
+
+    #[test]
+    fn percentage_changes_keep_the_same_indicator_but_mute_and_device_changes_do_not() {
+        let volume = Volume {
+            level: 2,
+            muted: false,
+            percent: 40,
+        };
+        assert!(same_volume_indicator(
+            Some(volume),
+            Some(Volume {
+                percent: 60,
+                ..volume
+            })
+        ));
+        assert!(!same_volume_indicator(
+            Some(volume),
+            Some(Volume {
+                muted: true,
+                ..volume
+            })
+        ));
+        assert!(!same_volume_indicator(
+            Some(volume),
+            Some(Volume { level: 3, ..volume })
+        ));
+        assert!(!same_volume_indicator(Some(volume), None));
+        assert!(!same_volume_indicator(None, Some(volume)));
+    }
+
+    #[test]
+    #[ignore = "Native compositor coverage; hidden test window, no audio writes"]
+    fn native_music_artwork_and_volume_fit_both_styles_and_release_drag_state() -> Result<()> {
+        use anyhow::Context;
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let mut bar = MenuBar::create(&gfx, true, false, false, MenuBarWidgets::default())?;
+        bar.set_visible(false)?;
+        bar.audio = None; // This fixture can never change the user's audio.
+        bar.status.volume = Some(Volume {
+            level: 2,
+            muted: false,
+            percent: 42,
+        });
+        let mut look = bar.look.clone().context("initial look")?;
+        look.status = bar.status;
+        look.panel = Some(Island::Music);
+        look.track = Some(Track::test_fixture());
+        for style in [IslandStyle::Notch, IslandStyle::Bubble] {
+            look.widgets.island_style = style;
+            for scale in [1.0, 1.25, 1.5, 2.0] {
+                look.scale = scale;
+                for (light, glass) in [(true, true), (false, true), (true, false), (false, false)] {
+                    look.light = light;
+                    look.glass = glass;
+                    bar.build(&gfx, &look)?;
+                    assert!(bar.cover.is_some());
+                    let brush = bar.cover.as_ref().context("missing cover")?.1.clone();
+                    bar.build(&gfx, &look)?;
+                    assert_eq!(bar.cover.as_ref().context("cached cover")?.1, brush);
+                    let volume = bar
+                        .island_hits
+                        .iter()
+                        .find(|hit| matches!(hit.action, IslandAction::Volume(_)))
+                        .context("missing volume hit")?;
+                    let (left, top, right, bottom) = volume.bounds;
+                    assert!(left >= bar.panel_span.left && right <= bar.panel_span.right);
+                    assert!(
+                        top >= HEIGHT * scale
+                            && bottom <= (HEIGHT + PANEL_GAP + look.panel_height()) * scale + 1.0
+                    );
+                    assert!(
+                        bar.island_hits
+                            .iter()
+                            .any(|hit| matches!(hit.action, IslandAction::Mute))
+                    );
+                }
+            }
+        }
+        let image = Arc::new(muelle_shell::icons::IconImage {
+            width: 8,
+            height: 8,
+            bgra: [20, 40, 80, 255].repeat(64),
+        });
+        look.track.as_mut().context("track")?.artwork = Some(image.clone());
+        bar.build(&gfx, &look)?;
+        assert!(
+            bar.cover
+                .as_ref()
+                .and_then(|(source, _)| source.as_ref())
+                .is_some_and(|source| Arc::ptr_eq(source, &image))
+        );
+        // Compare the old full redraw path with retained updates without ever
+        // writing the real audio endpoint. Tree identity is the regression
+        // assertion; timings are informational, not a flaky speed threshold.
+        let started = Instant::now();
+        for step in 0..64 {
+            bar.status.volume = Some(Volume {
+                level: 2,
+                muted: false,
+                percent: 40 + step % 20,
+            });
+            look.status = bar.status;
+            bar.build(&gfx, &look)?;
+        }
+        let full_redraw = started.elapsed();
+        bar.look = Some(look.clone());
+        let root = bar.surface.Children()?.First()?.Current()?;
+        let started = Instant::now();
+        for step in 0..64 {
+            bar.apply_volume_reading(
+                &gfx,
+                Some(Volume {
+                    level: 2,
+                    muted: false,
+                    percent: 40 + step % 20,
+                }),
+            )?;
+            assert_eq!(bar.surface.Children()?.First()?.Current()?, root);
+            assert_eq!(
+                bar.volume_controls
+                    .as_ref()
+                    .context("retained volume")?
+                    .label_percent,
+                40 + step % 20
+            );
+        }
+        eprintln!(
+            "64 volume updates: full redraw {:?}, retained {:?} (no audio writes)",
+            full_redraw,
+            started.elapsed()
+        );
+        let span = Span {
+            left: 100.0,
+            right: 300.0,
+        };
+        bar.volume_drag = Some(span); // No SetCapture in a test.
+        bar.queue_volume(span, 140.0);
+        bar.pointer_moved(&gfx, 260.0, 0.0)?;
+        assert_eq!(bar.pending_volume, Some(80));
+        assert_eq!(
+            bar.volume_controls
+                .as_ref()
+                .context("immediate percentage")?
+                .label_percent,
+            80
+        );
+        assert_eq!(
+            bar.volume_controls
+                .as_ref()
+                .context("immediate thumb")?
+                .position_percent,
+            Some(80)
+        );
+        // An endpoint acknowledgement must not drag the thumb backwards while
+        // a newer pointer target is still waiting for its coalesced write.
+        bar.apply_volume_reading(
+            &gfx,
+            Some(Volume {
+                level: 2,
+                muted: false,
+                percent: 50,
+            }),
+        )?;
+        assert_eq!(
+            bar.volume_controls
+                .as_ref()
+                .context("optimistic thumb")?
+                .position_percent,
+            Some(80)
+        );
+        assert_eq!(bar.surface.Children()?.First()?.Current()?, root);
+        assert!(bar.release_volume(Some(300.0))?);
+        assert!(bar.pending_volume.is_none() && bar.volume_drag.is_none());
+        assert!(!bar.release_volume(None)?);
+        assert!(bar.release_volume(Some(200.0))?); // Late up after capture loss/timer.
+        assert!(!bar.release_volume(Some(200.0))?);
+        bar.status.volume = None;
+        bar.build(&gfx, &look)?;
+        assert!(
+            !bar.island_hits
+                .iter()
+                .any(|hit| matches!(hit.action, IslandAction::Volume(_) | IslandAction::Mute))
+        );
+        Ok(())
+    }
 
     #[test]
     #[ignore = "Requires Windows desktop composition; keeps the test bar hidden"]

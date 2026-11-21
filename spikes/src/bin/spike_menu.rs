@@ -158,7 +158,14 @@ fn main() -> anyhow::Result<()> {
             std::thread::sleep(Duration::from_millis(1500));
             post(WM_CANCELMODE, 0, LPARAM(0));
         });
-        let chosen = menu::show(&gfx, owner, &items, POINT { x: 960, y: 980 }, dark);
+        let chosen = menu::show(
+            &gfx,
+            owner,
+            &items,
+            POINT { x: 960, y: 980 },
+            dark,
+            menu::Placement::Above,
+        );
         println!("chosen: {chosen:?}");
     }
     Ok(())

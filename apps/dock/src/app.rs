@@ -4643,9 +4643,39 @@ pub fn menu_bar_clicked(x: f32, y: f32) {
     });
 }
 
+pub fn menu_bar_volume_press(x: f32, y: f32) {
+    with_app("volumen", |app| {
+        if let Some(bar) = &mut app.menubar {
+            bar.press_volume(&app.gfx, x, y)?;
+        }
+        Ok(())
+    });
+}
+
+pub fn menu_bar_volume_release(x: Option<f32>) -> bool {
+    with_app_value("volumen", |app| match &mut app.menubar {
+        Some(bar) => bar.release_volume(x),
+        None => Ok(false),
+    })
+}
+
+pub fn menu_bar_volume_flush() {
+    with_app("volumen", |app| match &mut app.menubar {
+        Some(bar) => bar.flush_volume(),
+        None => Ok(()),
+    });
+}
+
 pub fn menu_bar_media_changed() {
     with_app("reproducción", |app| match &mut app.menubar {
         Some(bar) => bar.media_changed(&app.gfx),
+        None => Ok(()),
+    });
+}
+
+pub fn menu_bar_audio_changed() {
+    with_app("audio", |app| match &mut app.menubar {
+        Some(bar) => bar.audio_changed(&app.gfx),
         None => Ok(()),
     });
 }

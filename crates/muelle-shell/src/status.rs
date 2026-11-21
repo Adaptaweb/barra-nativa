@@ -110,6 +110,8 @@ pub struct Volume {
     pub muted: bool,
     /// 0 (silent) to 3 (loud): the steps the speaker glyph has.
     pub level: u8,
+    /// Precise endpoint reading, retained for the music popup slider.
+    pub percent: u8,
 }
 
 #[implement(IAudioEndpointVolumeCallback)]
@@ -215,13 +217,47 @@ impl AudioWatch {
                 endpoint.GetMute().ok()?.as_bool(),
             )
         };
+        let percent = (level.clamp(0.0, 1.0) * 100.0).round() as u8;
         let level = match level {
             l if l < 0.01 => 0,
             l if l < 0.34 => 1,
             l if l < 0.67 => 2,
             _ => 3,
         };
-        Some(Volume { muted, level })
+        Some(Volume {
+            muted,
+            level,
+            percent,
+        })
+    }
+
+    /// Uses the watched default output; the existing callback updates all UI.
+    pub fn set_percent(&mut self, percent: u8) -> Result<()> {
+        self.follow_default();
+        let (_, endpoint, _) = self.endpoint.as_ref().ok_or_else(|| {
+            windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL)
+        })?;
+        // SAFETY: The endpoint belongs to this COM-initialized thread. The
+        // event context is optional. No waits, enumeration or new watcher.
+        unsafe {
+            endpoint.SetMasterVolumeLevelScalar(
+                f32::from(percent.min(100)) / 100.0,
+                std::ptr::null(),
+            )?;
+            if percent > 0 && endpoint.GetMute()?.as_bool() {
+                endpoint.SetMute(false, std::ptr::null())?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn toggle_mute(&mut self) -> Result<()> {
+        self.follow_default();
+        let (_, endpoint, _) = self.endpoint.as_ref().ok_or_else(|| {
+            windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL)
+        })?;
+        // SAFETY: Read and update our current, live endpoint on its apartment.
+        unsafe { endpoint.SetMute(!endpoint.GetMute()?.as_bool(), std::ptr::null()) }
     }
 
     /// Moves the volume callback to the default device if it changed.

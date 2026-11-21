@@ -18,6 +18,7 @@ import {
   windowsAnimations,
   installUpdate,
   loadConfig,
+  loadWallpaperPreview,
   openReleaseNotes,
   openRepository,
   pickFolder,
@@ -94,6 +95,12 @@ export function App() {
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: "checking" });
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [projectError, setProjectError] = useState(false);
+  const [wallpaper, setWallpaper] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    loadWallpaperPreview().then((image) => { if (alive) setWallpaper(image); });
+    return () => { alive = false; };
+  }, []);
   /** "Later" hides the banner until Settings is opened again. */
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const pending = useRef<Partial<Config> | null>(null);
@@ -305,20 +312,18 @@ export function App() {
                   label={t.dockPosition}
                   value={config.dockPosition}
                   options={[
-                    { value: "left", label: t.dockPositionLeft, preview: <DockPreview position="left" iconSize={config.iconSize} /> },
-                    { value: "bottom", label: t.dockPositionBottom, preview: <DockPreview position="bottom" iconSize={config.iconSize} /> },
-                    { value: "right", label: t.dockPositionRight, preview: <DockPreview position="right" iconSize={config.iconSize} /> },
+                    { value: "left", label: t.dockPositionLeft, preview: <DockPreview position="left" iconSize={config.iconSize} wallpaper={wallpaper} /> },
+                    { value: "bottom", label: t.dockPositionBottom, preview: <DockPreview position="bottom" iconSize={config.iconSize} wallpaper={wallpaper} /> },
+                    { value: "right", label: t.dockPositionRight, preview: <DockPreview position="right" iconSize={config.iconSize} wallpaper={wallpaper} /> },
                   ]}
                   onChange={(dockPosition) => update({ dockPosition })}
                 />
-                <Row icon={<SettingIcon name="size" />} label={t.size}>
+                <Row label={t.size}>
                   <Slider
                     label={t.size}
                     value={config.iconSize}
                     min={ICON_SIZE.min}
                     max={ICON_SIZE.max}
-                    before={<SettingIcon name="indicators" size={14} />}
-                    after={<SettingIcon name="indicators" size={22} />}
                     onChange={(iconSize) => update({ iconSize })}
                   />
                 </Row>
@@ -329,14 +334,12 @@ export function App() {
                     onChange={(magnification) => update({ magnification })}
                   />
                 </Row>
-                <SubRow icon={<SettingIcon name="magnification" />} label={t.magnifiedSize} open={config.magnification}>
+                <SubRow label={t.magnifiedSize} open={config.magnification}>
                   <Slider
                     label={t.magnifiedSize}
                     value={config.magnifiedSize}
                     min={config.iconSize}
                     max={MAX_MAGNIFIED_SIZE}
-                    before={<SettingIcon name="indicators" size={14} />}
-                    after={<SettingIcon name="indicators" size={22} />}
                     onChange={(magnifiedSize) => update({ magnifiedSize })}
                   />
                 </SubRow>
@@ -440,21 +443,21 @@ export function App() {
                     onChange={(menuBar) => update({ menuBar })}
                   />
                 </Row>
-                <SubRow icon={<SettingIcon name="hide" />} label={t.menuBarAutoHide} hint={t.menuBarAutoHideHint} open={config.menuBar}>
+                <SubRow label={t.menuBarAutoHide} hint={t.menuBarAutoHideHint} open={config.menuBar}>
                   <Toggle
                     label={t.menuBarAutoHide}
                     checked={config.menuBarAutoHide}
                     onChange={(menuBarAutoHide) => update({ menuBarAutoHide })}
                   />
                 </SubRow>
-                <SubRow icon={<SettingIcon name="music" />} label={t.menuBarMusic} hint={t.menuBarMusicHint} open={config.menuBar}>
+                <SubRow label={t.menuBarMusic} hint={t.menuBarMusicHint} open={config.menuBar}>
                   <Toggle
                     label={t.menuBarMusic}
                     checked={config.menuBarMusic}
                     onChange={(menuBarMusic) => update({ menuBarMusic })}
                   />
                 </SubRow>
-                <SubRow icon={<SettingIcon name="ai" />} label={t.aiUsage} hint={t.aiUsageHint} open={config.menuBar}>
+                <SubRow label={t.aiUsage} hint={t.aiUsageHint} open={config.menuBar}>
                   <Toggle
                     label={t.aiUsage}
                     checked={config.aiUsage}
@@ -471,13 +474,13 @@ export function App() {
                     hideLabel
                     value={config.menuBarIslandStyle}
                     options={[
-                      { value: "notch", label: t.islandStyleNotch, preview: <IslandPreview style="notch" /> },
-                      { value: "bubble", label: t.islandStyleBubble, preview: <IslandPreview style="bubble" /> },
+                      { value: "notch", label: t.islandStyleNotch, preview: <IslandPreview style="notch" wallpaper={wallpaper} /> },
+                      { value: "bubble", label: t.islandStyleBubble, preview: <IslandPreview style="bubble" wallpaper={wallpaper} /> },
                     ]}
                     onChange={(menuBarIslandStyle) => update({ menuBarIslandStyle })}
                   />
                 </SubRow>
-                <SubRow icon={<SettingIcon name="headphones" />} label={t.accessoryBattery} hint={t.accessoryBatteryHint} open={config.menuBar}>
+                <SubRow label={t.accessoryBattery} hint={t.accessoryBatteryHint} open={config.menuBar}>
                   <Toggle
                     label={t.accessoryBattery}
                     checked={config.accessoryBattery}
@@ -553,7 +556,7 @@ export function App() {
                     onChange={(checkUpdates) => update({ checkUpdates })}
                   />
                 </Row>
-                <SubRow icon={<SettingIcon name="updates" />} label={t.autoUpdate} hint={t.autoUpdateHint} open={config.checkUpdates}>
+                <SubRow label={t.autoUpdate} hint={t.autoUpdateHint} open={config.checkUpdates}>
                   <Toggle
                     label={t.autoUpdate}
                     checked={config.autoUpdate}

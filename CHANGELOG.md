@@ -10,6 +10,14 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Music now shows circular Windows media artwork in the island and its popup,
+  with a bundled offline fallback. The popup adds system volume and mute controls;
+  the thumb and percentage respond immediately, with coalesced audio writes and
+  retained visuals. Audio events avoid unrelated system queries and full redraws
+  for percentage-only changes. Release/cancellation does not steal app focus.
+- Dock and island-style previews use the current monitor's wallpaper when available.
+  Notch/bubble illustrations have clearer content and unobstructed selection marks. Nested
+  options and sliders have fewer icons, and the GitHub star is filled yellow.
 - Settings now illustrate Dock placement, island styles and Genie speeds, with
   native keyboard-selectable options, clearer icons and shorter descriptions.
   A permanent sidebar link opens Muelle on GitHub to explore and star the project.
@@ -80,6 +88,15 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- La isla y el popup de música muestran la carátula circular de Windows, con
+  una imagen incluida como respaldo. El popup incorpora volumen del sistema y
+  silencio: tirador y porcentaje responden al instante, reutilizando sus visuales
+  y agrupando las escrituras de audio. Los cambios de porcentaje evitan consultas
+  ajenas al audio y redibujar la barra. El arrastre no roba el foco.
+- Las previews del Dock y de estilos de isla usan el fondo del monitor actual.
+  Muesca y burbuja tienen contenido más claro y la marca de selección queda fuera
+  de la imagen. Si el fondo no está disponible, mantienen el fondo ilustrado.
+  Se quitan iconos de subopciones y sliders; la estrella de GitHub es amarilla.
 - Ajustes incorpora vistas de la posición del Dock, los estilos de isla y la
   velocidad del genio, con selección por teclado, iconos y textos más breves.
   Un enlace fijo al pie del sidebar abre Muelle en GitHub para conocer y apoyar

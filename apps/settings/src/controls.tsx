@@ -37,7 +37,7 @@ export function Row({ label, hint, icon, stacked, children }: RowProps) {
   );
 }
 
-interface SubRowProps extends RowProps {
+interface SubRowProps extends Omit<RowProps, "icon"> {
   /** Whether the option it depends on is on; the row folds away while it is off. */
   open: boolean;
 }
@@ -83,17 +83,14 @@ interface SliderProps {
   min: number;
   max: number;
   label: string;
-  before?: ReactNode;
-  after?: ReactNode;
   disabled?: boolean;
   onChange: (value: number) => void;
 }
 
-export function Slider({ value, min, max, label, before, after, disabled, onChange }: SliderProps) {
+export function Slider({ value, min, max, label, disabled, onChange }: SliderProps) {
   const filled = ((value - min) / (max - min)) * 100;
   return (
     <div className="slider">
-      {before ? <span className="slider-edge">{before}</span> : null}
       <input
         type="range"
         aria-label={label}
@@ -105,7 +102,6 @@ export function Slider({ value, min, max, label, before, after, disabled, onChan
         style={{ "--filled": `${filled}%` } as React.CSSProperties}
         onChange={(event) => onChange(Number(event.target.value))}
       />
-      {after ? <span className="slider-edge">{after}</span> : null}
       <output className="slider-value" aria-hidden="true">{value} px</output>
     </div>
   );
@@ -132,11 +128,12 @@ export function VisualChoices<T extends string>({ label, value, hideLabel, optio
               onChange={() => onChange(option.value)} />
             <span className="visual-choice-body">
               <span className="visual-preview" aria-hidden="true">{option.preview}</span>
-              <span className="visual-choice-label">{option.label}</span>
-              {option.detail ? <span className="visual-choice-detail">{option.detail}</span> : null}
-              <span className="visual-check" aria-hidden="true">
+              <span className="visual-choice-label">{option.label}
+                <span className="visual-check" aria-hidden="true">
                 <svg viewBox="0 0 16 16" width="12" height="12"><path d="m4 8 2.5 2.5L12 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                </span>
               </span>
+              {option.detail ? <span className="visual-choice-detail">{option.detail}</span> : null}
             </span>
           </label>
         ))}

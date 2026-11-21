@@ -35,6 +35,7 @@ windows = { workspace = true, features = [
     "Graphics",
     "Graphics_DirectX",
     "Media_Control",
+    "Storage_Streams",
     "System",
     "UI",
     "UI_Composition",

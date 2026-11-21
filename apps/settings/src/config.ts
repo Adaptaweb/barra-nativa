@@ -65,4 +65,8 @@ export const checkUpdate = () => invoke<UpdateInfo | null>("check_update");
 export const openReleaseNotes = (url: string) => invoke<void>("open_release_notes", { url });
 /** Fixed project URL, opened only when the user asks. */
 export const openRepository = () => invoke<void>("open_repository");
+let wallpaperRequest: Promise<string | null> | undefined;
+/** One bounded native read per Settings process, including React StrictMode. */
+export const loadWallpaperPreview = () =>
+  wallpaperRequest ??= invoke<string | null>("wallpaper_preview").catch(() => null);
 export const installUpdate = () => invoke<void>("install_update");
