@@ -2901,15 +2901,13 @@ impl App {
     }
 
     fn drop_action(&self) -> DropAction {
-        if let Some(view) = &self.group_view {
-            if let Ok(Some((id, _))) = view.item_at_cursor() {
-                if tracker::is_program(&id)
-                    || tracker::is_shortcut(&id)
-                    || pins::launch_target(&id).is_some()
-                {
-                    return DropAction::OpenWith(id);
-                }
-            }
+        if let Some(view) = &self.group_view
+            && let Ok(Some((id, _))) = view.item_at_cursor()
+            && (tracker::is_program(&id)
+                || tracker::is_shortcut(&id)
+                || pins::launch_target(&id).is_some())
+        {
+            return DropAction::OpenWith(id);
         }
         let Some(stage) = &self.stage else {
             return DropAction::Nothing;
@@ -2991,18 +2989,13 @@ impl App {
     fn on_drag_over(&mut self, point: POINT) -> Result<DROPEFFECT> {
         self.hover_at(point)?;
         if self.spring_opened_group {
-            let over_group = self.group_view.as_ref().is_some_and(|v| {
-                point.x >= v.layout.bounds.left
-                    && point.x <= v.layout.bounds.right
-                    && point.y >= v.layout.bounds.top
-                    && point.y <= v.layout.bounds.bottom
-            });
+            let over_group = self.group_view.as_ref().is_some_and(|v| v.contains(point));
             let over_dock = self.stage.as_ref().is_some_and(|stage| {
                 let dock_point = stage.to_dock(point);
                 dock_point.0 >= 0.0
-                    && dock_point.0 <= stage.layout.total_width
-                    && dock_point.1 >= -stage.layout.icon_size
-                    && dock_point.1 <= stage.layout.icon_size
+                    && dock_point.0 < stage.layout.width
+                    && dock_point.1 >= -stage.icon
+                    && dock_point.1 < stage.layout.height
             });
             if !over_group && !over_dock {
                 self.spring_opened_group = false;
@@ -3036,12 +3029,11 @@ impl App {
     /// The entry under a drag that can spring open: an app with windows,
     /// a minimized window's thumbnail, or a group of pinned apps.
     fn spring_target(&self) -> Option<String> {
-        if let Some(view) = &self.group_view {
-            if let Ok(Some((id, _))) = view.item_at_cursor() {
-                if !self.windows_of(&id).is_empty() {
-                    return Some(id);
-                }
-            }
+        if let Some(view) = &self.group_view
+            && let Ok(Some((id, _))) = view.item_at_cursor()
+            && !self.windows_of(&id).is_empty()
+        {
+            return Some(id);
         }
         let entry = self.hovered.and_then(|index| self.entries.get(index))?;
         let id = entry.id.clone()?;
@@ -3088,17 +3080,16 @@ impl App {
         let Some(id) = self.spring.clone() else {
             return Ok(None);
         };
-        if let Some(view) = &self.group_view {
-            if let Ok(Some((item_id, _))) = view.item_at_cursor() {
-                if item_id == id {
-                    let windows = self.windows_of(&id);
-                    if windows.is_empty() {
-                        return Ok(None);
-                    }
-                    self.start_bounce(id.clone(), Some(bounce::HOP_SECONDS));
-                    return Ok(self.activating(windows));
-                }
+        if let Some(view) = &self.group_view
+            && let Ok(Some((item_id, _))) = view.item_at_cursor()
+            && item_id == id
+        {
+            let windows = self.windows_of(&id);
+            if windows.is_empty() {
+                return Ok(None);
             }
+            self.start_bounce(id.clone(), Some(bounce::HOP_SECONDS));
+            return Ok(self.activating(windows));
         }
         let Some(entry) = self.hovered.and_then(|index| self.entries.get(index)) else {
             return Ok(None);
@@ -6676,21 +6667,28 @@ mod preview_order_tests {
 #[cfg(test)]
 mod spring_loaded_tests {
     #[test]
-    fn window_cycling_rotates_through_open_windows() {
-        let windows = vec![101, 102, 103];
+    fn window_cycling_rotates_through_open_windows() -> Result<(), &'static str> {
+        let windows = [101, 102, 103];
         let foreground = 101;
-        let pos = windows.iter().position(|&w| w == foreground).unwrap();
+        let pos = windows
+            .iter()
+            .position(|&w| w == foreground)
+            .ok_or("foreground window missing")?;
         let next = windows[(pos + 1) % windows.len()];
         assert_eq!(next, 102);
 
-        let pos = windows.iter().position(|&w| w == 103).unwrap();
+        let pos = windows
+            .iter()
+            .position(|&w| w == 103)
+            .ok_or("last window missing")?;
         let next = windows[(pos + 1) % windows.len()];
         assert_eq!(next, 101);
+        Ok(())
     }
 
     #[test]
     fn single_window_does_not_cycle() {
-        let windows = vec![101];
+        let windows = [101];
         let foreground = 101;
         let should_cycle = windows.len() > 1 && windows.contains(&foreground);
         assert!(!should_cycle);

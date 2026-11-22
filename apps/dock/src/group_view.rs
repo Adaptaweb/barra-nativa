@@ -474,6 +474,11 @@ impl GroupView {
         &self.ids
     }
 
+    /// Whether a screen point lies inside the group panel.
+    pub fn contains(&self, point: POINT) -> bool {
+        contains(self.layout.bounds, point)
+    }
+
     pub fn set_attention(&mut self, gfx: &Gfx, pending: impl Fn(&str) -> bool) -> Result<()> {
         for ((id, item), rect) in self
             .ids
