@@ -8,6 +8,8 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+## [0.1.20]
+
 ### English
 
 - Energy-saver changes now update the shared transparency state directly from

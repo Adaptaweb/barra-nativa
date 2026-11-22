@@ -65,7 +65,7 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
   };
   const nativeWindow = { onCloseRequested(callback) { close = callback; return Promise.resolve(() => {}); } };
   const mocks = {
-    "@tauri-apps/api/app": { getVersion: async () => "0.1.19" },
+    "@tauri-apps/api/app": { getVersion: async () => "0.1.20" },
     "@tauri-apps/api/event": { listen: async () => () => {} },
     "@tauri-apps/api/window": { getCurrentWindow: () => nativeWindow },
     "@tauri-apps/api/core": { invoke: async (command, args) => {

@@ -13,11 +13,10 @@ export const site = {
   releases: "https://github.com/crafter-station/Muelle/releases",
   download: "https://github.com/crafter-station/Muelle/releases/latest/download/Muelle-Setup.exe",
   issues: "https://github.com/crafter-station/Muelle/issues",
-  version: "0.1.19",
+  version: "0.1.20",
   license: "MIT",
 } as const;
 
-/** The person who makes Muelle. The @id matches the Person node of the crafter.run profile. */
 export const author = {
   name: "Cristian Olivera Chávez",
   shortName: "Cristian Olivera",
@@ -31,7 +30,6 @@ export const author = {
   website: "https://cristianolivera1.github.io",
 } as const;
 
-/** The community that publishes Muelle. The @id matches the Organization node of crafter.run. */
 export const organization = {
   name: "Crafter Station",
   id: "https://crafter.run/#organization",
