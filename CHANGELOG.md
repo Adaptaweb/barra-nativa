@@ -10,6 +10,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Energy-saver changes now update the shared transparency state directly from
+  Windows power callbacks before redrawing the dock and menu bar, with an
+  initial state notification and a fallback for older systems. No idle polling.
 - Dock unread counts now take precedence over generic attention dots, avoiding
   overlapping badges. Counts update and clear without rebuilding the dock.
 - Fixed the music popup's mute hit target and removed the stray volume-slider
@@ -21,6 +24,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Los cambios del ahorro actualizan el estado de transparencia directamente
+  desde Windows antes de redibujar el dock y la barra, con estado inicial y
+  respaldo para sistemas anteriores. Sin sondeo en reposo.
 - El contador del Dock tiene prioridad sobre el punto de atención, evitando
   insignias superpuestas. Se actualiza y se borra sin reconstruir el dock.
 - Corregida la zona de clic de silencio en música y retirado el punto suelto

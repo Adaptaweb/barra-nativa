@@ -167,26 +167,90 @@ pub fn run_as_background_process() {
     trim_memory();
 }
 
-/// Tells a window, with `WM_POWERBROADCAST` / `PBT_POWERSETTINGCHANGE`, when
+/// Tells a window, with `WM_POWERBROADCAST` / `PBT_APMPOWERSTATUSCHANGE`, when
 /// energy saver (battery saver on Windows 10) turns on or off: Windows then
 /// stops or resumes see-through effects, and glass must follow. Plugging the
 /// charger in or out already arrives as `PBT_APMPOWERSTATUSCHANGE`, but
 /// turning the saver on by hand does not always.
 ///
-/// Event-driven: nothing runs until Windows sends the change. The
-/// subscription ends when this is dropped.
-pub struct SaverWatch(Vec<windows::Win32::System::Power::HPOWERNOTIFY>);
+/// Direct callbacks update the shared state before requesting a redraw. They
+/// also supply the current value at registration, independently of the window's
+/// message queue. Older systems retain the window-notification fallback.
+/// No polling, extra timer or application-owned worker thread.
+pub struct SaverWatch(Vec<SaverRegistration>);
+
+struct SaverRegistration {
+    handle: windows::Win32::System::Power::HPOWERNOTIFY,
+    callback: bool,
+}
+
+unsafe extern "system" fn saver_changed(
+    context: *const c_void,
+    kind: u32,
+    data: *const c_void,
+) -> u32 {
+    use windows::Win32::{
+        Foundation::{HWND, LPARAM, WPARAM},
+        UI::WindowsAndMessaging::{
+            PBT_APMPOWERSTATUSCHANGE, PBT_POWERSETTINGCHANGE, PostMessageW, WM_POWERBROADCAST,
+        },
+    };
+    if kind == PBT_POWERSETTINGCHANGE {
+        // SAFETY: Windows supplies the setting payload for this callback only.
+        if let Some((setting, value)) = unsafe { saver_notification(LPARAM(data as isize)) } {
+            SAVER.update(setting, value);
+            if !context.is_null() {
+                // Context is an HWND value, never a pointer into a window or
+                // Rust object. No COM, UI borrow or synchronous send here.
+                unsafe {
+                    let _ = PostMessageW(
+                        Some(HWND(context.cast_mut())),
+                        WM_POWERBROADCAST,
+                        WPARAM(PBT_APMPOWERSTATUSCHANGE as usize),
+                        LPARAM(0),
+                    );
+                }
+            }
+        }
+    }
+    0
+}
 
 impl SaverWatch {
     #[must_use]
     pub fn new(hwnd: isize) -> Self {
         use windows::Win32::{
-            Foundation::HANDLE, System::Power::RegisterPowerSettingNotification,
-            UI::WindowsAndMessaging::DEVICE_NOTIFY_WINDOW_HANDLE,
+            Foundation::{ERROR_SUCCESS, HANDLE},
+            System::Power::{
+                DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS, HPOWERNOTIFY, PowerSettingRegisterNotification,
+                RegisterPowerSettingNotification,
+            },
+            UI::WindowsAndMessaging::{DEVICE_NOTIFY_CALLBACK, DEVICE_NOTIFY_WINDOW_HANDLE},
         };
         let handles = [GUID_ENERGY_SAVER_STATUS, GUID_POWER_SAVING_STATUS]
             .iter()
             .filter_map(|setting| {
+                let subscription = DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS {
+                    Callback: Some(saver_changed),
+                    Context: hwnd as *mut c_void,
+                };
+                let mut handle = std::ptr::null_mut();
+                // SAFETY: Windows copies the callback and opaque HWND value.
+                // Both remain valid without referencing this stack structure.
+                if unsafe {
+                    PowerSettingRegisterNotification(
+                        setting,
+                        DEVICE_NOTIFY_CALLBACK,
+                        HANDLE((&raw const subscription).cast_mut().cast()),
+                        &mut handle,
+                    )
+                } == ERROR_SUCCESS
+                {
+                    return Some(SaverRegistration {
+                        handle: HPOWERNOTIFY(handle as isize),
+                        callback: true,
+                    });
+                }
                 // SAFETY: `hwnd` is the caller's live window; an unknown
                 // setting on an older Windows just fails.
                 unsafe {
@@ -197,6 +261,10 @@ impl SaverWatch {
                     )
                 }
                 .ok()
+                .map(|handle| SaverRegistration {
+                    handle,
+                    callback: false,
+                })
             })
             .collect();
         Self(handles)
@@ -205,10 +273,18 @@ impl SaverWatch {
 
 impl Drop for SaverWatch {
     fn drop(&mut self) {
-        for handle in self.0.drain(..) {
+        for registration in self.0.drain(..) {
             // SAFETY: Registered in `new` and released once.
             unsafe {
-                let _ = windows::Win32::System::Power::UnregisterPowerSettingNotification(handle);
+                if registration.callback {
+                    let _ = windows::Win32::System::Power::PowerSettingUnregisterNotification(
+                        registration.handle,
+                    );
+                } else {
+                    let _ = windows::Win32::System::Power::UnregisterPowerSettingNotification(
+                        registration.handle,
+                    );
+                }
             }
         }
     }
@@ -217,6 +293,124 @@ impl Drop for SaverWatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "Hidden test-owned window; synthetic notifications do not change Windows power settings"]
+    fn callback_updates_state_before_posting_redraw_and_never_forwards_payload_pointer()
+    -> windows::core::Result<()> {
+        use windows::Win32::{
+            Foundation::{HWND, WPARAM},
+            UI::WindowsAndMessaging::{
+                CreateWindowExW, DestroyWindow, MSG, PBT_APMPOWERSTATUSCHANGE,
+                PBT_POWERSETTINGCHANGE, PM_REMOVE, PeekMessageW, WINDOW_EX_STYLE,
+                WM_POWERBROADCAST, WS_POPUP,
+            },
+        };
+        use windows::core::w;
+        struct Fixture(HWND, u8);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = DestroyWindow(self.0);
+                }
+                SAVER.0.store(self.1, Ordering::Relaxed);
+            }
+        }
+        let fixture = Fixture(
+            unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("STATIC"),
+                    w!("Muelle power test"),
+                    WS_POPUP,
+                    0,
+                    0,
+                    1,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                )?
+            },
+            SAVER.0.load(Ordering::Relaxed),
+        );
+        #[repr(C)]
+        struct Payload {
+            setting: GUID,
+            length: u32,
+            value: u32,
+        }
+        for (value, enabled) in [(1, true), (0, false)] {
+            let payload = Payload {
+                setting: GUID_ENERGY_SAVER_STATUS,
+                length: 4,
+                value,
+            };
+            unsafe {
+                saver_changed(
+                    fixture.0.0.cast_const(),
+                    PBT_POWERSETTINGCHANGE,
+                    (&raw const payload).cast(),
+                );
+            }
+            assert_eq!(notified_saver_state(), Some(enabled));
+            let mut message = MSG::default();
+            assert!(
+                unsafe {
+                    PeekMessageW(
+                        &mut message,
+                        Some(fixture.0),
+                        WM_POWERBROADCAST,
+                        WM_POWERBROADCAST,
+                        PM_REMOVE,
+                    )
+                }
+                .as_bool()
+            );
+            assert_eq!(message.wParam, WPARAM(PBT_APMPOWERSTATUSCHANGE as usize));
+            assert_eq!(message.lParam.0, 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Read-only native power subscriptions; no settings changes or windows"]
+    fn native_callbacks_supply_initial_state_without_a_window_message_loop() {
+        use std::time::{Duration, Instant};
+        for _ in 0..3 {
+            SAVER.0.store(UNKNOWN, Ordering::Relaxed);
+            let watch = SaverWatch::new(0);
+            assert!(watch.0.iter().any(|registration| registration.callback));
+            let end = Instant::now() + Duration::from_secs(2);
+            while SAVER.get().is_none() && Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(
+                SAVER.get().is_some(),
+                "Windows did not supply its current saver state"
+            );
+            let current = SAVER.0.load(Ordering::Relaxed);
+            drop(watch);
+            if current >= ENERGY_OFF {
+                // Simulate a stale startup cache, without changing Windows.
+                SAVER.0.store(
+                    if current == ENERGY_OFF {
+                        ENERGY_ON
+                    } else {
+                        ENERGY_OFF
+                    },
+                    Ordering::Relaxed,
+                );
+                let _watch = SaverWatch::new(0);
+                let end = Instant::now() + Duration::from_secs(2);
+                while SAVER.0.load(Ordering::Relaxed) != current && Instant::now() < end {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                assert_eq!(SAVER.0.load(Ordering::Relaxed), current);
+            }
+        }
+    }
 
     #[test]
     fn saver_notifications_follow_standard_high_savings_and_off() {
