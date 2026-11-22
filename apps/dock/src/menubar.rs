@@ -339,10 +339,8 @@ struct ExitAnimation {
 /// track labels and the rest of the menu bar keep their existing visual tree.
 struct VolumeControls {
     fill: CompositionRoundedRectangleGeometry,
-    knob: ShapeVisual,
     value: SpriteVisual,
     geometry: IslandGeometry,
-    left: f32,
     width: f32,
     position_percent: Option<u8>,
     label_percent: u8,
@@ -358,11 +356,6 @@ impl VolumeControls {
         self.fill.SetSize(Vector2::new(filled, px(4.0)))?;
         self.fill
             .SetCornerRadius(Vector2::new(px(2.0).min(filled / 2.0), px(2.0)))?;
-        self.knob.SetOffset(Vector3::new(
-            self.left + filled - px(5.0),
-            px(160.0) - px(5.0),
-            0.0,
-        ))?;
         self.position_percent = Some(percent);
         Ok(())
     }
@@ -2644,9 +2637,9 @@ impl MenuBar {
             )?;
             self.island_hits.push(geometry.hit(
                 px(18.0),
-                px(148.0),
+                px(126.0),
                 px(32.0),
-                px(27.0),
+                px(28.0),
                 IslandAction::Mute,
             ));
             let left = px(59.0);
@@ -2678,18 +2671,6 @@ impl MenuBar {
                 },
                 None,
             )?;
-            let dot = px(10.0);
-            let (knob, _) = retained_rounded_box(
-                c,
-                layers,
-                left - dot / 2.0,
-                px(140.0) - dot / 2.0,
-                dot,
-                dot,
-                dot / 2.0,
-                rgba(245, 247, 250, 255),
-                Some(geometry.border()),
-            )?;
             let label =
                 gfx.text_brush_sized(&format!("{percent}%"), geometry.scale, 10.5, false, ink)?;
             let value = add_visual(
@@ -2704,10 +2685,8 @@ impl MenuBar {
             value.SetOpacity(0.8)?;
             let mut controls = VolumeControls {
                 fill,
-                knob,
                 value,
                 geometry,
-                left,
                 width,
                 position_percent: None,
                 label_percent: percent,
@@ -3983,11 +3962,30 @@ mod island_tests {
                         top >= HEIGHT * scale
                             && bottom <= (HEIGHT + PANEL_GAP + look.panel_height()) * scale + 1.0
                     );
-                    assert!(
-                        bar.island_hits
-                            .iter()
-                            .any(|hit| matches!(hit.action, IslandAction::Mute))
-                    );
+                    let geometry = bar
+                        .volume_controls
+                        .as_ref()
+                        .context("volume controls")?
+                        .geometry;
+                    // Click the visible speaker's centre, not merely somewhere
+                    // inside an independently specified hit rectangle.
+                    let speaker = bar
+                        .island_hits
+                        .iter()
+                        .find(|hit| {
+                            hit.at(
+                                geometry.left + geometry.px(30.0),
+                                geometry.top + geometry.px(140.0),
+                            )
+                        })
+                        .context("speaker has no hit target")?;
+                    assert!(matches!(speaker.action, IslandAction::Mute));
+                    let slider = bar
+                        .island_hits
+                        .iter()
+                        .find(|hit| hit.at((left + right) / 2.0, geometry.top + geometry.px(140.0)))
+                        .context("slider has no hit target")?;
+                    assert!(matches!(slider.action, IslandAction::Volume(_)));
                 }
             }
         }
@@ -4062,11 +4060,11 @@ mod island_tests {
         assert_eq!(
             bar.volume_controls
                 .as_ref()
-                .context("immediate thumb")?
+                .context("immediate fill")?
                 .position_percent,
             Some(80)
         );
-        // An endpoint acknowledgement must not drag the thumb backwards while
+        // An endpoint acknowledgement must not drag the fill backwards while
         // a newer pointer target is still waiting for its coalesced write.
         bar.apply_volume_reading(
             &gfx,
@@ -4079,7 +4077,7 @@ mod island_tests {
         assert_eq!(
             bar.volume_controls
                 .as_ref()
-                .context("optimistic thumb")?
+                .context("optimistic fill")?
                 .position_percent,
             Some(80)
         );

@@ -10,6 +10,10 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Dock unread counts now take precedence over generic attention dots, avoiding
+  overlapping badges. Counts update and clear without rebuilding the dock.
+- Fixed the music popup's mute hit target and removed the stray volume-slider
+  dot. Volume updates keep using retained visuals and coalesced audio writes.
 - Web apps installed from a browser (Edge, Chrome) get their own dock icon, as
   on the Windows taskbar, instead of joining the browser's. A pinned web app
   shows the name and icon of its shortcut, and clicking it switches to its open
@@ -17,6 +21,10 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- El contador del Dock tiene prioridad sobre el punto de atención, evitando
+  insignias superpuestas. Se actualiza y se borra sin reconstruir el dock.
+- Corregida la zona de clic de silencio en música y retirado el punto suelto
+  del volumen. Se conservan los gráficos y las escrituras de audio agrupadas.
 - Las aplicaciones web instaladas desde un navegador (Edge, Chrome) tienen su
   propio icono en el dock, como en la barra de Windows, en vez de unirse al del
   navegador. Una aplicación web anclada muestra el nombre y el icono de su acceso

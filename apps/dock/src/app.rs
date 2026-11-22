@@ -1493,28 +1493,10 @@ impl App {
             ),
             dock.height,
         );
-        let notify_badges: Vec<Option<LabelBrush>> = if self.config.notification_badges {
-            self.entries
-                .iter()
-                .map(|entry| {
-                    entry.id.as_ref().and_then(|id| {
-                        let count = self.notifications.badge_count(id);
-                        if count > 0 {
-                            self.gfx.notification_badge_brush(count, scale).ok()
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .collect()
-        } else {
-            (0..self.entries.len()).map(|_| None).collect()
-        };
         let contents: Vec<SlotContent<'_>> = self
             .entries
             .iter()
-            .enumerate()
-            .map(|(index, entry)| {
+            .map(|entry| {
                 let asset = entry.id.as_ref().and_then(|id| self.assets.get(id));
                 let badge = entry
                     .id
@@ -1523,13 +1505,11 @@ impl App {
                     .and_then(|hwnd| self.windows.iter().find(|window| window.hwnd == hwnd))
                     .and_then(|window| self.assets.get(&window.app_id))
                     .and_then(|asset| asset.icon.as_ref());
-                let notify_badge = notify_badges.get(index).and_then(|opt| opt.as_ref());
                 SlotContent {
                     icon: asset.and_then(|asset| asset.icon.as_ref()),
                     label: asset.and_then(|asset| asset.label.as_ref()),
                     running: entry.running && self.config.show_indicators,
                     badge,
-                    notify_badge,
                 }
             })
             .collect();
@@ -1647,7 +1627,7 @@ impl App {
             layout: dock,
         };
         self.stage = Some(stage);
-        self.sync_attention_visuals()?;
+        self.sync_badge_visuals()?;
         self.place_windows()?;
         self.schedule_trim();
         self.render()?;
@@ -3406,7 +3386,7 @@ impl App {
                 dock: self.input,
             },
         )?);
-        self.sync_attention_visuals()?;
+        self.sync_badge_visuals()?;
         self.render()
     }
 
@@ -3991,7 +3971,9 @@ impl App {
         self.apply_menu_bar_setting();
         self.update_menu_bar_app()?;
         self.calm_windows();
-        self.refresh()
+        self.refresh()?;
+        self.sync_badge_visuals()?;
+        self.render()
     }
 
     /// Adds the apps pinned to the Windows taskbar that the dock does not
@@ -4103,7 +4085,7 @@ impl App {
 
     fn on_attention(&mut self, hwnd: isize) -> Result<()> {
         if !self.windows.iter().any(|window| window.hwnd == hwnd) && self.read_windows() {
-            self.sync_attention_visuals()?;
+            self.sync_badge_visuals()?;
             self.render()?;
         }
         // A minimize/flash can arrive before the debounced tracker refresh.
@@ -4133,7 +4115,7 @@ impl App {
                 self.start_bounce(app_id.clone(), Some(ATTENTION_HOPS * bounce::HOP_SECONDS));
             }
             if changed {
-                self.sync_attention_visuals()?;
+                self.sync_badge_visuals()?;
                 self.render()?;
             }
             if self.config.notification_badges && !self.config.muted_apps.contains(&app_id) {
@@ -4149,7 +4131,7 @@ impl App {
                     self.config.notification_dnd || !self.config.notifications,
                     false,
                 );
-                let _ = self.render();
+                let _ = self.sync_badge_visuals().and_then(|()| self.render());
             }
         }
         Ok(())
@@ -4187,7 +4169,7 @@ impl App {
         }
 
         if self.config.notification_badges {
-            let _ = self.render();
+            let _ = self.sync_badge_visuals().and_then(|()| self.render());
         }
 
         if pushed.is_some() && !self.fullscreen {
@@ -4244,12 +4226,25 @@ impl App {
     pub fn clear_notification_badge(&mut self, app_id: &str) {
         if self.notifications.badge_count(app_id) > 0 {
             self.notifications.clear_badge(app_id);
-            let _ = self.render();
+            let _ = self.sync_badge_visuals().and_then(|()| self.render());
         }
     }
 
-    fn sync_attention_visuals(&mut self) -> Result<()> {
+    fn sync_badge_visuals(&mut self) -> Result<()> {
         if let Some(stage) = &mut self.stage {
+            stage.scene.set_notification_counts(
+                &self.gfx,
+                self.entries.iter().map(|entry| {
+                    if self.config.notification_badges {
+                        entry
+                            .id
+                            .as_deref()
+                            .map_or(0, |id| self.notifications.badge_count(id))
+                    } else {
+                        0
+                    }
+                }),
+            )?;
             stage.scene.set_attention(
                 &self.gfx,
                 self.entries.iter().map(|entry| {
@@ -4274,7 +4269,7 @@ impl App {
         if self.attention_enabled != enabled {
             self.attention_enabled = enabled;
             self.attention.clear();
-            self.sync_attention_visuals()?;
+            self.sync_badge_visuals()?;
             self.render()?;
         }
         Ok(())
@@ -4282,7 +4277,7 @@ impl App {
 
     fn forget_attention(&mut self, hwnd: isize) -> Result<()> {
         if self.attention.acknowledge(hwnd) {
-            self.sync_attention_visuals()?;
+            self.sync_badge_visuals()?;
             self.render()?;
         }
         Ok(())
@@ -4362,7 +4357,7 @@ impl App {
         }
         self.started = true;
         if attention_changed {
-            self.sync_attention_visuals()?;
+            self.sync_badge_visuals()?;
             self.render()?;
         }
         // A foreground-window change may mean an app entered or exited full-screen mode.
@@ -4820,7 +4815,7 @@ impl App {
         tracker::recover_browser_z_order(&self.windows, foreground);
         self.update_fullscreen()?;
         if attention_changed {
-            self.sync_attention_visuals()?;
+            self.sync_badge_visuals()?;
             self.render()?;
         }
         Ok(())
