@@ -10,17 +10,17 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
-- Right-clicking an app in the dock shows its jump list, as on the Windows
-  taskbar: pinned, recent and frequent items, the app's own categories and its
-  tasks, each with its icon. Files open in that app. Settings → Dock → *Show
-  jump lists* turns it off.
+- Web apps installed from a browser (Edge, Chrome) get their own dock icon, as
+  on the Windows taskbar, instead of joining the browser's. A pinned web app
+  shows the name and icon of its shortcut, and clicking it switches to its open
+  window instead of opening another.
 
 ### Español
 
-- El clic derecho en una app del dock muestra su lista de saltos, como en la
-  barra de Windows: elementos anclados, recientes y frecuentes, las categorías
-  propias de la app y sus tareas, cada uno con su icono. Los archivos se abren
-  en esa app. Ajustes → Dock → *Mostrar listas de saltos* lo desactiva.
+- Las aplicaciones web instaladas desde un navegador (Edge, Chrome) tienen su
+  propio icono en el dock, como en la barra de Windows, en vez de unirse al del
+  navegador. Una aplicación web anclada muestra el nombre y el icono de su acceso
+  directo, y al hacer clic cambia a su ventana abierta en vez de abrir otra.
 
 ## [0.1.19]
 

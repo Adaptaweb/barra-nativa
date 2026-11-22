@@ -1,32 +1,38 @@
 use std::{
-    env, fs,
+    env,
+    ffi::c_void,
+    fs,
     path::{Path, PathBuf},
 };
 
 use windows::{
     Win32::{
-        Storage::FileSystem::GetDriveTypeW,
+        Storage::{
+            EnhancedStorage::{PKEY_AppUserModel_ID, PKEY_Link_TargetParsingPath},
+            FileSystem::GetDriveTypeW,
+        },
         System::{
-            Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile, STGM_READ},
+            Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree, IPersistFile, STGM_READ},
             Registry::{HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RegGetValueW},
         },
         UI::{
             Shell::{
                 BHID_SFUIObject, CMF_NORMAL, CMINVOKECOMMANDINFO, GCS_VERBW, IContextMenu,
-                IShellItem, IShellLinkW, SHCreateItemFromParsingName, ShellLink,
+                IShellItem, IShellItem2, IShellLinkW, PropertiesSystem::IPropertyStore,
+                SHCreateItemFromParsingName, ShellLink,
             },
             WindowsAndMessaging::{
                 CreatePopupMenu, DestroyMenu, GetMenuItemCount, GetMenuItemID, SW_SHOWNORMAL,
             },
         },
     },
-    core::{HSTRING, Interface, PCSTR, PCWSTR, PSTR, w},
+    core::{HSTRING, Interface, PCSTR, PCWSTR, PSTR, PWSTR, w},
 };
 
 const TASKBAND: PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband");
 
 use crate::{
-    tracker::{is_program, normalize_id},
+    tracker::{APPS_FOLDER, is_program, normalize_id},
     watch::RegistryWatch,
 };
 
@@ -331,20 +337,102 @@ pub fn link_target(link: &Path) -> Option<String> {
 /// What the dock pins for the shortcut `link`, as the Windows taskbar does:
 /// the program it opens, whatever its arguments, so the program's windows
 /// gather under one icon (the arguments still apply when it is opened, see
-/// [`launch_target`]); or the shortcut itself when it opens something that
-/// is not a program (a script, a document). `None` for shortcuts to no file
-/// (File Explorer, Control Panel items) or to a file that no longer exists.
+/// [`launch_target`]); a web app's own identity, under which its windows
+/// gather instead (see [`is_separate_app`]); or the shortcut itself when it
+/// opens something that is not a program (a script, a document). `None` for
+/// shortcuts to no file (File Explorer, Control Panel items) or to a file
+/// that no longer exists.
 ///
 /// Requires COM to be initialized on the calling thread.
 #[must_use]
 pub fn shortcut_id(link: &Path) -> Option<String> {
-    let (target, _) = read_link(link)?;
+    let (target, arguments) = read_link(link)?;
     let target = target.filter(|target| Path::new(target).exists())?;
+    // A web app's shortcut opens a launcher (`msedge_proxy.exe`), but the
+    // app's windows carry its own identity: pinned by it, they gather under
+    // the pin, as on the taskbar.
+    if let Some(app) = link_app_id(link)
+        .filter(|app| arguments.contains("--app-id=") || is_separate_app(app, &target))
+        .filter(|app| app_exists(&format!("{APPS_FOLDER}{app}")))
+    {
+        return Some(format!("{APPS_FOLDER}{app}"));
+    }
     Some(if is_program(&target) {
         normalize_id(&target)
     } else {
         normalize_id(&link.to_string_lossy())
     })
+}
+
+/// `true` when Windows lists `app_id` as an app of its own rather than as a
+/// shortcut to `program`, the program that runs it: a web app inside a
+/// browser. The browser's own identity (`MSEdge`, `Chrome`) is a shortcut to
+/// the browser and stays with it.
+///
+/// Requires COM to be initialized on the calling thread.
+#[must_use]
+pub fn is_separate_app(app_id: &str, program: &str) -> bool {
+    // SAFETY: Only resolves the app's shell item and reads one property.
+    let target = unsafe {
+        let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem2>(
+            &HSTRING::from(format!("{APPS_FOLDER}{app_id}")),
+            None,
+        ) else {
+            return false;
+        };
+        item.GetString(&PKEY_Link_TargetParsingPath)
+            .ok()
+            .and_then(|target| take_string(target))
+    };
+    target.is_none_or(|target| normalize_id(&target) != normalize_id(program))
+}
+
+/// The identity a shortcut gives the app it opens (`AppUserModelID`), when
+/// it sets one.
+fn link_app_id(link: &Path) -> Option<String> {
+    // SAFETY: The shortcut is loaded into an object that lives through the read.
+    let value = unsafe {
+        let shell_link: IShellLinkW =
+            CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        shell_link
+            .cast::<IPersistFile>()
+            .ok()?
+            .Load(&HSTRING::from(link.as_os_str()), STGM_READ)
+            .ok()?;
+        shell_link
+            .cast::<IPropertyStore>()
+            .ok()?
+            .GetValue(&PKEY_AppUserModel_ID)
+            .ok()?
+    };
+    Some(value.to_string()).filter(|app_id| !app_id.is_empty())
+}
+
+/// `true` when `link` opens the dock item `id`: the program it targets, or,
+/// for a web app pinned by its identity, the app it names.
+fn opens(link: &Path, id: &str) -> bool {
+    match id.strip_prefix(APPS_FOLDER) {
+        Some(app_id) => link_app_id(link).is_some_and(|linked| linked == app_id),
+        None => read_link(link)
+            .and_then(|(target, _)| target)
+            .is_some_and(|target| normalize_id(&target) == id),
+    }
+}
+
+/// Reads and frees a string the shell allocated.
+///
+/// # Safety
+/// `text` must be null or a string allocated with `CoTaskMemAlloc`.
+unsafe fn take_string(text: PWSTR) -> Option<String> {
+    if text.is_null() {
+        return None;
+    }
+    // SAFETY: Guaranteed by the caller.
+    unsafe {
+        let value = text.to_string().ok();
+        CoTaskMemFree(Some(text.0 as *const c_void));
+        value.filter(|value| !value.is_empty())
+    }
 }
 
 /// The shortcut to open `id` with, when one carries more than the program:
@@ -400,22 +488,31 @@ pub fn shortcut_for_program(id: &str) -> Option<String> {
 
 /// The shortcut Muelle keeps for the program `id` (see [`keep_shortcut`]),
 /// which gives its pin its name and icon. Only Muelle's own folder, which
-/// is usually empty: cheap enough for every icon lookup.
+/// is usually empty: cheap enough for every icon lookup. A web app pinned by
+/// its identity also takes its shortcut on the taskbar, which holds the name
+/// and icon the user gave it.
 ///
 /// Requires COM to be initialized on the calling thread.
 #[must_use]
 pub fn kept_shortcut_for(id: &str) -> Option<String> {
-    if crate::tracker::is_shortcut(id) || id.starts_with("shell:") {
+    if crate::tracker::is_shortcut(id) {
         return None;
     }
-    fs::read_dir(kept_folder()?)
-        .ok()?
+    let folders = if id.starts_with(APPS_FOLDER) {
+        [kept_folder(), taskbar_folder()]
+    } else if id.starts_with("shell:") {
+        return None;
+    } else {
+        [kept_folder(), None]
+    };
+    folders
+        .into_iter()
+        .flatten()
+        .filter_map(|folder| fs::read_dir(folder).ok())
+        .flatten()
         .filter_map(|entry| Some(entry.ok()?.path()))
-        .find(|link| {
-            read_link(link)
-                .and_then(|(target, _)| target)
-                .is_some_and(|target| normalize_id(&target) == id)
-        })
+        .filter(|link| crate::tracker::is_shortcut(&link.to_string_lossy()))
+        .find(|link| opens(link, id))
         .map(|link| link.to_string_lossy().into_owned())
 }
 
@@ -506,10 +603,7 @@ pub fn forget_shortcut(id: &str) {
         .flatten()
         .filter_map(|entry| Some(entry.ok()?.path()))
     {
-        let opens_id = read_link(&link)
-            .and_then(|(target, _)| target)
-            .is_some_and(|target| normalize_id(&target) == id);
-        if opens_id {
+        if opens(&link, id) {
             let _ = fs::remove_file(link);
         }
     }
