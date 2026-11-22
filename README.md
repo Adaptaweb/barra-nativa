@@ -2,7 +2,7 @@
   
 <img width="50%" alt="Frame 1116606779" src="https://github.com/user-attachments/assets/8c715a53-a0df-4780-9dd4-09ce3ccd9043" />
 
-  **A lightweight, macOS-inspired dock for Windows 10 and 11.**
+### A lightweight, macOS-inspired dock for Windows 10 and 11
 
   Muelle replaces the Windows taskbar with a customizable dock and an optional
   macOS-style menu bar.
@@ -12,9 +12,6 @@
 <img width="1500" height="436" alt="Frame 1116606780" src="https://github.com/user-attachments/assets/3c91b488-214d-453d-a8c2-a9e0dc7f245e" />
 
 <img width="1000" height="259" alt="ezgif-6345057d171e16ef" src="https://github.com/user-attachments/assets/e5b2ce63-cec1-4d1d-8ef1-a4fa1c668c40" />
-
-
-Smooth magnification, live window previews, and an optional Genie-style minimize effect.
 
 | Clawd Pet | Genie Effect on Minimize |
 | :---: | :---: |
