@@ -8,6 +8,7 @@ pub mod folder;
 pub mod icon_cache;
 pub mod icons;
 pub mod imagery;
+pub mod jumplist;
 pub mod keyboard;
 pub mod launcher;
 pub mod log;

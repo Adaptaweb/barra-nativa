@@ -28,6 +28,7 @@ export interface Config {
   genieSpeed: GenieSpeed;
   showMinimized: boolean;
   showPreviewCloseButton: boolean;
+  jumpLists: boolean;
   menuBar: boolean;
   menuBarAutoHide: boolean;
   aiUsage: boolean;

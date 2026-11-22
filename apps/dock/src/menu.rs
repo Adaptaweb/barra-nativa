@@ -16,6 +16,7 @@ use std::{
 };
 
 use anyhow::Result;
+use muelle_shell::icons::IconImage;
 use windows::{
     UI::{
         Color,
@@ -74,7 +75,11 @@ pub enum MenuItem {
         label: String,
         checked: bool,
         enabled: bool,
+        /// Shown before the label in the drawn menu, as jump list entries.
+        icon: Option<IconImage>,
     },
+    /// The title of a section, such as a jump list's "Recent". Not selectable.
+    Header(String),
     Separator,
 }
 
@@ -85,6 +90,7 @@ impl MenuItem {
             label: label.into(),
             checked: false,
             enabled: true,
+            icon: None,
         }
     }
 }
@@ -200,12 +206,21 @@ fn needs_native_menu() -> bool {
 /// Sizes in logical pixels, after the macOS menu.
 const PAD_Y: f32 = 5.0;
 const ROW: f32 = 24.0;
+const HEADER: f32 = 22.0;
+const HEADER_FONT: f32 = 11.5;
+const HEADER_OPACITY: f32 = 0.55;
 const SEPARATOR: f32 = 11.0;
 /// The selection is inset from the menu's sides and rounded.
 const INSET: f32 = 5.0;
 const SELECTION_RADIUS: f32 = 5.0;
 /// Text starts after room for a check mark.
 const TEXT_LEFT: f32 = 24.0;
+/// With icons: the icon where the check mark goes, then the text.
+const ICON: f32 = 16.0;
+const ICON_LEFT: f32 = 4.0;
+const ICON_TEXT_LEFT: f32 = 32.0;
+/// The gray white glyphs take on a light menu, near the text's.
+const DARK_GLYPH: u8 = 0x1F;
 const TEXT_RIGHT: f32 = 24.0;
 const FONT: f32 = 13.5;
 const MIN_WIDTH: f32 = 180.0;
@@ -269,10 +284,19 @@ impl Popup {
             selected: LabelBrush,
         }
         let mut labels: Vec<Option<Label>> = Vec::with_capacity(items.len());
+        let mut headers: Vec<Option<LabelBrush>> = Vec::with_capacity(items.len());
         let mut text_width: f32 = 0.0;
         for item in items {
+            headers.push(match item {
+                MenuItem::Header(title) => {
+                    let brush = gfx.text_brush_sized(title, scale, HEADER_FONT, true, ink)?;
+                    text_width = text_width.max(brush.width);
+                    Some(brush)
+                }
+                _ => None,
+            });
             labels.push(match item {
-                MenuItem::Separator => None,
+                MenuItem::Separator | MenuItem::Header(_) => None,
                 MenuItem::Action { label, .. } => {
                     let (text, _) = strip_mnemonic(label);
                     let normal = gfx.text_brush_sized(&text, scale, FONT, false, ink)?;
@@ -282,11 +306,17 @@ impl Popup {
                 }
             });
         }
-        let width = (text_width + px(TEXT_LEFT) + px(TEXT_RIGHT)).max(px(MIN_WIDTH));
+        // Room for icons only when some row has one.
+        let has_icons = items
+            .iter()
+            .any(|item| matches!(item, MenuItem::Action { icon: Some(_), .. }));
+        let text_left = px(if has_icons { ICON_TEXT_LEFT } else { TEXT_LEFT });
+        let width = (text_width + text_left + px(TEXT_RIGHT)).max(px(MIN_WIDTH));
         let mut height = px(PAD_Y) * 2.0;
         for item in items {
             height += px(match item {
                 MenuItem::Separator => SEPARATOR,
+                MenuItem::Header(_) => HEADER,
                 MenuItem::Action { .. } => ROW,
             });
         }
@@ -317,7 +347,7 @@ impl Popup {
         };
         let mut rows = Vec::with_capacity(items.len());
         let mut top = px(PAD_Y);
-        for (item, label) in items.iter().zip(labels) {
+        for ((item, label), header) in items.iter().zip(labels).zip(headers) {
             match (item, label) {
                 (
                     MenuItem::Action {
@@ -325,6 +355,7 @@ impl Popup {
                         label,
                         checked,
                         enabled,
+                        icon,
                     },
                     Some(brushes),
                 ) => {
@@ -335,7 +366,7 @@ impl Popup {
                         add_sprite(
                             &group.Children()?,
                             brush.brush.cast()?,
-                            px(TEXT_LEFT),
+                            text_left,
                             text_top,
                             brush.width,
                             brush.height,
@@ -347,6 +378,33 @@ impl Popup {
                     let normal = place(&brushes.normal)?;
                     let selected = place(&brushes.selected)?;
                     selected.SetIsVisible(false)?;
+                    if let Some(icon) = icon {
+                        let side = px(ICON);
+                        // A white glyph made for a dark taskbar (Edge's tasks)
+                        // takes the text's ink on a light menu; over the
+                        // selection it stays white, as the text does.
+                        let normal_icon =
+                            (!dark && is_white_glyph(icon)).then(|| tinted(icon, DARK_GLYPH));
+                        let pairs = [
+                            (&normal, normal_icon.as_ref().unwrap_or(icon)),
+                            (&selected, icon),
+                        ];
+                        for (visual, image) in pairs {
+                            // A bad icon costs only the icon, not the menu.
+                            let Ok(brush) = gfx.icon_brush(image, side as u32) else {
+                                continue;
+                            };
+                            let group: ContainerVisual = visual.cast()?;
+                            add_sprite(
+                                &group.Children()?,
+                                brush.cast()?,
+                                px(INSET) + px(ICON_LEFT),
+                                top + ((row_height - side) / 2.0).round(),
+                                side,
+                                side,
+                            )?;
+                        }
+                    }
                     if *checked {
                         for (visual, mark_ink) in [(&normal, ink), (&selected, Ink::Light)] {
                             let mark =
@@ -370,6 +428,33 @@ impl Popup {
                         height: row_height,
                         normal: Some(normal),
                         selected: Some(selected),
+                    });
+                    top += row_height;
+                }
+                (MenuItem::Header(_), _) => {
+                    let row_height = px(HEADER);
+                    if let Some(brush) = header {
+                        let group = c.CreateContainerVisual()?;
+                        // Sits low in its row, near the items it names.
+                        add_sprite(
+                            &group.Children()?,
+                            brush.brush.cast()?,
+                            px(INSET) + px(7.0),
+                            top + (row_height - brush.height - px(2.0)).round(),
+                            brush.width,
+                            brush.height,
+                        )?;
+                        group.SetOpacity(HEADER_OPACITY)?;
+                        layers.InsertAtTop(&group)?;
+                    }
+                    rows.push(Row {
+                        command: None,
+                        enabled: false,
+                        mnemonic: None,
+                        top,
+                        height: row_height,
+                        normal: None,
+                        selected: None,
                     });
                     top += row_height;
                 }
@@ -815,6 +900,39 @@ unsafe extern "system" fn menu_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) 
     unsafe { DefWindowProcW(hwnd, msg, w, l) }
 }
 
+/// `true` for an icon drawn in white only: every visible pixel near white.
+/// Pixels are premultiplied, so white is each channel close to its alpha.
+fn is_white_glyph(icon: &IconImage) -> bool {
+    let visible: Vec<&[u8; 4]> = icon
+        .bgra
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| pixel[3] > 32)
+        .collect();
+    !visible.is_empty()
+        && visible.iter().all(|pixel| {
+            let alpha = u16::from(pixel[3]);
+            pixel[..3]
+                .iter()
+                .all(|&channel| u16::from(channel) * 255 >= alpha * 215)
+        })
+}
+
+/// `icon` in one gray `value`, keeping its shape (alpha).
+fn tinted(icon: &IconImage, value: u8) -> IconImage {
+    let mut bgra = icon.bgra.clone();
+    for pixel in bgra.as_chunks_mut::<4>().0 {
+        let channel = (u16::from(value) * u16::from(pixel[3]) / 255) as u8;
+        pixel[..3].fill(channel);
+    }
+    IconImage {
+        width: icon.width,
+        height: icon.height,
+        bgra,
+    }
+}
+
 /// The label without its `&` marker, and the letter it marked.
 fn strip_mnemonic(label: &str) -> (String, Option<char>) {
     let mut text = String::with_capacity(label.len());
@@ -885,11 +1003,18 @@ fn show_native(
         for item in items {
             let _ = match item {
                 MenuItem::Separator => AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null()),
+                MenuItem::Header(title) => AppendMenuW(
+                    menu,
+                    MF_STRING | MF_GRAYED,
+                    0,
+                    &HSTRING::from(title.replace('&', "&&")),
+                ),
                 MenuItem::Action {
                     command,
                     label,
                     checked,
                     enabled,
+                    ..
                 } => {
                     let mut flags = MF_STRING;
                     if *checked {
@@ -968,6 +1093,30 @@ pub fn apply_theme(dark: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn icon(pixels: &[[u8; 4]]) -> IconImage {
+        IconImage {
+            width: pixels.len() as u32,
+            height: 1,
+            bgra: pixels.concat(),
+        }
+    }
+
+    #[test]
+    fn only_white_glyphs_are_tinted_and_keep_their_shape() {
+        // Premultiplied: half-transparent white is 128 in every channel.
+        let glyph = icon(&[[255, 255, 255, 255], [128, 128, 128, 128], [0, 0, 0, 0]]);
+        assert!(is_white_glyph(&glyph));
+        assert!(!is_white_glyph(&icon(&[
+            [255, 255, 255, 255],
+            [200, 40, 0, 255]
+        ])));
+        assert!(!is_white_glyph(&icon(&[[0, 0, 0, 0]])));
+        let dark = tinted(&glyph, 0x1F);
+        assert_eq!(dark.bgra[..4], [0x1F, 0x1F, 0x1F, 255]);
+        assert_eq!(dark.bgra[7], 128);
+        assert_eq!(dark.bgra[8..], [0, 0, 0, 0]);
+    }
 
     #[test]
     #[ignore = "Requires an interactive Windows desktop; briefly opens a menu"]

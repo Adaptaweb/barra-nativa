@@ -42,6 +42,9 @@ Agrandissement fluide, aperçus des fenêtres en direct et effet génie facultat
   les garder plutôt sous forme de miniatures en direct à droite du dock.
 - Cliquer sur l'app déjà au premier plan la réduit, comme dans la barre des
   tâches de Windows.
+- Clic droit sur une app pour voir sa liste de raccourcis, avec icônes, comme
+  dans la barre des tâches de Windows : éléments épinglés et récents, ses
+  catégories et ses tâches.
 - Glisser-déposer des fichiers sur les apps, les Téléchargements ou la
   Corbeille.
 - Un dossier de raccourcis à droite du dock : son contenu s'ouvre en menu, avec

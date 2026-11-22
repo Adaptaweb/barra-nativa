@@ -74,6 +74,10 @@ pub struct Config {
     /// Minimized windows get a live thumbnail in the right section of the
     /// dock. Off by default: they go into their app's icon instead.
     pub show_minimized: bool,
+    /// An app's right-click menu starts with its jump list (pinned and recent
+    /// items, tasks), as on the Windows taskbar. Off, the menu has only the
+    /// dock's own items and no jump list is read.
+    pub jump_lists: bool,
     /// macOS-style bar across the top with the clock and status items.
     pub menu_bar: bool,
     /// Keep the menu bar off screen until the pointer touches the top edge.
@@ -313,6 +317,7 @@ impl Default for Config {
             genie: true,
             genie_speed: GenieSpeed::Normal,
             show_minimized: false,
+            jump_lists: true,
             menu_bar: true,
             menu_bar_auto_hide: false,
             ai_usage: true,
@@ -637,6 +642,7 @@ mod tests {
         assert!(config.menu_bar_music);
         assert!(!config.accessory_battery);
         assert!(!config.show_minimized);
+        assert!(config.jump_lists);
     }
 
     #[test]

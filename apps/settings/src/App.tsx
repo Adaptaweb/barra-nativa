@@ -446,6 +446,13 @@ export function App() {
                     onChange={(showRecents) => update({ showRecents })}
                   />
                 </Row>
+                <Row icon={<SettingIcon name="jumpList" />} label={t.jumpLists} hint={t.jumpListsHint}>
+                  <Toggle
+                    label={t.jumpLists}
+                    checked={config.jumpLists}
+                    onChange={(jumpLists) => update({ jumpLists })}
+                  />
+                </Row>
               </Card>
               <Card>
                 <Row icon={<SettingIcon name="folder" />} label={t.shortcutsFolder} hint={config.shortcutsFolder ?? t.shortcutsFolderHint}>

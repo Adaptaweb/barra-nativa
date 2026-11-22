@@ -10,13 +10,13 @@ use windows::{
         },
         UI::{
             Shell::{
-                IShellItemImageFactory, SHCreateItemFromParsingName, SHDefExtractIconW,
+                IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SHDefExtractIconW,
                 SIIGBF_ICONONLY,
             },
             WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO},
         },
     },
-    core::HSTRING,
+    core::{HSTRING, Interface},
 };
 
 #[derive(Debug, Error)]
@@ -90,6 +90,23 @@ pub fn load_icon(parsing_name: &str, size: u32) -> Result<IconImage, IconError> 
     };
 
     read_pixels(&bitmap).ok_or_else(|| IconError::Pixels(parsing_name.to_owned()))
+}
+
+/// The icon of a shell item (a file, a folder, a known folder) at `size`
+/// pixels, as Explorer shows it.
+#[must_use]
+pub fn item_icon(item: &IShellItem, size: u32) -> Option<IconImage> {
+    let side = size as i32;
+    // SAFETY: The factory is the item's own; the bitmap is owned from here.
+    let bitmap = unsafe {
+        let factory: IShellItemImageFactory = item.cast().ok()?;
+        OwnedBitmap(
+            factory
+                .GetImage(SIZE { cx: side, cy: side }, SIIGBF_ICONONLY)
+                .ok()?,
+        )
+    };
+    read_pixels(&bitmap)
 }
 
 /// The first icon in a program's resources at `size` pixels; `None` when the

@@ -28,6 +28,8 @@ en desarrollo activo.
   activa Ajustes → Ventanas → *Mostrar ventanas minimizadas* para verlas como
   miniaturas en vivo a la derecha del dock.
 - Clic en la app que ya está delante para minimizarla, como en la barra de Windows.
+- Clic derecho en una app para ver su lista de saltos, con iconos, como en la
+  barra de Windows: elementos anclados y recientes, sus categorías y sus tareas.
 - Arrastrar y soltar archivos sobre apps, Descargas o la Papelera.
 - Una carpeta de accesos directos a la derecha del dock: su contenido se abre
   como un menú, con un submenú para cada carpeta, como una barra de
