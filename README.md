@@ -44,7 +44,8 @@
   Settings → Menu bar → *Show accessory battery*; it is off by default.
 - A top menu bar with the app in front, clock, network, volume and battery, the
   input language, microphone/camera in use, the hidden tray icons, plus
-  the Search, Task View and Widgets buttons if you have them on the Windows taskbar.
+  the Search and Task View buttons if enabled on the Windows taskbar. The
+  Widgets button is off by default and can be enabled in Settings.
 - A curved island in the menu bar for usage limits from Claude Code, Codex,
   OpenCode Go, Z.ai GLM Coding Plan, Gemini CLI, and Antigravity. Z.ai shows
   its 5-hour and weekly limits; Gemini Pro and Flash quotas appear separately

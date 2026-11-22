@@ -39,8 +39,8 @@ en desarrollo activo.
   Ajustes → Barra superior → *Mostrar batería de accesorios*; viene desactivado.
 - Barra superior con la app en primer plano, hora, red, volumen y batería, el idioma
   del teclado, el micrófono/cámara en uso y los iconos ocultos de la bandeja,
-  además de los botones de búsqueda, Vista de tareas y Widgets si los tienes en la barra
-  de Windows.
+  además de los botones de búsqueda y Vista de tareas si están activados en la
+  barra de Windows. El botón de Widgets viene desactivado; puedes activarlo en Ajustes.
 - Una isla curva en la barra superior con los límites de Claude Code, Codex,
   OpenCode Go, Z.ai GLM Coding Plan, Gemini CLI y Antigravity. Z.ai muestra
   sus límites de 5 horas y de la semana; las cuotas de Gemini Pro y Flash

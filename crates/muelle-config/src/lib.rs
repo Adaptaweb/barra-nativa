@@ -326,7 +326,7 @@ impl Default for Config {
             accessory_battery: false,
             menu_bar_search: None,
             menu_bar_task_view: None,
-            menu_bar_widgets: None,
+            menu_bar_widgets: Some(false),
             menu_bar_bluetooth: false,
             menu_bar_battery_percent: None,
             show_indicators: true,
@@ -577,6 +577,20 @@ mod tests {
                 Some(enabled)
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn widgets_button_is_off_by_default_and_can_be_enabled() -> Result<(), ConfigError> {
+        let path = scratch("widgets-button");
+        assert_eq!(Config::default().menu_bar_widgets, Some(false));
+
+        let saved = update_preferences(
+            &path,
+            serde_json::Map::from_iter([("menuBarWidgets".into(), true.into())]),
+        )?;
+        assert_eq!(saved.menu_bar_widgets, Some(true));
+
         Ok(())
     }
 
