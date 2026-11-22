@@ -86,6 +86,8 @@
   "showIndicators": "Afficher un indicateur sous les apps ouvertes",
   "showRecents": "Afficher les apps récentes",
   "showRecentsHint": "Les trois dernières que vous avez ouvertes sans les avoir épinglées.",
+  "jumpLists": "Afficher les listes de raccourcis",
+  "jumpListsHint": "Un clic droit sur une app affiche ses fichiers récents, éléments épinglés et tâches, comme dans la barre des tâches de Windows.",
   "bounceOnOpen": "Animer l'ouverture des apps",
   "mascot": "Crabe lors des moments spéciaux",
   "mascotHint": "Un crabe signale les changements des forfaits IA, la charge et l'économie d'énergie. Survolez-le.",

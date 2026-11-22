@@ -47,9 +47,17 @@ pub struct Strings {
     pub shell_operation_failed: &'static str,
     pub keyboard_settings: &'static str,
     pub keyboard: &'static str,
+    pub jump_pinned: &'static str,
+    pub jump_frequent: &'static str,
+    pub jump_recent: &'static str,
+    pub jump_tasks: &'static str,
 }
 
 const ES: Strings = Strings {
+    jump_pinned: "Anclado",
+    jump_frequent: "Frecuentes",
+    jump_recent: "Recientes",
+    jump_tasks: "Tareas",
     keyboard_settings: "Ajustes de idioma y teclado…",
     keyboard: "Teclado",
     shell_operation_failed: "No se pudo iniciar la operación. Inténtalo de nuevo en un momento.",
@@ -92,6 +100,10 @@ const ES: Strings = Strings {
 };
 
 const EN: Strings = Strings {
+    jump_pinned: "Pinned",
+    jump_frequent: "Frequent",
+    jump_recent: "Recent",
+    jump_tasks: "Tasks",
     keyboard_settings: "Language and keyboard settings…",
     keyboard: "Keyboard",
     shell_operation_failed: "The operation could not start. Please try again in a moment.",
@@ -134,6 +146,10 @@ const EN: Strings = Strings {
 };
 
 const FR: Strings = Strings {
+    jump_pinned: "Épinglé",
+    jump_frequent: "Fréquents",
+    jump_recent: "Récents",
+    jump_tasks: "Tâches",
     keyboard_settings: "Paramètres de langue et de clavier…",
     keyboard: "Clavier",
     shell_operation_failed: "L'opération n'a pas pu démarrer. Réessayez dans un instant.",

@@ -5,6 +5,7 @@ use std::{
     env,
     io::{Read, Write},
     os::windows::{io::AsRawHandle, process::CommandExt},
+    path::Path,
     process::{Command, Stdio},
     sync::{
         Arc, Mutex, OnceLock,
@@ -14,7 +15,11 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use muelle_shell::{files, launcher, pins::unpin_from_taskbar, recycle_bin};
+use muelle_shell::{
+    files, jumplist, launcher,
+    pins::{self, unpin_from_taskbar},
+    recycle_bin, tracker,
+};
 use serde::{Deserialize, Serialize};
 use windows::Win32::{
     Foundation::{HANDLE, HWND, WAIT_TIMEOUT},
@@ -58,12 +63,20 @@ pub enum Action {
     Unpin {
         id: String,
     },
+    /// A jump list entry of the dock item `program` (see `jumplist::open`).
+    OpenJump {
+        target: jumplist::Target,
+        program: String,
+    },
 }
 
 impl Action {
     fn launch_timeout_ms(&self) -> Option<u32> {
         match self {
-            Self::Open { .. } | Self::OpenWith { .. } | Self::Reveal { .. } => Some(30_000),
+            Self::Open { .. }
+            | Self::OpenWith { .. }
+            | Self::Reveal { .. }
+            | Self::OpenJump { .. } => Some(30_000),
             // File progress and UAC can legitimately wait for a user decision.
             _ => None,
         }
@@ -103,6 +116,15 @@ impl Action {
             Self::EmptyBin => recycle_bin::empty(owner),
             Self::Unpin { id } => {
                 let _ = unpin_from_taskbar(&id);
+            }
+            Self::OpenJump { target, program } => {
+                // A pinned shortcut stands for the program it opens.
+                let program = if tracker::is_shortcut(&program) {
+                    pins::link_target(Path::new(&program))
+                } else {
+                    Some(program)
+                };
+                jumplist::open(&target, program.as_deref())?;
             }
         }
         Ok(())
@@ -368,6 +390,28 @@ mod tests {
                 .launch_timeout_ms()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn jump_list_entries_survive_the_request_pipe() -> Result<()> {
+        let action = Action::OpenJump {
+            target: jumplist::Target::Link {
+                stream: vec![0x4c, 0, 0, 0, 255],
+            },
+            program: r"C:\Program Files\Código\app.exe".into(),
+        };
+        let parsed = read_action(serde_json::to_vec(&action)?.as_slice())?;
+        let Action::OpenJump { target, program } = parsed else {
+            bail!("la entrada de la lista de saltos cambió durante el transporte");
+        };
+        assert_eq!(
+            target,
+            jumplist::Target::Link {
+                stream: vec![0x4c, 0, 0, 0, 255]
+            }
+        );
+        assert_eq!(program, r"C:\Program Files\Código\app.exe");
+        Ok(())
     }
 
     #[test]

@@ -8,6 +8,20 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+### English
+
+- Right-clicking an app in the dock shows its jump list, as on the Windows
+  taskbar: pinned, recent and frequent items, the app's own categories and its
+  tasks, each with its icon. Files open in that app. Settings → Dock → *Show
+  jump lists* turns it off.
+
+### Español
+
+- El clic derecho en una app del dock muestra su lista de saltos, como en la
+  barra de Windows: elementos anclados, recientes y frecuentes, las categorías
+  propias de la app y sus tareas, cada uno con su icono. Los archivos se abren
+  en esa app. Ajustes → Dock → *Mostrar listas de saltos* lo desactiva.
+
 ## [0.1.19]
 
 ### English

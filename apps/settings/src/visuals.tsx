@@ -9,6 +9,7 @@ const PATHS = {
   mascot: <><path d="M6 13a6 6 0 0 0 12 0v-2H6zM8 11V7m8 4V7M4 9l-2-3m18 3 2-3M6 13H3m15 0h3M6 16l-3 3m15-3 3 3" /><circle cx="8" cy="6" r="1" /><circle cx="16" cy="6" r="1" /></>,
   indicators: <><rect x="3" y="4" width="7" height="10" rx="2" /><rect x="14" y="4" width="7" height="10" rx="2" /><circle cx="6.5" cy="19" r="1" fill="currentColor" /><circle cx="17.5" cy="19" r="1" fill="currentColor" /></>,
   recents: <><path d="M4 10a8 8 0 1 1 1 8M4 4v6h6m2-3v5l3 2" /></>,
+  jumpList: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 7h5M8 11h8M8 14.5h8M8 18h8" /></>,
   folder: <path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />,
   windows: <><rect x="3" y="3" width="13" height="11" rx="2" /><path d="M8 17v2a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2" /><path d="M6 7h7" /></>,
   genie: <><path d="M4 4h16v9c0 4-8 3-8 7M4 4v9c0 4 8 3 8 7M9 21h6M7 8h10" /></>,
