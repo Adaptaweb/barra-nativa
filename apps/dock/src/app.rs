@@ -809,6 +809,8 @@ pub(crate) struct App {
     drag_over: bool,
     /// The entry a drag is resting on, which springs open on `SPRING_TIMER`.
     spring: Option<String>,
+    /// Whether the group view was unfolded by a spring action during this drag.
+    spring_opened_group: bool,
     /// The Alt+Tab switcher is open; an auto-hidden dock shows meanwhile.
     switching: bool,
     switch_started: Instant,
@@ -2899,6 +2901,16 @@ impl App {
     }
 
     fn drop_action(&self) -> DropAction {
+        if let Some(view) = &self.group_view {
+            if let Ok(Some((id, _))) = view.item_at_cursor() {
+                if tracker::is_program(&id)
+                    || tracker::is_shortcut(&id)
+                    || pins::launch_target(&id).is_some()
+                {
+                    return DropAction::OpenWith(id);
+                }
+            }
+        }
         let Some(stage) = &self.stage else {
             return DropAction::Nothing;
         };
@@ -2918,7 +2930,13 @@ impl App {
             return DropAction::Nothing;
         };
         match entry.role {
-            Role::App if id.ends_with(".exe") => DropAction::OpenWith(id),
+            Role::App
+                if tracker::is_program(&id)
+                    || tracker::is_shortcut(&id)
+                    || pins::launch_target(&id).is_some() =>
+            {
+                DropAction::OpenWith(id)
+            }
             Role::Trash => DropAction::Recycle,
             Role::Folder => DropAction::Transfer {
                 copy: !self
@@ -2972,6 +2990,25 @@ impl App {
 
     fn on_drag_over(&mut self, point: POINT) -> Result<DROPEFFECT> {
         self.hover_at(point)?;
+        if self.spring_opened_group {
+            let over_group = self.group_view.as_ref().is_some_and(|v| {
+                point.x >= v.layout.bounds.left
+                    && point.x <= v.layout.bounds.right
+                    && point.y >= v.layout.bounds.top
+                    && point.y <= v.layout.bounds.bottom
+            });
+            let over_dock = self.stage.as_ref().is_some_and(|stage| {
+                let dock_point = stage.to_dock(point);
+                dock_point.0 >= 0.0
+                    && dock_point.0 <= stage.layout.total_width
+                    && dock_point.1 >= -stage.layout.icon_size
+                    && dock_point.1 <= stage.layout.icon_size
+            });
+            if !over_group && !over_dock {
+                self.spring_opened_group = false;
+                self.close_group_view();
+            }
+        }
         self.aim_spring();
         Ok(self.drop_action().effect())
     }
@@ -2990,16 +3027,28 @@ impl App {
                 let _ = KillTimer(Some(self.input), SPRING_TIMER);
             }
         }
+        if self.spring_opened_group {
+            self.spring_opened_group = false;
+            self.close_group_view();
+        }
     }
 
-    /// The entry under a drag that can spring open: an app with windows, or
-    /// a minimized window's thumbnail.
+    /// The entry under a drag that can spring open: an app with windows,
+    /// a minimized window's thumbnail, or a group of pinned apps.
     fn spring_target(&self) -> Option<String> {
+        if let Some(view) = &self.group_view {
+            if let Ok(Some((id, _))) = view.item_at_cursor() {
+                if !self.windows_of(&id).is_empty() {
+                    return Some(id);
+                }
+            }
+        }
         let entry = self.hovered.and_then(|index| self.entries.get(index))?;
         let id = entry.id.clone()?;
         match entry.role {
             Role::App if !self.windows_of(&id).is_empty() => Some(id),
             Role::Window => Some(id),
+            Role::Group => Some(id),
             _ => None,
         }
     }
@@ -3023,8 +3072,11 @@ impl App {
         self.spring = target;
     }
 
-    /// The drag rested on an app: bring its windows to the front, under the
-    /// pointer, so the drop lands in the app.
+    /// The drag rested on an app, a minimized window, or a group:
+    /// - For a group: unfolds its member apps.
+    /// - For a window: restores it to the front.
+    /// - For an app: brings its windows to the front under the pointer so the drop
+    ///   lands in the app; or cycles to the next window if already foreground.
     fn spring_open(&mut self) -> Result<Option<Outside>> {
         // SAFETY: Our own timer on our own window.
         unsafe {
@@ -3036,22 +3088,67 @@ impl App {
         let Some(id) = self.spring.clone() else {
             return Ok(None);
         };
-        let windows = match self.hovered.and_then(|index| self.entries.get(index)) {
-            Some(entry) if entry.role == Role::Window => window_of(&id).into_iter().collect(),
-            _ => self.windows_of(&id),
-        };
-        if windows.is_empty() || group_is_foreground(&windows, tracker::foreground_window()) {
-            return Ok(None);
+        if let Some(view) = &self.group_view {
+            if let Ok(Some((item_id, _))) = view.item_at_cursor() {
+                if item_id == id {
+                    let windows = self.windows_of(&id);
+                    if windows.is_empty() {
+                        return Ok(None);
+                    }
+                    self.start_bounce(id.clone(), Some(bounce::HOP_SECONDS));
+                    return Ok(self.activating(windows));
+                }
+            }
         }
-        Ok(self.activating(windows))
+        let Some(entry) = self.hovered.and_then(|index| self.entries.get(index)) else {
+            return Ok(None);
+        };
+        match entry.role {
+            Role::Group => {
+                self.start_bounce(id.clone(), Some(bounce::HOP_SECONDS));
+                self.spring_opened_group = true;
+                self.open_group_view(&id)?;
+                Ok(None)
+            }
+            Role::Window => {
+                let Some(hwnd) = window_of(&id) else {
+                    return Ok(None);
+                };
+                self.start_bounce(id.clone(), Some(bounce::HOP_SECONDS));
+                Ok(self.activating(vec![hwnd]))
+            }
+            Role::App => {
+                let windows = self.windows_of(&id);
+                if windows.is_empty() {
+                    return Ok(None);
+                }
+                let foreground = tracker::foreground_window();
+                let target_windows = if group_is_foreground(&windows, foreground) {
+                    if windows.len() <= 1 {
+                        return Ok(None);
+                    }
+                    let pos = windows.iter().position(|&w| w == foreground).unwrap_or(0);
+                    let next = windows[(pos + 1) % windows.len()];
+                    unsafe {
+                        SetTimer(Some(self.input), SPRING_TIMER, SPRING_DELAY_MS, None);
+                    }
+                    vec![next]
+                } else {
+                    windows
+                };
+                self.start_bounce(id.clone(), Some(bounce::HOP_SECONDS));
+                Ok(self.activating(target_windows))
+            }
+            _ => Ok(None),
+        }
     }
 
     fn on_drop(&mut self, point: POINT) -> Result<DROPEFFECT> {
-        self.end_drag_over();
         self.hover_at(point)?;
         let action = self.drop_action();
         let effect = action.effect();
         let files = std::mem::take(&mut self.incoming);
+        self.end_drag_over();
         self.pending_drop = match action {
             DropAction::Nothing => None,
             DropAction::OpenWith(app) => {
@@ -5837,6 +5934,7 @@ pub fn run() -> Result<()> {
             incoming_pin: None,
             drag_over: false,
             spring: None,
+            spring_opened_group: false,
             switching: false,
             switch_started: Instant::now(),
             switch_ended: None,
@@ -6572,5 +6670,29 @@ mod preview_order_tests {
         assert_eq!(order.windows_of(&current, "editor"), vec![4]);
         order.update(&[]);
         assert!(order.0.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod spring_loaded_tests {
+    #[test]
+    fn window_cycling_rotates_through_open_windows() {
+        let windows = vec![101, 102, 103];
+        let foreground = 101;
+        let pos = windows.iter().position(|&w| w == foreground).unwrap();
+        let next = windows[(pos + 1) % windows.len()];
+        assert_eq!(next, 102);
+
+        let pos = windows.iter().position(|&w| w == 103).unwrap();
+        let next = windows[(pos + 1) % windows.len()];
+        assert_eq!(next, 101);
+    }
+
+    #[test]
+    fn single_window_does_not_cycle() {
+        let windows = vec![101];
+        let foreground = 101;
+        let should_cycle = windows.len() > 1 && windows.contains(&foreground);
+        assert!(!should_cycle);
     }
 }

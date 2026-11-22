@@ -21,6 +21,11 @@ copia la sección de la versión que se publica a la release de GitHub.
   on the Windows taskbar, instead of joining the browser's. A pinned web app
   shows the name and icon of its shortcut, and clicking it switches to its open
   window instead of opening another.
+- Spring-loaded drag and drop now opens app groups on hover and allows dropping
+  files onto member apps. Hovering over an app with multiple windows cycles
+  through them while dragging, with tactile icon bounces when a spring action
+  triggers. Files can now be dropped onto pinned `.lnk` shortcuts as well as
+  `.exe` targets.
 
 ### Español
 
@@ -35,6 +40,11 @@ copia la sección de la versión que se publica a la release de GitHub.
   propio icono en el dock, como en la barra de Windows, en vez de unirse al del
   navegador. Una aplicación web anclada muestra el nombre y el icono de su acceso
   directo, y al hacer clic cambia a su ventana abierta en vez de abrir otra.
+- El arrastre con apertura automática ahora despliega grupos de apps al mantener
+  el cursor y permite soltar archivos en sus aplicaciones miembro. Mantener el
+  arrastre sobre una app con varias ventanas alterna entre ellas, con un salto
+  táctil en el icono al activarse. Ahora se pueden soltar archivos en accesos
+  directos `.lnk` fijados además de ejecutables `.exe`.
 
 ## [0.1.19]
 

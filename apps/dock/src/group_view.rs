@@ -19,7 +19,11 @@ use windows::{
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
         Graphics::Dwm::{DWMWA_USE_HOSTBACKDROPBRUSH, DwmSetWindowAttribute},
-        System::{LibraryLoader::GetModuleHandleW, WinRT::Composition::ICompositorDesktopInterop},
+        System::{
+            LibraryLoader::GetModuleHandleW,
+            Ole::{IDropTarget, RegisterDragDrop, RevokeDragDrop},
+            WinRT::Composition::ICompositorDesktopInterop,
+        },
         UI::{
             Input::KeyboardAndMouse::{
                 GetAsyncKeyState, GetCapture, ReleaseCapture, SetCapture, VK_ESCAPE, VK_LBUTTON,
@@ -402,6 +406,11 @@ impl GroupView {
                 None,
             )?
         };
+        let target: IDropTarget = crate::drop::DropTarget.into();
+        // SAFETY: Registering drop target on this window while it lives.
+        unsafe {
+            let _ = RegisterDragDrop(hwnd, &target);
+        }
         let mut view = Self {
             group_id,
             hwnd,
@@ -833,8 +842,9 @@ impl Drop for GroupView {
     fn drop(&mut self) {
         // Release the composition target before the HWND.
         self.target = None;
-        // SAFETY: Our own timer and window, on their thread.
+        // SAFETY: Revoking drop target before destroying the window.
         unsafe {
+            let _ = RevokeDragDrop(self.hwnd);
             let _ = KillTimer(Some(self.hwnd), TIMER);
             let _ = DestroyWindow(self.hwnd);
         }
