@@ -32,11 +32,16 @@ export interface AnatomyGroup {
 export const anatomyIntro = {
   eyebrow: "The Dock",
   title: "Everything in its place.",
-  lead: "Your apps, your files and your open windows, in one glass shelf at the bottom of the screen. Every part of it works like you expect from a Mac.",
+  lead: "Your apps, files and open windows in one glass shelf. Place it along the bottom or either side, and keep only the shortcuts you need.",
 } as const;
 
 export const anatomy: AnatomyGroup[] = [
-  { label: "Start", detail: "The Windows Start menu, always first", side: "top", tiles: [{ kind: "start" }] },
+  {
+    label: "Start",
+    detail: "The Windows Start menu. Optional",
+    side: "top",
+    tiles: [{ kind: "start" }],
+  },
   {
     label: "Pinned apps",
     detail: "Drag to reorder. A dot marks the open ones",
@@ -60,15 +65,20 @@ export const anatomy: AnatomyGroup[] = [
   },
   {
     label: "Downloads",
-    detail: "Drop files straight in",
+    detail: "Drop files in. Right-click to hide",
     side: "bottom",
     divider: true,
     tiles: [{ kind: "app", icon: downloads, label: "Downloads" }],
   },
-  { label: "Minimized", detail: "Optional live thumbnails of minimized windows", side: "top", tiles: [{ kind: "window" }] },
+  {
+    label: "Minimized",
+    detail: "Optional live thumbnails of minimized windows",
+    side: "top",
+    tiles: [{ kind: "window" }],
+  },
   {
     label: "Recycle Bin",
-    detail: "Drop files to delete them",
+    detail: "Drop files to recycle. Optional",
     side: "bottom",
     tiles: [{ kind: "app", icon: recycleBin, label: "Recycle Bin" }],
   },
@@ -79,19 +89,25 @@ export const anatomy: AnatomyGroup[] = [
 export const customizeIntro = {
   eyebrow: "Settings",
   title: "Make it yours.",
-  lead: "A real settings window, in English or Spanish. Try each change here, including optional mouse and headset battery indicators. Accessory monitoring stays off until you enable it.",
+  lead: "Adjust icon size, spacing and animation speed. Choose which shortcuts stay in your Dock, and try the changes in the preview.",
 } as const;
 
 /** The preview dock in the Customize scene. */
-export const previewIcons: ImageMetadata[] = [
-  fileExplorer,
-  microsoftStore,
-  windowsTerminal,
-  microsoftPhotos,
-  settings,
-  downloads,
-  recycleBin,
+export const previewDockItems: {
+  icon: ImageMetadata;
+  fixed?: "pinExplorer" | "showDownloads" | "showTrash";
+}[] = [
+  { icon: fileExplorer, fixed: "pinExplorer" },
+  { icon: microsoftStore },
+  { icon: windowsTerminal },
+  { icon: microsoftPhotos },
+  { icon: settings },
+  { icon: downloads, fixed: "showDownloads" },
+  { icon: recycleBin, fixed: "showTrash" },
 ];
+
+/** Shared decorative docks keep their existing icon list. */
+export const previewIcons: ImageMetadata[] = previewDockItems.map(({ icon }) => icon);
 
 /** Same defaults as the app (`crates/muelle-config`). */
 export const settingsDefaults = {
@@ -102,6 +118,12 @@ export const settingsDefaults = {
   magnifiedSize: 77,
   magnifiedSizeMax: 160,
   autoHide: false,
+  dockDensity: "normal",
+  dockAutoHideSpeed: "normal",
+  showStart: true,
+  showDownloads: true,
+  showTrash: true,
+  pinExplorer: true,
   menuBar: true,
   menuBarAutoHide: false,
   aiUsage: true,
@@ -122,6 +144,21 @@ export const settingsText = {
     menubar: "Menu bar",
     system: "System",
     size: "Size",
+    dockDensity: "Spacing",
+    compact: "Compact",
+    normal: "Normal",
+    spacious: "Spacious",
+    dockAutoHideSpeed: "Animation speed",
+    smooth: "Smooth",
+    fast: "Fast",
+    fixedItems: "Dock shortcuts",
+    fixedItemsHint:
+      "You can also right-click Start, Downloads or Recycle Bin in Muelle and choose Remove from Dock.",
+    showStart: "Show Start",
+    showDownloads: "Show Downloads",
+    showTrash: "Show Recycle Bin",
+    pinExplorer: "Keep File Explorer in the Dock",
+    pinExplorerHint: "When off, it still appears while its windows are open.",
     small: "Small",
     large: "Large",
     magnification: "Magnification",
@@ -134,19 +171,26 @@ export const settingsText = {
     menuBarAutoHide: "Automatically hide and show the menu bar",
     menuBarAutoHideHint: "It reappears when you touch the top edge of the screen.",
     aiUsage: "Show AI provider usage",
-    aiUsageHint: "While a supported AI client is open, an island in the menu bar shows its available plan limits.",
+    aiUsageHint:
+      "While a supported AI client is open, an island in the menu bar shows its available plan limits.",
     accessoryBattery: "Show accessory battery",
-    accessoryBatteryHint: "Battery levels for supported mice and headsets. While off, no accessories are monitored or queried.",
-    accessoryPreviewHint: "Turn this on to preview a connected mouse and headset. The values are examples; device support varies.",
+    accessoryBatteryHint:
+      "Battery levels for supported mice and headsets. While off, no accessories are monitored or queried.",
+    accessoryPreviewHint:
+      "Turn this on to preview a connected mouse and headset. The values are examples; device support varies.",
     genie: "Genie effect",
-    genieHint: "While it is on, windows do not use the Windows animations for maximizing or closing.",
+    genieHint:
+      "While it is on, windows do not use the Windows animations for maximizing or closing.",
     showMinimized: "Show minimized windows",
-    showMinimizedHint: "As thumbnails on the right side of the Dock, instead of inside their app's icon.",
+    showMinimizedHint:
+      "As thumbnails on the right side of the Dock, instead of inside their app's icon.",
     autostart: "Open Muelle at login",
     mascot: "Crab on special moments",
-    mascotHint: "A pixel crab comes out when an AI plan resets or runs out, when you plug in the charger, or when energy saver starts. Hover over it.",
+    mascotHint:
+      "A pixel crab comes out when an AI plan resets or runs out, when you plug in the charger, or when energy saver starts. Hover over it.",
     autoUpdate: "Install updates automatically",
-    autoUpdateHint: "Once a day, a couple of minutes after you turn on the computer (or every 24 hours if it stays on), Muelle installs new versions by itself.",
+    autoUpdateHint:
+      "Once a day, a couple of minutes after you turn on the computer (or every 24 hours if it stays on), Muelle installs new versions by itself.",
     language: "Language",
     languageAuto: "Automatic",
     updates: "Updates",
@@ -161,6 +205,21 @@ export const settingsText = {
     menubar: "Barra superior",
     system: "Sistema",
     size: "Tamaño",
+    dockDensity: "Espaciado",
+    compact: "Compacto",
+    normal: "Normal",
+    spacious: "Amplio",
+    dockAutoHideSpeed: "Velocidad de la animación",
+    smooth: "Suave",
+    fast: "Rápida",
+    fixedItems: "Accesos del Dock",
+    fixedItemsHint:
+      "También puedes hacer clic derecho en Inicio, Descargas o Papelera en Muelle y elegir Quitar del Dock.",
+    showStart: "Mostrar Inicio",
+    showDownloads: "Mostrar Descargas",
+    showTrash: "Mostrar Papelera",
+    pinExplorer: "Mantener Explorador en el Dock",
+    pinExplorerHint: "Desactivado, sigue apareciendo mientras tenga ventanas abiertas.",
     small: "Pequeño",
     large: "Grande",
     magnification: "Ampliación",
@@ -173,19 +232,26 @@ export const settingsText = {
     menuBarAutoHide: "Ocultar y mostrar la barra superior automáticamente",
     menuBarAutoHideHint: "Reaparece al tocar el borde superior de la pantalla.",
     aiUsage: "Mostrar uso de proveedores de IA",
-    aiUsageHint: "Mientras un cliente de IA compatible está abierto, una isla en la barra superior muestra sus límites disponibles.",
+    aiUsageHint:
+      "Mientras un cliente de IA compatible está abierto, una isla en la barra superior muestra sus límites disponibles.",
     accessoryBattery: "Mostrar batería de accesorios",
-    accessoryBatteryHint: "Batería de ratones y auriculares compatibles. Desactivado, no detecta ni consulta accesorios.",
-    accessoryPreviewHint: "Actívalo para ver un ratón y unos auriculares conectados. Los valores son ejemplos; la compatibilidad depende del dispositivo.",
+    accessoryBatteryHint:
+      "Batería de ratones y auriculares compatibles. Desactivado, no detecta ni consulta accesorios.",
+    accessoryPreviewHint:
+      "Actívalo para ver un ratón y unos auriculares conectados. Los valores son ejemplos; la compatibilidad depende del dispositivo.",
     genie: "Efecto genio",
-    genieHint: "Mientras está activo, las ventanas no usan las animaciones de Windows al maximizar ni al cerrar.",
+    genieHint:
+      "Mientras está activo, las ventanas no usan las animaciones de Windows al maximizar ni al cerrar.",
     showMinimized: "Mostrar ventanas minimizadas",
-    showMinimizedHint: "Como miniaturas a la derecha del Dock, en lugar de dentro del icono de su app.",
+    showMinimizedHint:
+      "Como miniaturas a la derecha del Dock, en lugar de dentro del icono de su app.",
     autostart: "Abrir Muelle al iniciar sesión",
     mascot: "Cangrejo en momentos especiales",
-    mascotHint: "Un cangrejo pixelado aparece cuando un plan de IA se reinicia o se agota, al enchufar el cargador o al activarse el ahorro de energía. Pasa el puntero por encima.",
+    mascotHint:
+      "Un cangrejo pixelado aparece cuando un plan de IA se reinicia o se agota, al enchufar el cargador o al activarse el ahorro de energía. Pasa el puntero por encima.",
     autoUpdate: "Instalar actualizaciones automáticamente",
-    autoUpdateHint: "Una vez al día, un par de minutos después de encender el ordenador (o cada 24 horas si sigue encendido), Muelle instala las versiones nuevas por sí solo.",
+    autoUpdateHint:
+      "Una vez al día, un par de minutos después de encender el ordenador (o cada 24 horas si sigue encendido), Muelle instala las versiones nuevas por sí solo.",
     language: "Idioma",
     languageAuto: "Automático",
     updates: "Actualizaciones",
@@ -206,12 +272,27 @@ export const safetyIntro = {
 } as const;
 
 /** The taskbar shown when Muelle is off. */
-export const taskbarIcons: ImageMetadata[] = [fileExplorer, microsoftStore, windowsTerminal, microsoftPhotos, settings];
+export const taskbarIcons: ImageMetadata[] = [
+  fileExplorer,
+  microsoftStore,
+  windowsTerminal,
+  microsoftPhotos,
+  settings,
+];
 
 export const safetyFacts = [
-  { title: "Quit any time", body: "Right-click the dock and choose Quit Muelle. The taskbar is back at once." },
-  { title: "Even if it stops", body: "A tiny guardian process watches the dock and restores the taskbar if it ever stops." },
-  { title: "Uninstall cleanly", body: "Windows Settings → Apps → Muelle. Windows is left exactly as it was." },
+  {
+    title: "Quit any time",
+    body: "Right-click the dock and choose Quit Muelle. The taskbar is back at once.",
+  },
+  {
+    title: "Even if it stops",
+    body: "A tiny guardian process watches the dock and restores the taskbar if it ever stops.",
+  },
+  {
+    title: "Uninstall cleanly",
+    body: "Windows Settings → Apps → Muelle. Windows is left exactly as it was.",
+  },
 ] as const;
 
 /* --------------------------------------------------------------- Download */
@@ -229,7 +310,10 @@ export const download = {
   releases: "All versions on GitHub",
   steps: [
     { title: "Open the installer", body: "Per user. No admin rights, no wizard." },
-    { title: "If SmartScreen asks", body: "Muelle is new, so Windows may not know it yet: More info → Run anyway." },
+    {
+      title: "If SmartScreen asks",
+      body: "Muelle is new, so Windows may not know it yet: More info → Run anyway.",
+    },
     { title: "That's it", body: "The dock appears and starts with Windows from now on." },
   ],
   source: {

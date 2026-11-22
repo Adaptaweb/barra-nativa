@@ -431,6 +431,36 @@
   display: none;
 }
 
+.mac-select {
+  max-width: 48%;
+  padding: 4px 8px;
+  border: 1px solid var(--mac-hairline);
+  border-radius: 6px;
+  background: var(--mac-segment);
+  color: inherit;
+  font: inherit;
+}
+
+.mac-select option {
+  background: var(--mac-window);
+}
+
+.settings-details summary {
+  padding: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-details[open] summary {
+  border-bottom: 1px solid var(--mac-hairline);
+}
+
+.settings-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--mac-hairline);
+}
+
 .settings-text {
   display: grid;
   gap: 2px;
@@ -496,6 +526,8 @@
 .mac-button:focus-visible,
 .mac-seg button:focus-visible,
 .mac-range:focus-visible,
+.mac-select:focus-visible,
+.settings-details summary:focus-visible,
 .settings-nav button:focus-visible {
   outline: 2px solid var(--mac-accent);
   outline-offset: 2px;
@@ -633,12 +665,20 @@
 /* This desk is a miniature: keep status readings clear when there is no room
    for the optional centre island, just as in the hero's mobile preview. */
 @container (min-width: 441px) and (max-width: 640px) {
-  .preview-bar.has-accessories [data-date] { display: none; }
-  .preview-bar.has-accessories .preview-island { left: 42%; }
+  .preview-bar.has-accessories [data-date] {
+    display: none;
+  }
+  .preview-bar.has-accessories .preview-island {
+    left: 42%;
+  }
 }
 @container (max-width: 440px) {
-  .preview-island { display: none; }
-  .preview-bar [data-date] { display: none; }
+  .preview-island {
+    display: none;
+  }
+  .preview-bar [data-date] {
+    display: none;
+  }
 }
 
 .preview-dock {
@@ -657,20 +697,34 @@
   background: rgb(255 255 255 / 0.22);
   backdrop-filter: blur(20px) saturate(170%);
   box-shadow: 0 12px 30px rgb(0 0 0 / 0.25);
-  transition: translate 0.32s ease;
+  transition: translate var(--dock-slide-duration, 0.32s) ease;
 }
 
 .preview-dock.is-hidden {
   translate: -50% calc(100% + 14px);
 }
 
-.preview-dock img {
+.preview-dock [data-preview-icon] {
   display: block;
   flex: none;
   /* The JS sets each size; this only smooths it. */
   transition:
     width 0.12s ease-out,
     height 0.12s ease-out;
+}
+
+.preview-dock [data-preview-icon][hidden] {
+  display: none;
+}
+.preview-dock .preview-start {
+  display: grid;
+  place-items: center;
+  border-radius: 22%;
+  background: linear-gradient(160deg, #3c9bff, #0062d1);
+}
+.preview-start svg {
+  width: 55%;
+  fill: #fff;
 }
 
 /* ------------------------------------------------------------- Reversible */
@@ -1068,7 +1122,7 @@
   .mac-switch i,
   .preview-bar,
   .preview-dock,
-  .preview-dock img,
+  .preview-dock [data-preview-icon],
   .flip-menubar,
   .flip-dock,
   .flip-taskbar {
