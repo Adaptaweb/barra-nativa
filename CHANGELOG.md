@@ -34,6 +34,8 @@ copia la sección de la versión que se publica a la release de GitHub.
   windows have closed.
 - New setting in Settings → Windows: "Show close button on previews" (on by default).
 - Added macOS-style traffic light symbols (close ✕, minimize −, and zoom opposing diagonal expand triangles) to the Settings window controls, smoothly revealed upon hovering the buttons.
+- Notification banners now trigger automatically when desktop applications (such as WhatsApp, Slack, Telegram, or Discord) request attention in the background, smoothly displaying macOS glass banners with click-to-activate.
+- Suppressed redundant native Windows toast rectangular popups while Muelle is running, restoring Windows toast settings on exit.
 
 ### Español
 
@@ -65,6 +67,8 @@ copia la sección de la versión que se publica a la release de GitHub.
 - Nuevo ajuste en Ajustes → Ventanas: «Mostrar botón de cerrar en previsualizaciones»
   (activado por defecto).
 - Incorporados símbolos estilo macOS en los botones de semáforo de la ventana de Ajustes (cerrar ✕, minimizar − y ampliar con triángulos opuestos en diagonal), mostrados con suavidad al posar el cursor.
+- Las alertas en banners ahora se activan automáticamente cuando las aplicaciones de escritorio (como WhatsApp, Slack, Telegram o Discord) solicitan atención en segundo plano, mostrando banners de cristal estilo macOS que se activan al hacer clic.
+- Supresión de los avisos rectangulares nativos de Windows mientras Muelle está en ejecución, restaurando el ajuste de Windows al salir.
 
 ## [0.1.18]
 
