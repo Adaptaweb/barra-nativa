@@ -5,6 +5,8 @@ export type NotificationPosition = "top-right" | "bottom-right";
 export type IslandStyle = "notch" | "bubble";
 export type GenieSpeed = "normal" | "fast" | "faster";
 export type DockPosition = "left" | "bottom" | "right";
+export type DockDensity = "compact" | "normal" | "spacious";
+export type DockAutoHideSpeed = "smooth" | "normal" | "fast";
 
 /** Mirrors `muelle_config::Config`. */
 export interface Config {
@@ -16,10 +18,17 @@ export interface Config {
   magnification: boolean;
   magnifiedSize: number;
   dockPosition: DockPosition;
+  dockDensity: DockDensity;
+  dockAutoHideSpeed: DockAutoHideSpeed;
+  showStart: boolean;
+  showTrash: boolean;
+  showDownloads: boolean;
+  pinExplorer: boolean;
   genie: boolean;
   genieSpeed: GenieSpeed;
   showMinimized: boolean;
   showPreviewCloseButton: boolean;
+  jumpLists: boolean;
   menuBar: boolean;
   menuBarAutoHide: boolean;
   aiUsage: boolean;

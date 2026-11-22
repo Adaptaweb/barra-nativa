@@ -52,17 +52,17 @@ export const usageProviders: UsageProvider[] = [
 export const usageIntro = {
   eyebrow: "AI usage",
   title: "AI plan usage, at a glance.",
-  lead: "Muelle shows available limits for Claude Code, Codex, OpenCode Go, and Gemini CLI or Antigravity. Gemini Pro and Flash quotas appear separately when available.",
+  lead: "Available quotas and reset times for Claude Code, Codex, OpenCode Go, Gemini / Antigravity and Z.ai GLM Coding Plan, in the menu bar.",
 } as const;
 
 export const usageFacts = [
   {
     title: "Only while you use them",
-    body: "The island recognizes four clients: Claude Code, Codex, OpenCode Go, and Gemini CLI or Antigravity.",
+    body: "Providers appear while a supported client is running. Z.ai works with OpenCode and your configured Coding Plan key.",
   },
   {
     title: "Your existing session",
-    body: "Muelle reuses the sign-in those tools already keep on your PC. Gemini Pro and Flash are shown as separate model families when the provider supplies those quotas.",
+    body: "Muelle uses the sign-in or Coding Plan key already configured on your PC. Gemini Pro and Flash stay separate when those quotas are available.",
   },
   {
     title: "Straight to the provider",

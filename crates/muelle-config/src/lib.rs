@@ -59,6 +59,13 @@ pub struct Config {
     /// The screen edge the dock sits on. Bottom by default, as on macOS;
     /// never the top, which belongs to the menu bar.
     pub dock_position: DockPosition,
+    pub dock_density: DockDensity,
+    pub dock_auto_hide_speed: DockAutoHideSpeed,
+    pub show_start: bool,
+    pub show_trash: bool,
+    pub show_downloads: bool,
+    /// Keep Explorer pinned; otherwise it appears only while its windows are open.
+    pub pin_explorer: bool,
     /// Genie effect when minimizing. On by default; while enabled, the dock
     /// turns off the system's own window transitions (see plan, "Efecto genio").
     pub genie: bool,
@@ -67,6 +74,10 @@ pub struct Config {
     /// Minimized windows get a live thumbnail in the right section of the
     /// dock. Off by default: they go into their app's icon instead.
     pub show_minimized: bool,
+    /// An app's right-click menu starts with its jump list (pinned and recent
+    /// items, tasks), as on the Windows taskbar. Off, the menu has only the
+    /// dock's own items and no jump list is read.
+    pub jump_lists: bool,
     /// macOS-style bar across the top with the clock and status items.
     pub menu_bar: bool,
     /// Keep the menu bar off screen until the pointer touches the top edge.
@@ -173,6 +184,50 @@ pub enum GenieSpeed {
     Normal,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockDensity {
+    Compact,
+    Spacious,
+    #[default]
+    #[serde(other)]
+    Normal,
+}
+
+impl DockDensity {
+    /// Icon spacing and inner padding, in logical pixels, independent of icon size.
+    #[must_use]
+    pub const fn spacing(self) -> (f32, f32) {
+        match self {
+            Self::Compact => (8.0, 6.0),
+            Self::Normal => (12.0, 9.0),
+            Self::Spacious => (16.0, 12.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockAutoHideSpeed {
+    Smooth,
+    Fast,
+    #[default]
+    #[serde(other)]
+    Normal,
+}
+
+impl DockAutoHideSpeed {
+    /// Frequency of the existing critically damped slide spring; dwell is unchanged.
+    #[must_use]
+    pub const fn omega(self) -> f32 {
+        match self {
+            Self::Smooth => 16.0,
+            Self::Normal => 24.0,
+            Self::Fast => 36.0,
+        }
+    }
+}
+
 impl GenieSpeed {
     /// How long one genie flight lasts, minimizing or restoring.
     #[must_use]
@@ -252,10 +307,17 @@ impl Default for Config {
             icon_size: 48,
             magnification: true,
             dock_position: DockPosition::Bottom,
+            dock_density: DockDensity::Normal,
+            dock_auto_hide_speed: DockAutoHideSpeed::Normal,
+            show_start: true,
+            show_trash: true,
+            show_downloads: true,
+            pin_explorer: true,
             magnified_size: 77,
             genie: true,
             genie_speed: GenieSpeed::Normal,
             show_minimized: false,
+            jump_lists: true,
             menu_bar: true,
             menu_bar_auto_hide: false,
             ai_usage: true,
@@ -417,6 +479,45 @@ fn write_config(path: &Path, config: &Config) -> Result<(), ConfigError> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn older_configs_keep_the_original_dock_defaults() -> Result<(), serde_json::Error> {
+        let config: Config = serde_json::from_str(r#"{"iconSize":64}"#)?;
+        assert!(
+            config.show_start && config.show_trash && config.show_downloads && config.pin_explorer
+        );
+        assert_eq!(config.dock_density.spacing(), (12.0, 9.0));
+        assert_eq!(config.dock_auto_hide_speed.omega(), 24.0);
+        Ok(())
+    }
+
+    #[test]
+    fn dock_preferences_round_trip_and_unknown_presets_fall_back() -> Result<(), serde_json::Error>
+    {
+        let config: Config = serde_json::from_str(
+            r#"{
+            "showStart":false,"showTrash":false,"showDownloads":false,"pinExplorer":false,
+            "dockDensity":"compact","dockAutoHideSpeed":"fast"
+        }"#,
+        )?;
+        assert!(
+            !config.show_start
+                && !config.show_trash
+                && !config.show_downloads
+                && !config.pin_explorer
+        );
+        assert_eq!(config.dock_density.spacing(), (8.0, 6.0));
+        assert_eq!(config.dock_auto_hide_speed.omega(), 36.0);
+        assert_eq!(
+            serde_json::from_str::<Config>(&serde_json::to_string(&config)?)?,
+            config
+        );
+        let unknown: Config =
+            serde_json::from_str(r#"{"dockDensity":"future","dockAutoHideSpeed":"future"}"#)?;
+        assert_eq!(unknown.dock_density, DockDensity::Normal);
+        assert_eq!(unknown.dock_auto_hide_speed, DockAutoHideSpeed::Normal);
+        Ok(())
+    }
+
     fn scratch(name: &str) -> PathBuf {
         let folder = env::temp_dir().join(format!("muelle-test-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&folder);
@@ -541,6 +642,7 @@ mod tests {
         assert!(config.menu_bar_music);
         assert!(!config.accessory_battery);
         assert!(!config.show_minimized);
+        assert!(config.jump_lists);
     }
 
     #[test]

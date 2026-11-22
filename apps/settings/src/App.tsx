@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Config,
   type DockPosition,
+  type DockDensity,
+  type DockAutoHideSpeed,
   type GenieSpeed,
   type IslandStyle,
   type Language,
@@ -80,18 +82,6 @@ export function App() {
   const [windowsPreferences, setWindowsPreferences] = useState<WindowsPreferences | null>(null);
   // Keep the animation notice from flashing while the initial system read is pending.
   const animations = windowsPreferences?.animations ?? true;
-  useEffect(() => {
-    let alive = true;
-    const check = () => {
-      loadWindowsPreferences()
-        .then((values) => { if (alive) setWindowsPreferences(values); })
-        .catch(() => {});
-    };
-    check();
-    // One shared focus listener, with no polling while Settings is idle or closed.
-    window.addEventListener("focus", check);
-    return () => { alive = false; window.removeEventListener("focus", check); };
-  }, []);
   const [section, setSection] = useState<SectionId>("dock");
   const [failed, setFailed] = useState(false);
   const [version, setVersion] = useState("");
@@ -136,6 +126,27 @@ export function App() {
 
   useEffect(() => {
     let alive = true;
+    let focusRead = 0;
+    const readWindowsPreferences = () => {
+      loadWindowsPreferences()
+        .then((values) => { if (alive) setWindowsPreferences(values); })
+        .catch(() => {});
+    };
+    const refreshOnFocus = async () => {
+      const read = ++focusRead;
+      readWindowsPreferences();
+      const queued = flushSettings();
+      if (!await queued || !alive || pending.current || writes.current !== queued) return;
+      const loaded = await loadConfig();
+      // A dock menu may have hidden an item. Never replace a newer local edit
+      // or a newer focus read with an older snapshot from the native bridge.
+      if (alive && read === focusRead && !pending.current && writes.current === queued) {
+        setConfig(loaded);
+      }
+    };
+    const onFocus = () => { void refreshOnFocus().catch(() => {}); };
+    readWindowsPreferences();
+    window.addEventListener("focus", onFocus);
     Promise.all([loadConfig(), getAutostart()])
       .then(([loaded, starts]) => {
         if (!alive) return;
@@ -178,6 +189,7 @@ export function App() {
     });
     return () => {
       alive = false;
+      window.removeEventListener("focus", onFocus);
       window.clearTimeout(timer.current);
       window.clearTimeout(resetTimer.current);
       progress.then((unlisten) => unlisten()).catch(() => {});
@@ -370,6 +382,16 @@ export function App() {
                     onChange={(iconSize) => update({ iconSize })}
                   />
                 </Row>
+                <VisualChoices<DockDensity>
+                  label={t.dockDensity}
+                  value={config.dockDensity ?? "normal"}
+                  options={[
+                    { value: "compact", label: t.dockDensityCompact, preview: <DockPreview position="bottom" iconSize={48} density="compact" wallpaper={wallpaper} /> },
+                    { value: "normal", label: t.dockDensityNormal, preview: <DockPreview position="bottom" iconSize={48} density="normal" wallpaper={wallpaper} /> },
+                    { value: "spacious", label: t.dockDensitySpacious, preview: <DockPreview position="bottom" iconSize={48} density="spacious" wallpaper={wallpaper} /> },
+                  ]}
+                  onChange={(dockDensity) => update({ dockDensity })}
+                />
                 <Row icon={<SettingIcon name="magnification" />} label={t.magnification} hint={t.magnificationHint}>
                   <Toggle
                     label={t.magnification}
@@ -387,6 +409,20 @@ export function App() {
                   />
                 </SubRow>
               </Card>
+              <Card title={t.dockItems}>
+                <Row label={t.showStart}>
+                  <Toggle label={t.showStart} checked={config.showStart ?? true} onChange={(showStart) => update({ showStart })} />
+                </Row>
+                <Row label={t.pinExplorer} hint={t.pinExplorerHint}>
+                  <Toggle label={t.pinExplorer} checked={config.pinExplorer ?? true} onChange={(pinExplorer) => update({ pinExplorer })} />
+                </Row>
+                <Row label={t.showDownloads}>
+                  <Toggle label={t.showDownloads} checked={config.showDownloads ?? true} onChange={(showDownloads) => update({ showDownloads })} />
+                </Row>
+                <Row label={t.showTrash}>
+                  <Toggle label={t.showTrash} checked={config.showTrash ?? true} onChange={(showTrash) => update({ showTrash })} />
+                </Row>
+              </Card>
               <Card title={t.groupBehavior}>
                 <Row icon={<SettingIcon name="hide" />} label={t.autoHide} hint={t.autoHideHint}>
                   <Toggle
@@ -395,6 +431,18 @@ export function App() {
                     onChange={(autoHide) => update({ autoHide })}
                   />
                 </Row>
+                <SubRow label={t.dockAutoHideSpeed} open={config.autoHide}>
+                  <Segmented<DockAutoHideSpeed>
+                    label={t.dockAutoHideSpeed}
+                    value={config.dockAutoHideSpeed ?? "normal"}
+                    options={[
+                      { value: "smooth", label: t.dockAutoHideSmooth },
+                      { value: "normal", label: t.dockDensityNormal },
+                      { value: "fast", label: t.genieSpeedFast },
+                    ]}
+                    onChange={(dockAutoHideSpeed) => update({ dockAutoHideSpeed })}
+                  />
+                </SubRow>
                 <Row icon={<SettingIcon name="bounce" />} label={t.bounceOnOpen}>
                   <Toggle
                     label={t.bounceOnOpen}
@@ -421,6 +469,13 @@ export function App() {
                     label={t.showRecents}
                     checked={config.showRecents}
                     onChange={(showRecents) => update({ showRecents })}
+                  />
+                </Row>
+                <Row icon={<SettingIcon name="jumpList" />} label={t.jumpLists} hint={t.jumpListsHint}>
+                  <Toggle
+                    label={t.jumpLists}
+                    checked={config.jumpLists}
+                    onChange={(jumpLists) => update({ jumpLists })}
                   />
                 </Row>
               </Card>

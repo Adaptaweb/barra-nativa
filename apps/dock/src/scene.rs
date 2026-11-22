@@ -205,8 +205,6 @@ pub struct SlotContent<'a> {
     pub running: bool,
     /// App icon shown in the corner of a minimized-window thumbnail.
     pub badge: Option<&'a CompositionSurfaceBrush>,
-    /// Red notification count badge in the top-right corner.
-    pub notify_badge: Option<&'a LabelBrush>,
 }
 
 pub struct SceneInput<'a> {
@@ -321,6 +319,115 @@ mod attention_tests {
                 assert!(badge.width > 0.0);
             }
         }
+    }
+
+    #[test]
+    #[ignore = "Requires Windows desktop composition; creates no visible window"]
+    fn notification_count_replaces_attention_and_updates_without_rebuilding() -> Result<()> {
+        use anyhow::Context;
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for light in [false, true] {
+                let layout = layout(
+                    &[ItemKind::Icon, ItemKind::Icon],
+                    &Metrics::DEFAULT.scaled(scale),
+                );
+                let mut scene = Scene::build(
+                    &gfx,
+                    &SceneInput {
+                        layout: &layout,
+                        contents: &[SlotContent::default(); 2],
+                        theme: Theme::for_system(light, true),
+                        scale,
+                        frame: DockFrame::new(DockEdge::Bottom, (0.0, 0.0), layout.height),
+                        remove_label: None,
+                    },
+                )?;
+                let root = scene.root.clone();
+                scene.set_attention(&gfx, [true, true].into_iter())?;
+                let attention = scene.attention[0]
+                    .as_ref()
+                    .context("attention")?
+                    .visual
+                    .clone();
+                scene.set_notification_counts(&gfx, [1, 0].into_iter())?;
+                scene.set_attention(&gfx, [true, true].into_iter())?;
+                let state = magnify(
+                    &layout,
+                    0.0,
+                    0.0,
+                    &Magnifier {
+                        range: 144.0 * scale,
+                        max_scale: 1.6,
+                    },
+                );
+                scene.apply(&Frame {
+                    state: &state,
+                    hovered: None,
+                    lifts: &[0.0, 0.0],
+                    drag: None,
+                    target: None,
+                    slide: 0.0,
+                    snap: true,
+                })?;
+                assert!(!attention.IsVisible()?);
+                assert!(
+                    scene.attention[1]
+                        .as_ref()
+                        .context("other app attention")?
+                        .visual
+                        .IsVisible()?
+                );
+                let first = scene.notify_badges[0]
+                    .as_ref()
+                    .context("unread count")?
+                    .visual
+                    .clone();
+                assert!(first.IsVisible()?);
+                scene.set_notification_counts(&gfx, [1, 0].into_iter())?;
+                assert_eq!(
+                    scene.notify_badges[0]
+                        .as_ref()
+                        .context("unchanged count")?
+                        .visual,
+                    first
+                );
+                scene.set_notification_counts(&gfx, [2, 0].into_iter())?;
+                assert_ne!(
+                    scene.notify_badges[0]
+                        .as_ref()
+                        .context("updated count")?
+                        .visual,
+                    first
+                );
+                scene.set_notification_counts(&gfx, [0, 0].into_iter())?;
+                scene.set_attention(&gfx, [true, true].into_iter())?;
+                assert!(scene.notify_badges[0].is_none());
+                assert!(attention.IsVisible()?);
+                scene.set_attention(&gfx, [false, true].into_iter())?;
+                assert!(!attention.IsVisible()?);
+                assert!(
+                    scene.attention[1]
+                        .as_ref()
+                        .context("unrelated attention")?
+                        .visual
+                        .IsVisible()?
+                );
+                assert_eq!(scene.root, root);
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -476,6 +583,7 @@ pub struct Scene {
     slots: Vec<SpriteVisual>,
     badges: Vec<Option<SpriteVisual>>,
     notify_badges: Vec<Option<Label>>,
+    notify_counts: Vec<usize>,
     attention: Vec<Option<AttentionBadge>>,
     attention_theme: Theme,
     scale: f32,
@@ -563,7 +671,6 @@ impl Scene {
 
         let mut slots = Vec::with_capacity(layout.slots.len());
         let mut badges = Vec::with_capacity(layout.slots.len());
-        let mut notify_badges = Vec::with_capacity(layout.slots.len());
         let mut indicators = Vec::with_capacity(layout.slots.len());
         let mut labels = Vec::with_capacity(layout.slots.len());
         for (slot, item) in layout.slots.iter().zip(input.contents) {
@@ -587,8 +694,6 @@ impl Scene {
                 None => None,
             });
 
-            notify_badges.push(item.notify_badge.map(|b| Label::new(c, b)).transpose()?);
-
             indicators.push(if item.running {
                 let shape = c.CreateSpriteShapeWithGeometry(&dot)?;
                 shape.SetFillBrush(&dot_brush)?;
@@ -608,9 +713,6 @@ impl Scene {
             .remove_label
             .map(|label| Label::new(c, label))
             .transpose()?;
-        for nb in notify_badges.iter().flatten() {
-            children.InsertAtTop(&nb.visual)?;
-        }
         for label in labels.iter().flatten().chain(&remove_label) {
             children.InsertAtTop(&label.visual)?;
         }
@@ -634,7 +736,8 @@ impl Scene {
             raised: Cell::new(None),
             slots,
             badges,
-            notify_badges,
+            notify_badges: (0..layout.slots.len()).map(|_| None).collect(),
+            notify_counts: vec![0; layout.slots.len()],
             attention: (0..layout.slots.len()).map(|_| None).collect(),
             attention_theme: theme,
             scale,
@@ -644,10 +747,55 @@ impl Scene {
         })
     }
 
+    /// Updates only changed counts. Notifications never rebuild the dock or
+    /// close its window picker; unchanged counts allocate no graphics objects.
+    pub fn set_notification_counts(
+        &mut self,
+        gfx: &Gfx,
+        counts: impl Iterator<Item = usize>,
+    ) -> Result<()> {
+        for ((label, previous), count) in self
+            .notify_badges
+            .iter_mut()
+            .zip(&mut self.notify_counts)
+            .zip(counts)
+        {
+            let count = count.min(100); // The displayed label is capped at 99+.
+            if *previous == count {
+                continue;
+            }
+            let next = if count == 0 {
+                None
+            } else {
+                Some(Label::new(
+                    &gfx.compositor,
+                    &gfx.notification_badge_brush(count, self.scale)?,
+                )?)
+            };
+            let children = self.content.Children()?;
+            if let Some(old) = label.as_ref() {
+                children.Remove(&old.visual)?;
+            }
+            if let Some(next) = &next {
+                children.InsertAtTop(&next.visual)?;
+            }
+            *label = next;
+            *previous = count;
+        }
+        Ok(())
+    }
+
     /// Changes only badge visuals: notifications never rebuild the layout or
     /// close an open window picker. Repeated events reuse the same visual.
     pub fn set_attention(&mut self, gfx: &Gfx, pending: impl Iterator<Item = bool>) -> Result<()> {
-        for (notice, on) in self.attention.iter_mut().zip(pending) {
+        for ((notice, count), on) in self
+            .attention
+            .iter_mut()
+            .zip(&self.notify_badges)
+            .zip(pending)
+        {
+            // A real unread count takes precedence over the generic shell alert.
+            let on = on && count.is_none();
             if on && notice.is_none() {
                 let badge = AttentionBadge::new(gfx, self.attention_theme)?;
                 self.content.Children()?.InsertAtTop(&badge.visual)?;

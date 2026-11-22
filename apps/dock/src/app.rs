@@ -22,7 +22,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use muelle_config::{Config, DockGroup, DockPosition};
+use muelle_config::{Config, DockDensity, DockGroup, DockPosition};
 use muelle_core::{
     attention::Attention,
     bounce,
@@ -37,7 +37,7 @@ use muelle_shell::{
     end_task::PreparedEndTask,
     files,
     icons::IconImage,
-    launcher,
+    jumplist, launcher,
     pins::{self, app_exists, taskbar_pins, taskbar_pins_if_readable},
     power,
     recycle_bin::{self, BinWatch},
@@ -74,19 +74,20 @@ use windows::{
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DispatchMessageW, EVENT_OBJECT_CLOAKED,
-                EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND,
-                EVENT_SYSTEM_MINIMIZESTART, FindWindowW, GetCursorPos, GetMessageW,
-                GetSystemMetrics, HMENU, HWND_TOPMOST, IDC_ARROW, KillTimer, LoadCursorW,
-                MA_ACTIVATE, MA_NOACTIVATE, MSG, OBJID_WINDOW, PM_REMOVE, PeekMessageW,
-                PostMessageW, PostQuitMessage, RegisterClassW, RegisterShellHookWindow,
-                RegisterWindowMessageW, SM_CXDRAG, SM_SWAPBUTTON, SWP_HIDEWINDOW, SWP_NOACTIVATE,
-                SWP_SHOWWINDOW, SetTimer, SetWindowPos, WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT,
-                WINEVENT_SKIPOWNPROCESS, WM_APP, WM_CAPTURECHANGED, WM_CLOSE, WM_COPYDATA,
-                WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN,
-                WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-                WM_QUIT, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
-                WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-                WS_EX_TRANSPARENT, WS_POPUP,
+                EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND,
+                EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, FindWindowW, GetCursorPos,
+                GetMessageW, GetSystemMetrics, HMENU, HWND_TOPMOST, IDC_ARROW, KillTimer,
+                LoadCursorW, MA_ACTIVATE, MA_NOACTIVATE, MSG, OBJID_WINDOW, PM_REMOVE,
+                PeekMessageW, PostMessageW, PostQuitMessage, RegisterClassW,
+                RegisterShellHookWindow, RegisterWindowMessageW, SM_CXDRAG, SM_SWAPBUTTON,
+                SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetTimer, SetWindowPos,
+                WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP,
+                WM_CAPTURECHANGED, WM_CLOSE, WM_COPYDATA, WM_DESTROY, WM_DISPLAYCHANGE,
+                WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+                WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_QUIT, WM_RBUTTONUP,
+                WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+                WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+                WS_POPUP,
             },
         },
     },
@@ -242,8 +243,6 @@ const ASSETS_DELAY_MS: u32 = 16;
 const DRAG_TIMER: usize = 16;
 const DRAG_POLL_MS: u32 = 16;
 
-/// Auto-hide slide speed (about 250 ms).
-const SLIDE_OMEGA: f32 = 24.0;
 /// Screen-edge strip that reveals a hidden dock, in physical pixels.
 const REVEAL_STRIP: i32 = 2;
 /// An icon released this far above the magnified dock, in icon heights, leaves it.
@@ -281,7 +280,10 @@ const CMD_UNGROUP: u32 = 15;
 const CMD_REMOVE_FOLDER: u32 = 16;
 const CMD_FORGET_RECENT: u32 = 17;
 const CMD_END_TASK: u32 = 18;
+const CMD_HIDE_FIXED: u32 = 19;
 const CMD_WINDOW: u32 = 100;
+/// Jump list entries start here, after any window command.
+const CMD_JUMP: u32 = 1000;
 const MENU_WINDOWS: usize = 12;
 const MENU_TITLE_CHARS: usize = 60;
 
@@ -296,6 +298,7 @@ static DROP_WINDOW: AtomicIsize = AtomicIsize::new(0);
 static MINIMIZE_HOOK: AtomicIsize = AtomicIsize::new(0);
 static CLOAK_HOOK: AtomicIsize = AtomicIsize::new(0);
 static FOREGROUND_HOOK: AtomicIsize = AtomicIsize::new(0);
+static LOCATION_HOOK: AtomicIsize = AtomicIsize::new(0);
 /// The window in front before the Alt+Tab switcher opened.
 static LAST_FRONT: AtomicIsize = AtomicIsize::new(0);
 
@@ -443,6 +446,11 @@ pub(crate) enum Outside {
     OpenAsAdmin(String),
     /// Unpin from the Windows taskbar too (see `pins::unpin_from_taskbar`).
     UnpinFromTaskbar(String),
+    /// An entry of the jump list of the app `program`.
+    OpenJump {
+        target: jumplist::Target,
+        program: String,
+    },
     ShowDesktop,
 }
 
@@ -492,6 +500,8 @@ enum MenuTarget {
         role: Role,
         windows: Vec<isize>,
         end_task: Option<PreparedEndTask>,
+        /// What each jump list command opens, from `CMD_JUMP` on.
+        jump: Vec<jumplist::Target>,
     },
     Dock,
 }
@@ -567,6 +577,7 @@ struct StageKey {
     bin_full: bool,
     auto_hide: bool,
     icon_size: u32,
+    density: DockDensity,
     max_scale: f32,
     indicators: bool,
     entries: Vec<Entry>,
@@ -897,12 +908,22 @@ fn load_config() -> Config {
     }
 }
 
-/// The Explorer is always pinned, like Finder, on its own.
+/// Apply only Explorer's built-in pin, preserving the order of all other apps.
+fn apply_explorer_pin(roster: &mut Roster, pinned: bool) {
+    let explorer = explorer_id();
+    if pinned {
+        let before = roster.pinned().iter().find(|id| **id != explorer).cloned();
+        roster.pin_before(&explorer, before.as_deref());
+    } else {
+        roster.unpin(&explorer);
+        roster.forget_recent(&explorer);
+    }
+}
+
 fn roster_from(config: &Config) -> Roster {
     let explorer = explorer_id();
     let mut pinned = config.pinned.clone();
     pinned.retain(|id| *id != explorer);
-    pinned.insert(0, explorer.clone());
     let groups = config
         .groups
         .iter()
@@ -916,7 +937,9 @@ fn roster_from(config: &Config) -> Roster {
                 .collect(),
         })
         .collect();
-    Roster::new(pinned, config.recent.clone()).with_groups(groups)
+    let mut roster = Roster::new(pinned, config.recent.clone()).with_groups(groups);
+    apply_explorer_pin(&mut roster, config.pin_explorer);
+    roster
 }
 
 fn save_settings(roster: &Roster, config: &Config) {
@@ -956,6 +979,22 @@ fn forget_shortcuts_folder(config: &Config) -> Result<()> {
         Ok(saved)
     })?;
     Ok(())
+}
+
+fn fixed_item_preference(role: Role) -> Option<&'static str> {
+    match role {
+        Role::Start => Some("showStart"),
+        Role::Folder => Some("showDownloads"),
+        Role::Trash => Some("showTrash"),
+        _ => None,
+    }
+}
+
+/// Hides only the shortcut. No folder, file or Windows pin is removed.
+fn hide_fixed_item(path: &std::path::Path, role: Role) -> Result<Config> {
+    let key = fixed_item_preference(role).context("el elemento no es un acceso fijo")?;
+    let patch = serde_json::Map::from_iter([(key.to_owned(), serde_json::Value::Bool(false))]);
+    Ok(muelle_config::update_preferences(path, patch)?)
 }
 
 fn shorten(text: &str, max: usize) -> String {
@@ -1040,7 +1079,9 @@ impl App {
                 None => icon(&app.id, Role::App, app.running),
             })
             .collect();
-        entries.insert(0, icon(START_ID, Role::Start, false));
+        if self.config.show_start {
+            entries.insert(0, icon(START_ID, Role::Start, false));
+        }
         if self.config.show_recents && !self.roster.recent().is_empty() {
             entries.push(separator());
             entries.extend(
@@ -1063,10 +1104,28 @@ impl App {
         if let Some(folder) = &self.config.shortcuts_folder {
             entries.push(icon(folder, Role::Shortcuts, false));
         }
-        if let Some(downloads) = &self.downloads {
+        if self.config.show_downloads
+            && let Some(downloads) = &self.downloads
+        {
             entries.push(icon(downloads, Role::Folder, false));
         }
-        entries.push(icon(recycle_bin::PARSING_NAME, Role::Trash, false));
+        if self.config.show_trash {
+            entries.push(icon(recycle_bin::PARSING_NAME, Role::Trash, false));
+        }
+        // Hiding fixed items can leave a section empty. Never leave loose dividers.
+        let mut previous_separator = true;
+        entries.retain(|entry| {
+            let separator = entry.kind == ItemKind::Separator;
+            let keep = !separator || !previous_separator;
+            previous_separator = separator;
+            keep
+        });
+        while entries
+            .last()
+            .is_some_and(|entry| entry.kind == ItemKind::Separator)
+        {
+            entries.pop();
+        }
         entries
     }
 
@@ -1276,6 +1335,7 @@ impl App {
             bin_full: self.bin_full,
             auto_hide: self.config.auto_hide,
             icon_size: self.config.icon_size,
+            density: self.config.dock_density,
             max_scale: self.config.max_scale(),
             indicators: self.config.show_indicators,
             entries: self.current_entries(),
@@ -1296,8 +1356,11 @@ impl App {
 
         let scale = monitor.scale;
         let max_scale = key.max_scale;
+        let (gap, padding) = key.density.spacing();
         let mut metrics = Metrics {
             icon: key.icon_size as f32,
+            gap,
+            padding,
             ..Metrics::DEFAULT
         }
         .scaled(scale);
@@ -1430,28 +1493,10 @@ impl App {
             ),
             dock.height,
         );
-        let notify_badges: Vec<Option<LabelBrush>> = if self.config.notification_badges {
-            self.entries
-                .iter()
-                .map(|entry| {
-                    entry.id.as_ref().and_then(|id| {
-                        let count = self.notifications.badge_count(id);
-                        if count > 0 {
-                            self.gfx.notification_badge_brush(count, scale).ok()
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .collect()
-        } else {
-            (0..self.entries.len()).map(|_| None).collect()
-        };
         let contents: Vec<SlotContent<'_>> = self
             .entries
             .iter()
-            .enumerate()
-            .map(|(index, entry)| {
+            .map(|entry| {
                 let asset = entry.id.as_ref().and_then(|id| self.assets.get(id));
                 let badge = entry
                     .id
@@ -1460,13 +1505,11 @@ impl App {
                     .and_then(|hwnd| self.windows.iter().find(|window| window.hwnd == hwnd))
                     .and_then(|window| self.assets.get(&window.app_id))
                     .and_then(|asset| asset.icon.as_ref());
-                let notify_badge = notify_badges.get(index).and_then(|opt| opt.as_ref());
                 SlotContent {
                     icon: asset.and_then(|asset| asset.icon.as_ref()),
                     label: asset.and_then(|asset| asset.label.as_ref()),
                     running: entry.running && self.config.show_indicators,
                     badge,
-                    notify_badge,
                 }
             })
             .collect();
@@ -1584,7 +1627,7 @@ impl App {
             layout: dock,
         };
         self.stage = Some(stage);
-        self.sync_attention_visuals()?;
+        self.sync_badge_visuals()?;
         self.place_windows()?;
         self.schedule_trim();
         self.render()?;
@@ -1974,6 +2017,14 @@ impl App {
     }
 
     fn on_mouse_move(&mut self) -> Result<()> {
+        // A player or browser can enter full screen without changing focus.
+        // Do not let a stale reveal-strip message raise the dock above it.
+        if !self.hovering {
+            self.update_fullscreen()?;
+        }
+        if self.fullscreen {
+            return Ok(());
+        }
         let Some(stage) = &self.stage else {
             return Ok(());
         };
@@ -2637,8 +2688,8 @@ impl App {
         self.place_windows()
     }
 
-    /// Only running or pinned apps, and groups, can be dragged; the Explorer,
-    /// Start, recent apps, Downloads, and the recycle bin stay in place.
+    /// Only running or pinned apps, and groups, can be dragged. Explorer's
+    /// built-in pin is managed by Settings; the other fixed items stay put too.
     fn is_draggable(&self, entry: &Entry) -> bool {
         matches!(entry.role, Role::App | Role::Group)
             && entry.id.as_ref().is_some_and(|id| {
@@ -3335,7 +3386,7 @@ impl App {
                 dock: self.input,
             },
         )?);
-        self.sync_attention_visuals()?;
+        self.sync_badge_visuals()?;
         self.render()
     }
 
@@ -3466,7 +3517,7 @@ impl App {
             return Ok(None);
         };
         let windows = self.windows_of(&id);
-        let (items, end_task) = self.entry_menu(&id, Role::App, &windows);
+        let (items, end_task, jump) = self.entry_menu(&id, Role::App, &windows);
         let gap = self
             .stage
             .as_ref()
@@ -3483,6 +3534,7 @@ impl App {
                 role: Role::App,
                 windows,
                 end_task,
+                jump,
             },
             items,
             anchor,
@@ -3548,13 +3600,14 @@ impl App {
             Some((id, role, rect)) => {
                 let windows = self.windows_of(&id);
                 let anchor = stage.beside(rect, gap);
-                let (items, end_task) = self.entry_menu(&id, role, &windows);
+                let (items, end_task, jump) = self.entry_menu(&id, role, &windows);
                 (
                     MenuTarget::Entry {
                         id,
                         role,
                         windows,
                         end_task,
+                        jump,
                     },
                     items,
                     anchor,
@@ -3600,15 +3653,22 @@ impl App {
         })))
     }
 
+    /// The menu of a dock item, the app's prepared End Task and what its jump
+    /// list entries open (see `CMD_JUMP`).
     fn entry_menu(
         &self,
         id: &str,
         role: Role,
         windows: &[isize],
-    ) -> (Vec<MenuItem>, Option<PreparedEndTask>) {
+    ) -> (
+        Vec<MenuItem>,
+        Option<PreparedEndTask>,
+        Vec<jumplist::Target>,
+    ) {
         let is_file = !id.starts_with("shell:") && !id.starts_with("::");
         let t = text();
         let mut items = Vec::new();
+        let mut jump = Vec::new();
         let end_task = if role == Role::App && id != explorer_id() {
             PreparedEndTask::capture(id, windows, &self.windows)
         } else {
@@ -3616,6 +3676,44 @@ impl App {
         };
         match role {
             Role::App => {
+                // The app's jump list first, as on the taskbar.
+                let groups = if self.config.jump_lists {
+                    jumplist::for_dock_item(id, windows)
+                } else {
+                    Vec::new()
+                };
+                for group in groups {
+                    items.push(MenuItem::Header(match group.section {
+                        jumplist::Section::Pinned => t.jump_pinned.to_owned(),
+                        jumplist::Section::Frequent => t.jump_frequent.to_owned(),
+                        jumplist::Section::Recent => t.jump_recent.to_owned(),
+                        jumplist::Section::Tasks => t.jump_tasks.to_owned(),
+                        jumplist::Section::Custom(name) => shorten(&name, MENU_TITLE_CHARS),
+                    }));
+                    for entry in group.entries {
+                        match entry {
+                            jumplist::Entry::Item {
+                                label,
+                                target,
+                                icon,
+                            } => {
+                                items.push(MenuItem::Action {
+                                    command: CMD_JUMP + jump.len() as u32,
+                                    label: shorten(&label, MENU_TITLE_CHARS).replace('&', "&&"),
+                                    checked: false,
+                                    enabled: true,
+                                    icon,
+                                });
+                                jump.push(target);
+                            }
+                            jumplist::Entry::Separator => items.push(MenuItem::Separator),
+                        }
+                    }
+                }
+                if !items.is_empty() {
+                    items.push(MenuItem::Separator);
+                }
+                let jump_rows = items.len();
                 for (index, &hwnd) in windows.iter().take(MENU_WINDOWS).enumerate() {
                     let title = tracker::title(hwnd);
                     if !title.is_empty() {
@@ -3625,7 +3723,7 @@ impl App {
                         ));
                     }
                 }
-                if !items.is_empty() {
+                if items.len() > jump_rows {
                     items.push(MenuItem::Separator);
                 }
                 let open = if windows.is_empty() {
@@ -3640,6 +3738,7 @@ impl App {
                         label: t.keep_in_dock.into(),
                         checked: self.roster.is_pinned(id),
                         enabled: true,
+                        icon: None,
                     });
                 }
                 // A recent app can be dismissed while recent apps stay on.
@@ -3659,6 +3758,7 @@ impl App {
                             label: t.end_task.into(),
                             checked: false,
                             enabled: end_task.is_some(),
+                            icon: None,
                         });
                     }
                 }
@@ -3693,10 +3793,15 @@ impl App {
                     label: t.empty_bin.into(),
                     checked: false,
                     enabled: self.bin_full,
+                    icon: None,
                 });
             }
         }
-        (items, end_task)
+        if fixed_item_preference(role).is_some() {
+            items.push(MenuItem::Separator);
+            items.push(MenuItem::action(CMD_HIDE_FIXED, t.remove_from_dock));
+        }
+        (items, end_task, jump)
     }
 
     fn on_command(&mut self, target: MenuTarget, command: u32) -> Result<Option<Outside>> {
@@ -3705,6 +3810,7 @@ impl App {
             role,
             windows,
             end_task,
+            jump,
         } = target
         else {
             return match command {
@@ -3739,6 +3845,14 @@ impl App {
                 None
             }
             CMD_SETTINGS => Some(Outside::OpenSettings),
+            CMD_HIDE_FIXED => {
+                let saved = hide_fixed_item(&muelle_config::default_path(), role)?;
+                self.config.show_start = saved.show_start;
+                self.config.show_downloads = saved.show_downloads;
+                self.config.show_trash = saved.show_trash;
+                self.refresh()?;
+                None
+            }
             CMD_FORGET_RECENT => {
                 if self.roster.forget_recent(&id) {
                     save_settings(&self.roster, &self.config);
@@ -3787,6 +3901,16 @@ impl App {
             }
             CMD_END_TASK => end_task.map(Outside::EndTask),
             CMD_EMPTY_BIN => Some(Outside::EmptyBin),
+            command if command >= CMD_JUMP => {
+                let target = jump.into_iter().nth((command - CMD_JUMP) as usize);
+                target.map(|target| {
+                    self.start_bounce(id.clone(), None);
+                    Outside::OpenJump {
+                        target,
+                        program: id,
+                    }
+                })
+            }
             window => {
                 let index = window.checked_sub(CMD_WINDOW).map(|index| index as usize);
                 index
@@ -3825,11 +3949,17 @@ impl App {
             self.restore_transitions();
             self.snapshots.clear();
         }
+        if config.notification_dnd || !config.notifications {
+            self.notifications.clear_banners();
+            notification_banner::NotificationBannerView::hide();
+        }
         if config.auto_hide != self.config.auto_hide {
             self.slide.target = if config.auto_hide { 1.0 } else { 0.0 };
             self.last_frame = Instant::now();
         }
         let moved = config.dock_position != self.config.dock_position;
+        apply_explorer_pin(&mut self.roster, config.pin_explorer);
+        self.slide.omega = config.dock_auto_hide_speed.omega();
         self.config = config;
         if moved {
             // A hidden dock comes out of its new edge on every display.
@@ -3841,7 +3971,9 @@ impl App {
         self.apply_menu_bar_setting();
         self.update_menu_bar_app()?;
         self.calm_windows();
-        self.refresh()
+        self.refresh()?;
+        self.sync_badge_visuals()?;
+        self.render()
     }
 
     /// Adds the apps pinned to the Windows taskbar that the dock does not
@@ -3889,6 +4021,7 @@ impl App {
         for id in previous.iter().filter(|id| !current.contains(id)) {
             self.roster.unpin(id);
         }
+        apply_explorer_pin(&mut self.roster, self.config.pin_explorer);
         save_settings(&self.roster, &self.config);
         self.refresh()
     }
@@ -3952,7 +4085,7 @@ impl App {
 
     fn on_attention(&mut self, hwnd: isize) -> Result<()> {
         if !self.windows.iter().any(|window| window.hwnd == hwnd) && self.read_windows() {
-            self.sync_attention_visuals()?;
+            self.sync_badge_visuals()?;
             self.render()?;
         }
         // A minimize/flash can arrive before the debounced tracker refresh.
@@ -3982,7 +4115,7 @@ impl App {
                 self.start_bounce(app_id.clone(), Some(ATTENTION_HOPS * bounce::HOP_SECONDS));
             }
             if changed {
-                self.sync_attention_visuals()?;
+                self.sync_badge_visuals()?;
                 self.render()?;
             }
             if (self.config.notification_badges || self.config.notifications)
@@ -4084,7 +4217,7 @@ impl App {
         }
 
         if self.config.notification_badges {
-            let _ = self.render();
+            let _ = self.sync_badge_visuals().and_then(|()| self.render());
         }
 
         if pushed.is_some() {
@@ -4111,26 +4244,25 @@ impl App {
     pub fn clear_notification_badge(&mut self, app_id: &str) {
         if self.notifications.badge_count(app_id) > 0 {
             self.notifications.clear_badge(app_id);
-            let _ = self.render();
+            let _ = self.sync_badge_visuals().and_then(|()| self.render());
         }
     }
 
-    pub fn toggle_dnd(&mut self) {
-        self.config.notification_dnd = !self.config.notification_dnd;
-        if self.config.notification_dnd {
-            notification_banner::NotificationBannerView::hide();
-        }
-        let mut patch = serde_json::Map::new();
-        patch.insert(
-            "notificationDnd".into(),
-            serde_json::Value::Bool(self.config.notification_dnd),
-        );
-        let _ = muelle_config::update_preferences(&muelle_config::default_path(), patch);
-        menu_bar_refresh();
-    }
-
-    fn sync_attention_visuals(&mut self) -> Result<()> {
+    fn sync_badge_visuals(&mut self) -> Result<()> {
         if let Some(stage) = &mut self.stage {
+            stage.scene.set_notification_counts(
+                &self.gfx,
+                self.entries.iter().map(|entry| {
+                    if self.config.notification_badges {
+                        entry
+                            .id
+                            .as_deref()
+                            .map_or(0, |id| self.notifications.badge_count(id))
+                    } else {
+                        0
+                    }
+                }),
+            )?;
             stage.scene.set_attention(
                 &self.gfx,
                 self.entries.iter().map(|entry| {
@@ -4155,7 +4287,7 @@ impl App {
         if self.attention_enabled != enabled {
             self.attention_enabled = enabled;
             self.attention.clear();
-            self.sync_attention_visuals()?;
+            self.sync_badge_visuals()?;
             self.render()?;
         }
         Ok(())
@@ -4163,7 +4295,7 @@ impl App {
 
     fn forget_attention(&mut self, hwnd: isize) -> Result<()> {
         if self.attention.acknowledge(hwnd) {
-            self.sync_attention_visuals()?;
+            self.sync_badge_visuals()?;
             self.render()?;
         }
         Ok(())
@@ -4191,6 +4323,9 @@ impl App {
         let changed = self
             .roster
             .sync(self.windows.iter().map(|window| window.app_id.as_str()));
+        if !self.config.pin_explorer {
+            self.roster.forget_recent(&explorer_id());
+        }
         if self.roster.recent() != recent_before.as_slice() {
             save_settings(&self.roster, &self.config);
         }
@@ -4240,7 +4375,7 @@ impl App {
         }
         self.started = true;
         if attention_changed {
-            self.sync_attention_visuals()?;
+            self.sync_badge_visuals()?;
             self.render()?;
         }
         // A foreground-window change may mean an app entered or exited full-screen mode.
@@ -4545,7 +4680,7 @@ impl App {
                 y: screen.top + (screen.bottom - screen.top) / 2,
             });
             self.amount = Spring::at(0.0, HOVER_OMEGA);
-            self.slide = Spring::at(1.0, SLIDE_OMEGA);
+            self.slide = Spring::at(1.0, self.config.dock_auto_hide_speed.omega());
             self.fullscreen = false;
             self.refresh()?;
         }
@@ -4698,7 +4833,7 @@ impl App {
         tracker::recover_browser_z_order(&self.windows, foreground);
         self.update_fullscreen()?;
         if attention_changed {
-            self.sync_attention_visuals()?;
+            self.sync_badge_visuals()?;
             self.render()?;
         }
         Ok(())
@@ -4775,7 +4910,7 @@ unsafe extern "system" fn on_win_event(
     event: u32,
     hwnd: HWND,
     object: i32,
-    _child: i32,
+    child: i32,
     _thread: u32,
     _time: u32,
 ) {
@@ -4795,6 +4930,13 @@ unsafe extern "system" fn on_win_event(
         } else if !tracker::is_switch_transient(hwnd) {
             LAST_FRONT.store(hwnd.0 as isize, Ordering::Relaxed);
             with_app("ventana activa", App::on_foreground_changed);
+        }
+    } else if event == EVENT_OBJECT_LOCATIONCHANGE {
+        // Only the foreground top-level window matters. Ignore child controls,
+        // carets and background animations, and coalesce resize bursts using
+        // the existing full-screen timer, without enumerating apps or polling.
+        if child == 0 && hwnd.0 as isize == tracker::foreground_window() {
+            unsafe { SetTimer(Some(main_window()), FULLSCREEN_TIMER, SYNC_DELAY_MS, None) };
         }
     } else if event == EVENT_OBJECT_CLOAKED || event == EVENT_OBJECT_UNCLOAKED {
         // Shows the windows of the virtual desktop in front, as the Windows
@@ -5180,6 +5322,7 @@ fn run_outside(outside: Outside) {
         Outside::OpenAsAdmin(id) => submit(ShellAction::OpenAsAdmin { id }),
         Outside::ShowDesktop => launcher::show_desktop(),
         Outside::UnpinFromTaskbar(id) => submit(ShellAction::Unpin { id }),
+        Outside::OpenJump { target, program } => submit(ShellAction::OpenJump { target, program }),
         Outside::OpenSettings => {
             // The settings app is installed next to the dock.
             let settings = env::current_exe()
@@ -5205,6 +5348,7 @@ fn run_outside(outside: Outside) {
                     label: layout.name.replace('&', "&&"),
                     checked: context.is_some_and(|context| context.layout == layout.handle),
                     enabled: context.is_some(),
+                    icon: None,
                 })
                 .collect();
             if !items.is_empty() {
@@ -5655,6 +5799,7 @@ pub fn run() -> Result<()> {
         strings::set_language(config.language);
         let roster = roster_from(&config);
         let auto_hide = config.auto_hide;
+        let slide_omega = config.dock_auto_hide_speed.omega();
         let mut app = App {
             visual,
             input,
@@ -5685,7 +5830,7 @@ pub fn run() -> Result<()> {
             placeholder: None,
             remove_label: None,
             config,
-            slide: Spring::at(if auto_hide { 1.0 } else { 0.0 }, SLIDE_OMEGA),
+            slide: Spring::at(if auto_hide { 1.0 } else { 0.0 }, slide_omega),
             press: None,
             drag: None,
             incoming: Vec::new(),
@@ -5800,6 +5945,16 @@ pub fn run() -> Result<()> {
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
         );
         FOREGROUND_HOOK.store(foreground_hook.0 as isize, Ordering::Relaxed);
+        let location_hook = SetWinEventHook(
+            EVENT_OBJECT_LOCATIONCHANGE,
+            EVENT_OBJECT_LOCATIONCHANGE,
+            None,
+            Some(on_win_event),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        );
+        LOCATION_HOOK.store(location_hook.0 as isize, Ordering::Relaxed);
         LAST_FRONT.store(tracker::foreground_window(), Ordering::Relaxed);
         let target: IDropTarget = DropTarget.into();
         RegisterDragDrop(input, &target)?;
@@ -5827,7 +5982,12 @@ pub fn run() -> Result<()> {
     // SAFETY: The drop target was registered on this window in this thread.
     unsafe {
         let _ = RevokeDragDrop(HWND(DROP_WINDOW.load(Ordering::Relaxed) as *mut _));
-        for hook in [&MINIMIZE_HOOK, &CLOAK_HOOK, &FOREGROUND_HOOK] {
+        for hook in [
+            &MINIMIZE_HOOK,
+            &CLOAK_HOOK,
+            &FOREGROUND_HOOK,
+            &LOCATION_HOOK,
+        ] {
             let _ = UnhookWinEvent(HWINEVENTHOOK(hook.load(Ordering::Relaxed) as *mut _));
         }
     }
@@ -5846,6 +6006,107 @@ pub fn run() -> Result<()> {
         let _ = worker.join();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod dock_preferences_tests {
+    use super::*;
+
+    #[test]
+    fn removing_fixed_shortcuts_preserves_folders_pins_and_other_preferences() -> Result<()> {
+        struct Fixture(std::path::PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+                let _ = std::fs::remove_file(self.0.with_extension("json.lock"));
+            }
+        }
+        let file = Fixture(env::temp_dir().join(format!(
+            "muelle-fixed-shortcuts-{}.json",
+            std::process::id()
+        )));
+        let initial = Config {
+            pinned: vec!["editor".into()],
+            shortcuts_folder: Some("C:\\Projects".into()),
+            notification_dnd: true,
+            ..Config::default()
+        };
+        muelle_config::save(&file.0, &initial)?;
+        let downloads = hide_fixed_item(&file.0, Role::Folder)?;
+        assert!(!downloads.show_downloads);
+        assert!(downloads.show_trash && downloads.show_start);
+        hide_fixed_item(&file.0, Role::Trash)?;
+        let saved = hide_fixed_item(&file.0, Role::Start)?;
+        assert!(!saved.show_downloads && !saved.show_trash && !saved.show_start);
+        assert_eq!(saved.pinned, initial.pinned);
+        assert_eq!(saved.shortcuts_folder, initial.shortcuts_folder);
+        assert!(saved.notification_dnd);
+        let before = std::fs::read(&file.0)?;
+        assert!(hide_fixed_item(&file.0, Role::App).is_err());
+        assert_eq!(std::fs::read(&file.0)?, before);
+        Ok(())
+    }
+
+    #[test]
+    fn explorer_preference_preserves_other_pins_and_follows_open_windows() {
+        let explorer = explorer_id();
+        let config = Config {
+            pinned: vec!["editor".into(), explorer.clone(), "browser".into()],
+            pin_explorer: false,
+            ..Config::default()
+        };
+        let mut roster = roster_from(&config);
+        assert_eq!(roster.pinned(), ["editor", "browser"]);
+        assert!(!roster.apps().iter().any(|app| app.id == explorer));
+        roster.sync(["editor", explorer.as_str()]);
+        assert!(roster.is_running(&explorer) && !roster.is_pinned(&explorer));
+        apply_explorer_pin(&mut roster, true);
+        assert_eq!(roster.pinned(), [explorer.as_str(), "editor", "browser"]);
+        apply_explorer_pin(&mut roster, false);
+        assert!(roster.is_running(&explorer) && !roster.is_pinned(&explorer));
+        roster.sync(["editor"]);
+        apply_explorer_pin(&mut roster, false);
+        assert!(!roster.apps().iter().any(|app| app.id == explorer));
+        assert!(!roster.recent().contains(&explorer));
+    }
+
+    #[test]
+    fn density_changes_dimensions_without_changing_icon_size() {
+        let mut widths = Vec::new();
+        for density in [
+            DockDensity::Compact,
+            DockDensity::Normal,
+            DockDensity::Spacious,
+        ] {
+            let (gap, padding) = density.spacing();
+            let metrics = Metrics {
+                icon: 64.0,
+                gap,
+                padding,
+                ..Metrics::DEFAULT
+            };
+            let result = layout(&[ItemKind::Icon; 3], &metrics);
+            assert!(result.slots.iter().all(|slot| slot.rect.width == 64.0));
+            widths.push(result.width);
+        }
+        assert!(widths.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn auto_hide_presets_keep_the_original_speed_as_default() {
+        use muelle_config::DockAutoHideSpeed;
+        let progress = |speed: DockAutoHideSpeed| {
+            let mut spring = Spring::at(1.0, speed.omega());
+            spring.target = 0.0;
+            for _ in 0..12 {
+                spring.step(1.0 / 120.0);
+            }
+            spring.value
+        };
+        assert!(progress(DockAutoHideSpeed::Smooth) > progress(DockAutoHideSpeed::Normal));
+        assert!(progress(DockAutoHideSpeed::Normal) > progress(DockAutoHideSpeed::Fast));
+        assert_eq!(DockAutoHideSpeed::default().omega(), 24.0);
+    }
 }
 
 #[cfg(test)]

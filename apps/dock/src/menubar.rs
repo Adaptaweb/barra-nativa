@@ -154,7 +154,6 @@ pub(crate) mod glyph {
     pub const HIDDEN_ICONS: char = '\u{E70E}';
     pub const MICROPHONE: char = '\u{E720}';
     pub const CAMERA: char = '\u{E722}';
-    pub const FOCUS: char = '\u{E708}';
     pub const MOUSE: char = '\u{E962}';
     pub const HEADSET: char = '\u{E95B}';
     pub const BLUETOOTH: char = '\u{E702}';
@@ -165,7 +164,6 @@ enum Action {
     AccessoryIndicator,
     QuickSettings,
     Notifications,
-    ToggleDnd,
     Sound,
     Search,
     TaskView,
@@ -254,7 +252,7 @@ fn accessory_readings(snapshot: &AccessorySnapshot) -> [Option<AccessoryReading>
 impl Look {
     fn panel_content_height(&self) -> f32 {
         match self.panel {
-            Some(Island::Music) => 184.0,
+            Some(Island::Music) => 164.0,
             Some(Island::Usage) => {
                 74.0 + Provider::ALL
                     .into_iter()
@@ -341,10 +339,8 @@ struct ExitAnimation {
 /// track labels and the rest of the menu bar keep their existing visual tree.
 struct VolumeControls {
     fill: CompositionRoundedRectangleGeometry,
-    knob: ShapeVisual,
     value: SpriteVisual,
     geometry: IslandGeometry,
-    left: f32,
     width: f32,
     position_percent: Option<u8>,
     label_percent: u8,
@@ -360,11 +356,6 @@ impl VolumeControls {
         self.fill.SetSize(Vector2::new(filled, px(4.0)))?;
         self.fill
             .SetCornerRadius(Vector2::new(px(2.0).min(filled / 2.0), px(2.0)))?;
-        self.knob.SetOffset(Vector3::new(
-            self.left + filled - px(5.0),
-            px(160.0) - px(5.0),
-            0.0,
-        ))?;
         self.position_percent = Some(percent);
         Ok(())
     }
@@ -1729,12 +1720,6 @@ impl MenuBar {
             Some(Action::AccessoryIndicator) => {}
             Some(Action::QuickSettings) => launcher::open_quick_settings(),
             Some(Action::Notifications) => launcher::open_notifications(),
-            Some(Action::ToggleDnd) => {
-                crate::app::with_app("toggle dnd", |app| {
-                    app.toggle_dnd();
-                    Ok(())
-                });
-            }
             Some(Action::Sound) => launcher::open_sound(),
             Some(Action::Search) => launcher::open_search(),
             Some(Action::TaskView) => launcher::open_task_view(),
@@ -1973,7 +1958,6 @@ impl MenuBar {
                 Action::Notifications,
             ),
             (gfx.control_center_brush(scale, ink)?, Action::QuickSettings),
-            (symbol(&[(glyph::FOCUS, 1.0)])?, Action::ToggleDnd),
         ];
         // Privacy indicators, as the Windows tray shows them: something is
         // using the microphone or camera right now.
@@ -2635,18 +2619,6 @@ impl MenuBar {
                     .push(geometry.hit(x, y, size, size, IslandAction::Media(control)));
             }
         }
-        add_panel_text(
-            gfx,
-            layers,
-            strings::text().media_volume,
-            px(25.0),
-            px(135.0),
-            geometry.scale,
-            10.5,
-            false,
-            ink,
-            0.65,
-        )?;
         if let Some(volume) = self.status.volume {
             let symbol = if volume.muted {
                 glyph::MUTE
@@ -2659,15 +2631,15 @@ impl MenuBar {
                 layers,
                 &label.brush.cast()?,
                 px(25.0),
-                px(160.0) - label.height / 2.0,
+                px(140.0) - label.height / 2.0,
                 label.width,
                 label.height,
             )?;
             self.island_hits.push(geometry.hit(
                 px(18.0),
-                px(148.0),
+                px(126.0),
                 px(32.0),
-                px(27.0),
+                px(28.0),
                 IslandAction::Mute,
             ));
             let left = px(59.0);
@@ -2677,7 +2649,7 @@ impl MenuBar {
                 c,
                 layers,
                 left,
-                px(158.0),
+                px(138.0),
                 width,
                 px(4.0),
                 px(2.0),
@@ -2688,7 +2660,7 @@ impl MenuBar {
                 c,
                 layers,
                 left,
-                px(158.0),
+                px(138.0),
                 width,
                 px(4.0),
                 px(2.0),
@@ -2699,18 +2671,6 @@ impl MenuBar {
                 },
                 None,
             )?;
-            let dot = px(10.0);
-            let (knob, _) = retained_rounded_box(
-                c,
-                layers,
-                left - dot / 2.0,
-                px(160.0) - dot / 2.0,
-                dot,
-                dot,
-                dot / 2.0,
-                rgba(245, 247, 250, 255),
-                Some(geometry.border()),
-            )?;
             let label =
                 gfx.text_brush_sized(&format!("{percent}%"), geometry.scale, 10.5, false, ink)?;
             let value = add_visual(
@@ -2718,17 +2678,15 @@ impl MenuBar {
                 layers,
                 &label.brush.cast()?,
                 geometry.width - px(51.0),
-                px(153.0),
+                px(133.0),
                 label.width,
                 label.height,
             )?;
             value.SetOpacity(0.8)?;
             let mut controls = VolumeControls {
                 fill,
-                knob,
                 value,
                 geometry,
-                left,
                 width,
                 position_percent: None,
                 label_percent: percent,
@@ -2737,7 +2695,7 @@ impl MenuBar {
             self.volume_controls = Some(controls);
             self.island_hits.push(geometry.hit(
                 left - px(6.0),
-                px(147.0),
+                px(127.0),
                 width + px(12.0),
                 px(29.0),
                 IslandAction::Volume(Span {
@@ -2751,7 +2709,7 @@ impl MenuBar {
                 layers,
                 strings::text().media_no_output,
                 px(25.0),
-                px(155.0),
+                px(135.0),
                 geometry.scale,
                 11.0,
                 false,
@@ -3112,6 +3070,7 @@ fn island_providers(look: &Look) -> Vec<IslandProvider<'_>> {
                 Provider::Codex => rgba(135, 190, 245, 255),
                 Provider::OpenCode => rgba(132, 196, 166, 255),
                 Provider::Gemini => rgba(111, 146, 255, 255),
+                Provider::Zai => rgba(79, 110, 247, 255),
             };
             (provider, look.usage.get(provider), accent)
         })
@@ -4003,11 +3962,30 @@ mod island_tests {
                         top >= HEIGHT * scale
                             && bottom <= (HEIGHT + PANEL_GAP + look.panel_height()) * scale + 1.0
                     );
-                    assert!(
-                        bar.island_hits
-                            .iter()
-                            .any(|hit| matches!(hit.action, IslandAction::Mute))
-                    );
+                    let geometry = bar
+                        .volume_controls
+                        .as_ref()
+                        .context("volume controls")?
+                        .geometry;
+                    // Click the visible speaker's centre, not merely somewhere
+                    // inside an independently specified hit rectangle.
+                    let speaker = bar
+                        .island_hits
+                        .iter()
+                        .find(|hit| {
+                            hit.at(
+                                geometry.left + geometry.px(30.0),
+                                geometry.top + geometry.px(140.0),
+                            )
+                        })
+                        .context("speaker has no hit target")?;
+                    assert!(matches!(speaker.action, IslandAction::Mute));
+                    let slider = bar
+                        .island_hits
+                        .iter()
+                        .find(|hit| hit.at((left + right) / 2.0, geometry.top + geometry.px(140.0)))
+                        .context("slider has no hit target")?;
+                    assert!(matches!(slider.action, IslandAction::Volume(_)));
                 }
             }
         }
@@ -4082,11 +4060,11 @@ mod island_tests {
         assert_eq!(
             bar.volume_controls
                 .as_ref()
-                .context("immediate thumb")?
+                .context("immediate fill")?
                 .position_percent,
             Some(80)
         );
-        // An endpoint acknowledgement must not drag the thumb backwards while
+        // An endpoint acknowledgement must not drag the fill backwards while
         // a newer pointer target is still waiting for its coalesced write.
         bar.apply_volume_reading(
             &gfx,
@@ -4099,7 +4077,7 @@ mod island_tests {
         assert_eq!(
             bar.volume_controls
                 .as_ref()
-                .context("optimistic thumb")?
+                .context("optimistic fill")?
                 .position_percent,
             Some(80)
         );

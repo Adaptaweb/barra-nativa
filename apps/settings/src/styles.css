@@ -526,6 +526,8 @@ input:focus-visible {
 .preview-window { position: absolute; left: 28%; top: 24%; width: 48%; height: 43%; border-radius: 3px; background: var(--content); box-shadow: 0 2px 5px #0001; padding: 4px; display: flex; gap: 2px; align-items: start; }
 .preview-window i { width: 2px; height: 2px; border-radius: 50%; background: var(--text-dim); opacity: .6; }
 .preview-dock { position: absolute; display: flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 5px; background: var(--sidebar); box-shadow: 0 1px 3px #0002; }
+.preview-dock[data-density="compact"] { gap: 1px; padding: 2px; }
+.preview-dock[data-density="spacious"] { gap: 4px; padding: 5px; }
 .preview-dock[data-position="bottom"] { bottom: 4px; left: 50%; transform: translateX(-50%); }
 .preview-dock[data-position="left"] { left: 4px; top: 50%; transform: translateY(-50%); flex-direction: column; }
 .preview-dock[data-position="right"] { right: 4px; top: 50%; transform: translateY(-50%); flex-direction: column; }

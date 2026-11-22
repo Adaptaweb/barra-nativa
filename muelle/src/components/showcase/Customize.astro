@@ -9,7 +9,7 @@ import ToggleRow from "@/components/showcase/ToggleRow.astro";
 import Crab from "@/components/crab/Crab.astro";
 import {
   customizeIntro,
-  previewIcons,
+  previewDockItems,
   settingsDefaults as d,
   settingsText,
   type SettingsKey,
@@ -37,22 +37,20 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
           <i></i>
         </div>
         <nav class="settings-nav">
-          {
-            panes.map((pane, index) => (
-              <button
-                type="button"
-                data-pane={pane}
-                data-label={pane}
-                aria-current={index === 0 ? "page" : undefined}
-                aria-label={t[pane]}
-              >
-                <SettingsIcon section={pane} />
-                <span class="settings-nav-label" {...tx(pane)}>
-                  {t[pane]}
-                </span>
-              </button>
-            ))
-          }
+          {panes.map((pane, index) => (
+            <button
+              type="button"
+              data-pane={pane}
+              data-label={pane}
+              aria-current={index === 0 ? "page" : undefined}
+              aria-label={t[pane]}
+            >
+              <SettingsIcon section={pane} />
+              <span class="settings-nav-label" {...tx(pane)}>
+                {t[pane]}
+              </span>
+            </button>
+          ))}
         </nav>
       </aside>
 
@@ -81,6 +79,23 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
                 />
                 <small {...tx("large")}>{t.large}</small>
               </span>
+            </div>
+            <div class="settings-row">
+              <label class="settings-label" for="preview-density" {...tx("dockDensity")}>
+                {t.dockDensity}
+              </label>
+              <select
+                id="preview-density"
+                class="mac-select"
+                data-setting="dockDensity"
+                data-label="dockDensity"
+              >
+                {(["compact", "normal", "spacious"] as const).map((choice) => (
+                  <option value={choice} selected={choice === d.dockDensity} {...tx(choice)}>
+                    {t[choice]}
+                  </option>
+                ))}
+              </select>
             </div>
             <div class="settings-row">
               <span class="settings-text">
@@ -124,8 +139,35 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
 
           <div class="settings-card">
             <ToggleRow name="autoHide" hint="autoHideHint" on={d.autoHide} />
+            <div class="settings-row" data-speed-row hidden>
+              <label class="settings-label" for="preview-hide-speed" {...tx("dockAutoHideSpeed")}>
+                {t.dockAutoHideSpeed}
+              </label>
+              <select
+                id="preview-hide-speed"
+                class="mac-select"
+                data-setting="dockAutoHideSpeed"
+                data-label="dockAutoHideSpeed"
+              >
+                {(["smooth", "normal", "fast"] as const).map((choice) => (
+                  <option value={choice} selected={choice === d.dockAutoHideSpeed} {...tx(choice)}>
+                    {t[choice]}
+                  </option>
+                ))}
+              </select>
+            </div>
             <ToggleRow name="mascot" hint="mascotHint" on={d.mascot} />
           </div>
+          <details class="settings-card settings-details">
+            <summary {...tx("fixedItems")}>{t.fixedItems}</summary>
+            <ToggleRow name="showStart" on={d.showStart} />
+            <ToggleRow name="pinExplorer" hint="pinExplorerHint" on={d.pinExplorer} />
+            <ToggleRow name="showDownloads" on={d.showDownloads} />
+            <ToggleRow name="showTrash" on={d.showTrash} />
+            <p class="settings-hint settings-note" {...tx("fixedItemsHint")}>
+              {t.fixedItemsHint}
+            </p>
+          </details>
         </div>
 
         <div class="settings-body" data-view="windows" hidden>
@@ -138,11 +180,23 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
         <div class="settings-body" data-view="menubar" hidden>
           <div class="settings-card">
             <ToggleRow name="menuBar" hint="menuBarHint" on={d.menuBar} />
-            <ToggleRow name="menuBarAutoHide" hint="menuBarAutoHideHint" on={d.menuBarAutoHide} sub />
+            <ToggleRow
+              name="menuBarAutoHide"
+              hint="menuBarAutoHideHint"
+              on={d.menuBarAutoHide}
+              sub
+            />
             <ToggleRow name="aiUsage" hint="aiUsageHint" on={d.aiUsage} sub />
-            <ToggleRow name="accessoryBattery" hint="accessoryBatteryHint" on={d.accessoryBattery} sub />
+            <ToggleRow
+              name="accessoryBattery"
+              hint="accessoryBatteryHint"
+              on={d.accessoryBattery}
+              sub
+            />
           </div>
-          <p class="settings-hint" {...tx("accessoryPreviewHint")}>{t.accessoryPreviewHint}</p>
+          <p class="settings-hint" {...tx("accessoryPreviewHint")}>
+            {t.accessoryPreviewHint}
+          </p>
         </div>
 
         <div class="settings-body" data-view="system" hidden>
@@ -214,7 +268,7 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
         sizes="(min-width: 1024px) 480px, 100vw"
       />
       <div class="preview-bar" data-preview-bar>
-        <b>File Explorer</b>
+        <b>Muelle</b>
         <span class="preview-island" data-preview-island aria-hidden="true">
           <i style="--ring: #d97757; --p: 63%"></i>63%
           <i style="--ring: #8ab4f8; --p: 28%"></i>28%
@@ -230,8 +284,13 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
         </span>
       </div>
       <div class="preview-dock" data-preview-dock>
-        {previewIcons.map((icon) => (
-          <Image src={icon} alt="" class="w-32" />
+        <span class="preview-start" data-preview-icon data-fixed="showStart" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M2 2h9v9H2zm11 0h9v9h-9zM2 13h9v9H2zm11 0h9v9h-9z" />
+          </svg>
+        </span>
+        {previewDockItems.map(({ icon, fixed }) => (
+          <Image src={icon} alt="" class="w-32" data-preview-icon data-fixed={fixed} />
         ))}
       </div>
       <Crab cell={2} class="crab-free" data-preview-crab />

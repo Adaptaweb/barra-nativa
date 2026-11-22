@@ -1,9 +1,9 @@
-import { prefersReducedMotion } from "@/lib/motion";
+import { prefersReducedMotion, ScrollTrigger } from "@/lib/motion";
 
 /** The preview desk is smaller than a screen, so the dock is drawn at this share of its size. */
 const PREVIEW_SCALE = 0.7;
-/** Horizontal room the dock needs besides its icons: gaps, padding, border and a margin to the desk edge. */
-const DOCK_CHROME = 72;
+/** Room between the preview dock and the desk edges. */
+const DOCK_MARGIN = 24;
 /** Width of the magnified area around the pointer, in preview pixels at `PREVIEW_SCALE`. */
 const SIGMA = 46;
 /** How close to an edge the pointer must be to reveal an auto-hidden bar. */
@@ -13,8 +13,11 @@ const DOCK_REACH = 60;
 const CHECK_MS = 1100;
 /** How long the dock stays magnified after a magnification setting changes. */
 const DEMO_MS = 1400;
-/** Gap between preview icons; it must match the gap of `.preview-dock` in the stylesheet. */
-const ICON_GAP = 6;
+const DENSITIES = {
+  compact: { gap: 4, padding: 4 },
+  normal: { gap: 6, padding: 6 },
+  spacious: { gap: 8, padding: 8 },
+} as const;
 
 type Strings = Record<string, string>;
 
@@ -34,7 +37,13 @@ export function initCustomize(root: HTMLElement) {
 
   const texts = JSON.parse(textNode.textContent ?? "{}") as Record<"en" | "es", Strings>;
   let strings = texts.en;
-  const icons = [...dock.querySelectorAll<HTMLImageElement>("img")];
+  const icons = [...dock.querySelectorAll<HTMLElement>("[data-preview-icon]")];
+  const choices = new Map(
+    [...scene.querySelectorAll<HTMLSelectElement>("select[data-setting]")].map((select) => [
+      select.dataset.setting ?? "",
+      select,
+    ]),
+  );
   const ranges = new Map(
     [...scene.querySelectorAll<HTMLInputElement>("input[data-setting]")].map((input) => [
       input.dataset.setting ?? "",
@@ -68,9 +77,18 @@ export function initCustomize(root: HTMLElement) {
   let demoTimer = 0;
 
   const layoutDock = () => {
+    const visibleIcons = icons.filter((icon) => !icon.hidden);
+    const density = choices.get("dockDensity")?.value as keyof typeof DENSITIES;
+    const { gap, padding } = DENSITIES[density] ?? DENSITIES.normal;
+    dock.style.gap = `${gap}px`;
+    dock.style.padding = `${padding}px ${padding + 2}px`;
     // Narrow desks (phones) shrink the dock so even the largest icon size fits.
-    const largest = icons.length * Number(ranges.get("iconSize")?.max ?? 0);
-    const scale = Math.min(PREVIEW_SCALE, (preview.clientWidth - DOCK_CHROME) / (largest || 1));
+    const largest = visibleIcons.length * Number(ranges.get("iconSize")?.max ?? 0);
+    const chrome = Math.max(0, visibleIcons.length - 1) * gap + 2 * (padding + 2) + DOCK_MARGIN;
+    const scale = Math.max(
+      0,
+      Math.min(PREVIEW_SCALE, (preview.clientWidth - chrome) / (largest || 1)),
+    );
     const sigma = SIGMA * (scale / PREVIEW_SCALE);
     const size = value("iconSize") * scale;
     const peak = value("magnifiedSize") * scale;
@@ -78,14 +96,16 @@ export function initCustomize(root: HTMLElement) {
     const magnify = isOn("magnification") && focusX !== null && !prefersReducedMotion();
 
     // Centres of the resting row: the magnified widths are derived from these.
-    const rowWidth = icons.length * size + (icons.length - 1) * ICON_GAP;
+    const rowWidth = visibleIcons.length * size + Math.max(0, visibleIcons.length - 1) * gap;
     const left = preview.clientWidth / 2 - rowWidth / 2;
-    icons.forEach((icon, index) => {
+    visibleIcons.forEach((icon, index) => {
       let width = size;
       if (magnify && focusX !== null) {
-        const center = left + index * (size + ICON_GAP) + size / 2;
+        const center = left + index * (size + gap) + size / 2;
         const distance = focusX - center;
-        width = size + (Math.max(peak, size) - size) * Math.exp(-(distance * distance) / (2 * sigma * sigma));
+        width =
+          size +
+          (Math.max(peak, size) - size) * Math.exp(-(distance * distance) / (2 * sigma * sigma));
       }
       icon.style.width = `${width}px`;
       icon.style.height = `${width}px`;
@@ -126,6 +146,17 @@ export function initCustomize(root: HTMLElement) {
     island?.toggleAttribute("hidden", !isOn("aiUsage"));
     accessories?.toggleAttribute("hidden", !isOn("accessoryBattery"));
     bar.classList.toggle("has-accessories", isOn("accessoryBattery"));
+    scene
+      .querySelector<HTMLElement>("[data-speed-row]")
+      ?.toggleAttribute("hidden", !isOn("autoHide"));
+    for (const icon of icons) {
+      if (icon.dataset.fixed) icon.hidden = !isOn(icon.dataset.fixed);
+    }
+    const speed = choices.get("dockAutoHideSpeed")?.value;
+    dock.style.setProperty(
+      "--dock-slide-duration",
+      speed === "smooth" ? "0.48s" : speed === "fast" ? "0.2s" : "0.32s",
+    );
   };
 
   preview.addEventListener("pointermove", (event) => {
@@ -180,6 +211,15 @@ export function initCustomize(root: HTMLElement) {
       else layoutDock();
     });
   });
+  choices.forEach((select) => {
+    select.addEventListener("change", () => {
+      applyBars();
+      layoutDock();
+    });
+  });
+  scene
+    .querySelector(".settings-details")
+    ?.addEventListener("toggle", () => ScrollTrigger.refresh());
 
   /* ---- Panes and language ---------------------------------------------- */
 
@@ -202,7 +242,12 @@ export function initCustomize(root: HTMLElement) {
 
   const status = scene.querySelector<HTMLElement>("[data-update-status]");
   const setLanguage = (choice: string) => {
-    const resolved = choice === "auto" ? (navigator.language.toLowerCase().startsWith("es") ? "es" : "en") : choice;
+    const resolved =
+      choice === "auto"
+        ? navigator.language.toLowerCase().startsWith("es")
+          ? "es"
+          : "en"
+        : choice;
     strings = texts[resolved === "es" ? "es" : "en"];
     scene.lang = resolved === "es" ? "es" : "en";
     scene.querySelectorAll<HTMLElement>("[data-t]").forEach((node) => {

@@ -2,7 +2,7 @@
   
 <img width="50%" alt="Frame 1116606779" src="https://github.com/user-attachments/assets/8c715a53-a0df-4780-9dd4-09ce3ccd9043" />
 
-  **A lightweight, macOS-inspired dock for Windows 10 and 11.**
+### A lightweight, macOS-inspired dock for Windows 10 and 11
 
   Muelle replaces the Windows taskbar with a customizable dock and an optional
   macOS-style menu bar.
@@ -13,9 +13,6 @@
 
 <img width="1000" height="259" alt="ezgif-6345057d171e16ef" src="https://github.com/user-attachments/assets/e5b2ce63-cec1-4d1d-8ef1-a4fa1c668c40" />
 
-
-Smooth magnification, live window previews, and an optional Genie-style minimize effect.
-
 | Clawd Pet | Genie Effect on Minimize |
 | :---: | :---: |
 | ![GIF showing mascot the Dock and Menu Bar](https://github.com/user-attachments/assets/580b235e-6141-493a-a333-8f2b96f3acca) | ![GIF showing a window minimizing into the Dock with the Genie effect](https://github.com/user-attachments/assets/878503a8-7286-445d-826b-41c18da013bc) |
@@ -25,6 +22,8 @@ Smooth magnification, live window previews, and an optional Genie-style minimize
 ## Features
 
 - Glass-style dock with smooth, cursor-based icon magnification.
+- Choose the dock's screen edge in Settings → Dock → *Position on screen*:
+  left, bottom, or right. Bottom is the default.
 - Launch, pin, reorder, and manage apps, including recent apps and open windows.
 - Group pinned apps into a single dock icon: drop one app onto another, click
   the group to fan its apps out, and drag one out of the fan to take it back.
@@ -35,16 +34,21 @@ Smooth magnification, live window previews, and an optional Genie-style minimize
   Settings → Windows → *Show minimized windows* to keep them as live thumbnails
   on the right side of the dock instead.
 - Click the app already in front to minimize it, as on the Windows taskbar.
+- Right-click an app to see its jump list, with icons, as on the Windows
+  taskbar: pinned and recent items, the app's own categories and its tasks.
 - Drag and drop files onto apps, Downloads, or the Recycle Bin.
 - A shortcuts folder at the right of the dock: its contents open as a menu,
   with a submenu for each folder inside, like a Windows 10 taskbar toolbar.
 - Optional auto-hide.
+- Optional battery levels for compatible connected mice and headsets. Enable
+  Settings → Menu bar → *Show accessory battery*; it is off by default.
 - A top menu bar with the app in front, clock, network, volume and battery, the
   input language, microphone/camera in use, the hidden tray icons, plus
   the Search, Task View and Widgets buttons if you have them on the Windows taskbar.
 - A curved island in the menu bar for usage limits from Claude Code, Codex,
-  OpenCode Go, Gemini CLI, and Antigravity. Gemini Pro
-  and Flash quotas appear separately when available.
+  OpenCode Go, Z.ai GLM Coding Plan, Gemini CLI, and Antigravity. Z.ai shows
+  its 5-hour and weekly limits; Gemini Pro and Flash quotas appear separately
+  when available.
 - Separate Settings app with live changes, Spanish, English and French, and a
   configurable Genie-style minimize animation.
 - A watchdog restores the Windows taskbar if the dock exits unexpectedly.
@@ -151,8 +155,10 @@ project. It makes two kinds of network requests, both optional:
   every five minutes while visible, or when you press Refresh. For Gemini CLI
   and Antigravity, Gemini Pro and Flash quotas are shown separately when
   available; Antigravity is queried through its local service. Credentials stay
-  in memory and are never stored by Muelle. Turn it off in Settings → Menu bar
-  → *Show AI provider usage*.
+  in memory and are never stored by Muelle. For Z.ai Coding Plan, Muelle reads
+  the key from OpenCode's local `auth.json` or `ZAI_API_KEY` /
+  `ZHIPU_API_KEY`, then sends it to Z.ai's quota service. Turn usage queries
+  off in Settings → Menu bar → *Show AI provider usage*.
 - **Notifications:** notification content and banners are processed strictly in memory on your local machine and are never written to disk, saved in log files, or transmitted over the network.
 
 Details: [muelle.crafter.run/privacy](https://muelle.crafter.run/privacy).

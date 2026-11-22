@@ -10,6 +10,41 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Dock unread counts now take precedence over generic attention dots, avoiding
+  overlapping badges. Counts update and clear without rebuilding the dock.
+- Fixed the music popup's mute hit target and removed the stray volume-slider
+  dot. Volume updates keep using retained visuals and coalesced audio writes.
+- Web apps installed from a browser (Edge, Chrome) get their own dock icon, as
+  on the Windows taskbar, instead of joining the browser's. A pinned web app
+  shows the name and icon of its shortcut, and clicking it switches to its open
+  window instead of opening another.
+
+### Español
+
+- El contador del Dock tiene prioridad sobre el punto de atención, evitando
+  insignias superpuestas. Se actualiza y se borra sin reconstruir el dock.
+- Corregida la zona de clic de silencio en música y retirado el punto suelto
+  del volumen. Se conservan los gráficos y las escrituras de audio agrupadas.
+- Las aplicaciones web instaladas desde un navegador (Edge, Chrome) tienen su
+  propio icono en el dock, como en la barra de Windows, en vez de unirse al del
+  navegador. Una aplicación web anclada muestra el nombre y el icono de su acceso
+  directo, y al hacer clic cambia a su ventana abierta en vez de abrir otra.
+
+## [0.1.19]
+
+### English
+
+- Added Dock settings for Start, Downloads and Recycle Bin visibility, optional File Explorer
+  pinning, three spacing presets with previews, and three auto-hide animation
+  speeds. Existing appearance and edge activation delays remain the defaults.
+- Start, Downloads and Recycle Bin can also be hidden with "Remove from Dock"
+  in their context menus. Settings refreshes their saved visibility on focus.
+- Removed Muelle's moon shortcut from the menu bar. Do Not Disturb remains in
+  Settings and clears queued banners while keeping unread badges.
+- Fixed the dock appearing over full-screen playback controls (#33). Full-screen
+  detection now follows owned controls, distinguishes custom-frame maximized
+  windows, and reacts to in-place size changes without permanent polling.
+- Added Z.ai GLM Coding Plan usage limits to the menu bar island. The 5-hour rolling quota and weekly plan limits appear alongside their reset times whenever OpenCode CLI is active with a configured Z.ai Coding Plan key.
 - Fixed notification controls and stray conditional text appearing in Menu Bar
   settings. Each page now starts at the top when selected. Failed preference
   writes remain retryable and keep Settings open until changes can be saved.
@@ -25,8 +60,8 @@ copia la sección de la versión que se publica a la release de GitHub.
 - Added local notification CLI and IPC: `muelle notify --title <TITLE> --body <BODY> [--app <APP>] [--icon <PATH>] [--duration <SECS>]` via lightweight zero-polling `WM_COPYDATA`.
 - New Settings → Notifications section with toggles for banners, position, duration, badges, attention bounce, and Do Not Disturb.
 - Hover previews on dock icons now display a close button ("✕") at the top-left
-  corner on hover with localized tooltip ("Close window"), allowing closing
-  individual windows gracefully via WM_CLOSE without activating them.
+  corner on hover, allowing individual windows to close gracefully via WM_CLOSE
+  without activating them.
 - Middle-clicking any window preview thumbnail or minimized window in the dock
   now closes that window directly.
 - Window previews now support single-window apps as well as multi-window apps,
@@ -39,6 +74,18 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Añadidos ajustes del Dock para ocultar Inicio, Descargas y Papelera, dejar de mantener
+  Explorador fijado, elegir tres espaciados con previsualización y tres velocidades
+  de animación al ocultar. Se conservan el aspecto y las esperas actuales por defecto.
+- Inicio, Descargas y Papelera también se pueden ocultar con «Quitar del Dock»
+  en sus menús contextuales. Ajustes refleja su visibilidad guardada al recuperar el foco.
+- Retirado el acceso de luna de la barra superior. No molestar se mantiene en
+  Ajustes y descarta banners pendientes sin borrar las insignias.
+- Corregido el dock que aparecía sobre los controles de reproducción en pantalla
+  completa (#33). La detección contempla controles flotantes vinculados a su
+  ventana, distingue ventanas maximizadas con marco propio y atiende cambios de
+  tamaño sin sondeo permanente.
+- Incorporado el uso del plan Z.ai GLM Coding Plan a la isla de la barra superior. El cupo móvil de 5 horas y el límite semanal aparecen junto con sus horas de reinicio cuando OpenCode CLI está en ejecución con una clave de Z.ai Coding Plan configurada.
 - Corregidas las opciones de Notificaciones y el texto de una condición que
   aparecían en Barra superior. Cada sección comienza arriba al seleccionarla.
   Los cambios que fallen al guardarse se conservan para reintentar y Ajustes
@@ -56,9 +103,8 @@ copia la sección de la versión que se publica a la release de GitHub.
 - Incorporada interfaz local por línea de comandos e IPC: `muelle notify --title <TÍTULO> --body <CUERPO> [--app <APP>] [--icon <RUTA>] [--duration <SEGS>]` mediante `WM_COPYDATA` ligero y sin sondeos.
 - Nueva sección Ajustes → Notificaciones con opciones de banners, posición, duración, insignias, rebote de atención y No molestar.
 - Las previsualizaciones al pasar el cursor sobre los iconos del dock ahora muestran
-  un botón de cerrar («✕») en la esquina superior izquierda al posarse sobre ellas
-  con mensaje localizado («Cerrar ventana»), permitiendo cerrar ventanas individuales
-  de forma ordenada mediante WM_CLOSE sin activarlas.
+  un botón de cerrar («✕») en la esquina superior izquierda al posarse sobre ellas,
+  permitiendo cerrar ventanas individuales mediante WM_CLOSE sin activarlas.
 - Hacer clic central en cualquier miniatura de previsualización o en ventanas
   minimizadas en el dock ahora cierra esa ventana directamente.
 - Las previsualizaciones ahora admiten tanto apps de una sola ventana como multi-ventana,

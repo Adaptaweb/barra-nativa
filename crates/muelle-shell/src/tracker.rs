@@ -1,15 +1,18 @@
 //! Open windows and the apps they belong to.
 //!
 //! An app identifier is a shell name that can be opened and resolved to an icon
-//! and display name: the lowercase executable path or, for packaged (Store) apps,
-//! `shell:AppsFolder\<AppUserModelID>`.
+//! and display name: the lowercase executable path or, for packaged (Store) apps
+//! and web apps that Windows lists on their own, `shell:AppsFolder\<AppUserModelID>`.
 
 use std::collections::HashMap;
 
 use windows::{
     Win32::{
         Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, WPARAM},
-        Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute},
+        Graphics::{
+            Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute},
+            Gdi::ClientToScreen,
+        },
         Storage::{
             EnhancedStorage::PKEY_AppUserModel_ID, Packaging::Appx::GetApplicationUserModelId,
         },
@@ -20,12 +23,12 @@ use windows::{
         UI::{
             Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow},
             WindowsAndMessaging::{
-                EnumWindows, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow,
-                GetWindow, GetWindowLongW, GetWindowPlacement, GetWindowRect, GetWindowTextLengthW,
-                GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible,
-                IsZoomed, PostMessageW, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SWP_ASYNCWINDOWPOS,
-                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SetWindowPos,
-                WINDOWPLACEMENT, WM_CLOSE, WPF_RESTORETOMAXIMIZED, WS_EX_APPWINDOW,
+                EnumWindows, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetClientRect,
+                GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowPlacement, GetWindowRect,
+                GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
+                IsWindowVisible, IsZoomed, PostMessageW, SM_CXPADDEDBORDER, SM_CXSIZEFRAME,
+                SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+                SetWindowPos, WINDOWPLACEMENT, WM_CLOSE, WPF_RESTORETOMAXIMIZED, WS_EX_APPWINDOW,
                 WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_MAXIMIZE, WS_THICKFRAME,
             },
         },
@@ -33,7 +36,7 @@ use windows::{
     core::{BOOL, PWSTR},
 };
 
-const APPS_FOLDER: &str = "shell:AppsFolder\\";
+pub(crate) const APPS_FOLDER: &str = "shell:AppsFolder\\";
 const FRAME_HOST_CLASS: &str = "ApplicationFrameWindow";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -304,9 +307,9 @@ fn recover_browser_z_order_with(
 
 /// Returns `true` if the foreground window covers the entire `screen`
 /// (for example, video, presentation, or game). The desktop does not count,
-/// and neither does a maximized window: when nothing reserves screen space
-/// (auto-hide), it covers the screen too, but it still has its sizing frame,
-/// which apps drop when they go full screen.
+/// and neither does a normally maximized window: its content still starts
+/// below the title bar. Custom-frame apps may retain maximize/resize style
+/// bits in full screen, so measure their content instead of those styles.
 #[must_use]
 pub fn foreground_is_fullscreen(screen: RECT) -> bool {
     // SAFETY: Read-only queries on the foreground window.
@@ -327,13 +330,71 @@ pub fn foreground_is_fullscreen(screen: RECT) -> bool {
         if pid == GetCurrentProcessId() {
             return false;
         }
-        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-        let maximized = WS_MAXIMIZE.0 | WS_THICKFRAME.0;
-        if style & maximized == maximized {
+        fullscreen_owner_chain(hwnd, screen)
+    }
+}
+
+fn fullscreen_owner_chain(mut hwnd: HWND, screen: RECT) -> bool {
+    // A player's floating playback controls can take focus while their owner
+    // stays full screen. Follow only that owner chain, never unrelated windows.
+    // SAFETY: Read-only queries; bound traversal even if a window changes owners.
+    unsafe {
+        for _ in 0..16 {
+            if IsWindowVisible(hwnd).as_bool()
+                && !IsIconic(hwnd).as_bool()
+                && !is_cloaked(hwnd)
+                && fills_screen(hwnd, screen)
+            {
+                return true;
+            }
+            let Ok(owner) = GetWindow(hwnd, GW_OWNER) else {
+                break;
+            };
+            if owner.is_invalid() {
+                break;
+            }
+            hwnd = owner;
+        }
+    }
+    false
+}
+
+fn fills_screen(hwnd: HWND, screen: RECT) -> bool {
+    // SAFETY: Read-only queries with stack outputs; none sends a synchronous
+    // message to the app, so a hung player cannot block the dock here.
+    unsafe {
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() || !covers(rect, screen) {
             return false;
         }
-        let mut rect = RECT::default();
-        GetWindowRect(hwnd, &mut rect).is_ok() && covers(rect, screen)
+        // Browsers can draw their title bar inside the client area. When
+        // normally maximized they still overflow the screen by the invisible
+        // resize border; full-screen content fits the monitor itself.
+        if GetWindowLongW(hwnd, GWL_STYLE) as u32 & WS_MAXIMIZE.0 != 0 && rect != screen {
+            return false;
+        }
+        if GetClientRect(hwnd, &mut rect).is_err() {
+            return false;
+        }
+        let mut top_left = POINT {
+            x: rect.left,
+            y: rect.top,
+        };
+        let mut bottom_right = POINT {
+            x: rect.right,
+            y: rect.bottom,
+        };
+        ClientToScreen(hwnd, &mut top_left).as_bool()
+            && ClientToScreen(hwnd, &mut bottom_right).as_bool()
+            && covers(
+                RECT {
+                    left: top_left.x,
+                    top: top_left.y,
+                    right: bottom_right.x,
+                    bottom: bottom_right.y,
+                },
+                screen,
+            )
     }
 }
 
@@ -530,7 +591,15 @@ fn app_id(hwnd: HWND) -> Option<String> {
                 // there; its windows say which app they are (Calc, Writer),
                 // and the taskbar shows that app.
                 if is_program(&image) {
-                    normalize_id(&image)
+                    // A program's window may also belong to another app it
+                    // runs: a web app in a browser, which the taskbar shows
+                    // on its own.
+                    window_aumid(hwnd)
+                        .filter(|aumid| crate::pins::is_separate_app(aumid, &image))
+                        .map_or_else(
+                            || normalize_id(&image),
+                            |aumid| format!("{APPS_FOLDER}{aumid}"),
+                        )
                 } else {
                     window_aumid(hwnd).map_or_else(
                         || normalize_id(&image),
@@ -600,6 +669,230 @@ pub fn request_close_window(hwnd: isize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fullscreen_geometry_should_follow_content_instead_of_maximized_style()
+    -> windows::core::Result<()> {
+        use windows::{
+            Win32::{
+                Foundation::LRESULT,
+                System::LibraryLoader::GetModuleHandleW,
+                UI::WindowsAndMessaging::{
+                    CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW,
+                    SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SetWindowLongW, ShowWindow,
+                    UnregisterClassW, WM_NCCALCSIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_POPUP,
+                },
+            },
+            core::w,
+        };
+
+        // Qt and other custom-frame apps can retain resize/maximize styles
+        // while returning the whole window as client area in full-screen mode.
+        unsafe extern "system" fn frameless(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+            if msg == WM_NCCALCSIZE {
+                LRESULT(0)
+            } else {
+                unsafe { DefWindowProcW(hwnd, msg, w, l) }
+            }
+        }
+        struct Fixture(HWND);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = DestroyWindow(self.0);
+                }
+            }
+        }
+        let class = w!("MuelleFullscreenGeometryTest");
+        // Small virtual displays avoid Windows' maximum tracking-size limit
+        // on test machines with smaller monitors or different DPI settings.
+        const SCREEN: RECT = RECT {
+            left: 0,
+            top: 0,
+            right: 800,
+            bottom: 600,
+        };
+        // The test's windows stay hidden, never taking focus from the user.
+        unsafe {
+            let instance = GetModuleHandleW(None)?;
+            let registered = RegisterClassW(&WNDCLASSW {
+                hInstance: instance.into(),
+                lpszClassName: class,
+                lpfnWndProc: Some(frameless),
+                ..Default::default()
+            });
+            assert_ne!(registered, 0);
+            let run = || -> windows::core::Result<()> {
+                for screen in [
+                    SCREEN,
+                    RECT {
+                        left: -800,
+                        right: 0,
+                        ..SCREEN
+                    },
+                ] {
+                    for style in [WS_POPUP, WS_POPUP | WS_THICKFRAME | WS_MAXIMIZE] {
+                        let window = Fixture(CreateWindowExW(
+                            Default::default(),
+                            class,
+                            w!("Fullscreen fixture"),
+                            style & !WS_MAXIMIZE,
+                            screen.left,
+                            screen.top,
+                            800,
+                            600,
+                            None,
+                            None,
+                            Some(instance.into()),
+                            None,
+                        )?);
+                        SetWindowPos(
+                            window.0,
+                            None,
+                            screen.left,
+                            screen.top,
+                            800,
+                            600,
+                            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
+                        )?;
+                        // Preserve the requested full-screen geometry rather than
+                        // letting Windows maximize it to this machine's work area.
+                        SetWindowLongW(window.0, GWL_STYLE, style.0 as i32);
+                        let mut actual = RECT::default();
+                        let mut content = RECT::default();
+                        let mut origin = POINT::default();
+                        GetWindowRect(window.0, &mut actual)?;
+                        GetClientRect(window.0, &mut content)?;
+                        let _ = ClientToScreen(window.0, &mut origin);
+                        assert!(
+                            fills_screen(window.0, screen),
+                            "full-screen content, style {style:?}, window {actual:?}, client {content:?}, origin {origin:?}, screen {screen:?}"
+                        );
+                        assert!(
+                            !fills_screen(
+                                window.0,
+                                RECT {
+                                    left: screen.right,
+                                    right: screen.right + 800,
+                                    ..screen
+                                }
+                            ),
+                            "a different display must stay usable"
+                        );
+                        SetWindowLongW(window.0, GWL_STYLE, (style & !WS_MAXIMIZE).0 as i32);
+                        SetWindowPos(
+                            window.0,
+                            None,
+                            screen.left,
+                            screen.top,
+                            400,
+                            300,
+                            SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                        )?;
+                        SetWindowLongW(window.0, GWL_STYLE, style.0 as i32);
+                        assert!(
+                            !fills_screen(window.0, screen),
+                            "leaving full screen must restore the dock"
+                        );
+                        if style.0 & WS_MAXIMIZE.0 != 0 {
+                            SetWindowLongW(window.0, GWL_STYLE, (style & !WS_MAXIMIZE).0 as i32);
+                            SetWindowPos(
+                                window.0,
+                                None,
+                                screen.left - 8,
+                                screen.top - 8,
+                                816,
+                                616,
+                                SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                            )?;
+                            SetWindowLongW(window.0, GWL_STYLE, style.0 as i32);
+                            assert!(
+                                !fills_screen(window.0, screen),
+                                "a normally maximized custom-frame browser must keep the dock available"
+                            );
+                        }
+                    }
+                    let captioned = Fixture(CreateWindowExW(
+                        Default::default(),
+                        w!("STATIC"),
+                        w!("Captioned fixture"),
+                        WS_OVERLAPPEDWINDOW,
+                        screen.left,
+                        screen.top,
+                        800,
+                        600,
+                        None,
+                        None,
+                        Some(instance.into()),
+                        None,
+                    )?);
+                    assert!(
+                        !fills_screen(captioned.0, screen),
+                        "a captioned screen-sized window is not full screen"
+                    );
+                }
+                // Off-screen, non-activating fixtures exercise actual Win32
+                // ownership and visibility without covering the user's apps.
+                let screen = RECT {
+                    left: -16000,
+                    top: -16000,
+                    right: -15200,
+                    bottom: -15400,
+                };
+                let owner = Fixture(CreateWindowExW(
+                    WS_EX_NOACTIVATE,
+                    class,
+                    w!("Fullscreen owner"),
+                    WS_POPUP,
+                    screen.left,
+                    screen.top,
+                    800,
+                    600,
+                    None,
+                    None,
+                    Some(instance.into()),
+                    None,
+                )?);
+                let controls = Fixture(CreateWindowExW(
+                    WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                    class,
+                    w!("Playback controls"),
+                    WS_POPUP,
+                    screen.left,
+                    screen.bottom - 50,
+                    300,
+                    50,
+                    Some(owner.0),
+                    None,
+                    Some(instance.into()),
+                    None,
+                )?);
+                let _ = ShowWindow(owner.0, SW_SHOWNOACTIVATE);
+                let _ = ShowWindow(controls.0, SW_SHOWNOACTIVATE);
+                assert!(
+                    fullscreen_owner_chain(controls.0, screen),
+                    "playback controls must preserve their owner's fullscreen state"
+                );
+                SetWindowPos(
+                    owner.0,
+                    None,
+                    screen.left,
+                    screen.top,
+                    400,
+                    300,
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                )?;
+                assert!(
+                    !fullscreen_owner_chain(controls.0, screen),
+                    "leaving fullscreen must clear the owned controls too"
+                );
+                Ok(())
+            };
+            let result = run();
+            let _ = UnregisterClassW(class, Some(instance.into()));
+            result
+        }
+    }
 
     #[test]
     #[ignore = "requires an interactive Windows desktop; only moves test windows"]
