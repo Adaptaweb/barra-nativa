@@ -6,7 +6,6 @@ pub mod frame;
 pub mod genie;
 pub mod layout;
 pub mod magnify;
-pub mod notifications;
 pub mod preview;
 pub mod roster;
 pub mod spring;

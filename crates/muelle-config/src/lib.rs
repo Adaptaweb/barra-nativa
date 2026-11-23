@@ -51,6 +51,8 @@ pub struct Config {
     pub taskbar_pins: Option<Vec<String>>,
     #[serde(alias = "auto_hide")]
     pub auto_hide: bool,
+    /// Hide only when the foreground app overlaps the dock; leave desktop visible.
+    pub smart_hide: bool,
     /// Icon side at rest, in logical pixels.
     pub icon_size: u32,
     pub magnification: bool,
@@ -123,28 +125,10 @@ pub struct Config {
     pub shortcuts_folder: Option<String>,
     /// Show a close button ("X") on hover in window preview cards.
     pub show_preview_close_button: bool,
-    /// Desktop notifications system.
-    pub notifications: bool,
-    /// Position of notification banners on screen.
-    pub notification_position: NotificationPosition,
-    /// Auto-dismiss banner duration in seconds.
-    pub notification_duration: u32,
-    /// Red count badge on app icon when notifications / attention are unread.
+    /// Indicator on app icons when Windows requests attention.
     pub notification_badges: bool,
     /// Icon bounce in dock when app requests attention.
     pub notification_bounce: bool,
-    /// Do Not Disturb / Focus mode: silences banners, keeps dock badges.
-    pub notification_dnd: bool,
-    /// List of app identifiers whose notifications are muted.
-    pub muted_apps: Vec<String>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum NotificationPosition {
-    #[default]
-    TopRight,
-    BottomRight,
 }
 
 /// Pinned apps the user gathered in one dock icon by dropping one on
@@ -269,6 +253,11 @@ pub const ICON_SIZE_RANGE: (u32, u32) = (32, 96);
 pub const MAX_MAGNIFIED_SIZE: u32 = 160;
 
 impl Config {
+    /// Either policy needs a reveal strip and leaves maximized windows the full work area.
+    pub fn hides_automatically(&self) -> bool {
+        self.auto_hide || self.smart_hide
+    }
+
     /// Brings out-of-range values (a hand-edited file) back into range.
     #[must_use]
     pub fn sanitized(mut self) -> Self {
@@ -280,7 +269,6 @@ impl Config {
             .shortcuts_folder
             .map(|folder| folder.trim().to_owned())
             .filter(|folder| !folder.is_empty());
-        self.notification_duration = self.notification_duration.clamp(1, 30);
         self
     }
 
@@ -304,6 +292,7 @@ impl Default for Config {
             recent: Vec::new(),
             taskbar_pins: None,
             auto_hide: false,
+            smart_hide: false,
             icon_size: 48,
             magnification: true,
             dock_position: DockPosition::Bottom,
@@ -338,13 +327,8 @@ impl Default for Config {
             language: Language::Auto,
             shortcuts_folder: None,
             show_preview_close_button: true,
-            notifications: true,
-            notification_position: NotificationPosition::TopRight,
-            notification_duration: 5,
             notification_badges: true,
             notification_bounce: true,
-            notification_dnd: false,
-            muted_apps: Vec::new(),
         }
     }
 }
@@ -478,6 +462,31 @@ fn write_config(path: &Path, config: &Config) -> Result<(), ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn intelligent_hiding_defaults_off_and_retired_banner_preferences_are_ignored()
+    -> Result<(), serde_json::Error> {
+        let old: Config = serde_json::from_value(serde_json::json!({
+            "notifications": true, "notificationPosition": "top-right",
+            "notificationDuration": 5, "notificationDnd": true,
+            "notificationBadges": false, "autoHide": false
+        }))?;
+        assert!(!old.smart_hide && !old.hides_automatically());
+        assert!(!old.notification_badges);
+        let saved = serde_json::to_value(&old)?;
+        assert!(saved.get("notifications").is_none());
+        assert_eq!(saved.get("smartHide"), Some(&serde_json::json!(false)));
+        Ok(())
+    }
+
+    #[test]
+    fn explicitly_enabled_intelligent_hiding_survives_round_trip() -> Result<(), serde_json::Error>
+    {
+        let enabled: Config = serde_json::from_str(r#"{"smartHide":true,"autoHide":false}"#)?;
+        let restored: Config = serde_json::from_str(&serde_json::to_string(&enabled)?)?;
+        assert!(restored.smart_hide && restored.hides_automatically());
+        Ok(())
+    }
 
     #[test]
     fn older_configs_keep_the_original_dock_defaults() -> Result<(), serde_json::Error> {

@@ -8,6 +8,36 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+## [0.1.21]
+
+### English
+
+- Removed Muelle's custom notification cards, notification CLI/IPC and banner
+  settings. Windows notifications remain managed by Windows; native dock
+  attention indicators and bounce are retained.
+- Added optional intelligent Dock hiding, disabled by default. When enabled,
+  maximized windows use the full work area and the Dock hides when the active
+  app overlaps it. Enable it independently of always-auto-hide in Settings.
+- Claude Desktop background processes no longer imply active use. Native Claude
+  Code is distinguished from Desktop, and missing credentials name the required
+  Claude Code sign-in instead of promising Desktop authentication works.
+- Recreate dock/menu-bar backdrop materials on Windows theme/colorization changes,
+  even when cached light/glass flags are unchanged.
+
+### Español
+
+- Retirados los banners personalizados, su CLI/IPC y sus ajustes. Windows
+  conserva sus notificaciones; permanecen el indicador de atención y el rebote
+  del Dock.
+- Añadida ocultación inteligente del Dock, desactivada por defecto. Al activarla,
+  las ventanas maximizadas aprovechan el área útil completa y el Dock se oculta
+  si la app activa ocupa su espacio, independientemente del auto-hide.
+- Claude Desktop cerrado en segundo plano ya no cuenta como uso activo. Se
+  distingue el cliente nativo de Claude Code de Desktop y, sin credenciales,
+  se indica cómo iniciar sesión en Claude Code.
+- Los cambios de tema/color del compositor reconstruyen el cristal del Dock y
+  la barra, aunque las opciones de claro/oscuro y transparencia no hayan cambiado.
+
 ## [0.1.20]
 
 ### English

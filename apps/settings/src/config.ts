@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type Language = "auto" | "es" | "en" | "fr";
-export type NotificationPosition = "top-right" | "bottom-right";
 export type IslandStyle = "notch" | "bubble";
 export type GenieSpeed = "normal" | "fast" | "faster";
 export type DockPosition = "left" | "bottom" | "right";
@@ -14,6 +13,7 @@ export interface Config {
   pinned: string[];
   recent: string[];
   autoHide: boolean;
+  smartHide: boolean;
   iconSize: number;
   magnification: boolean;
   magnifiedSize: number;
@@ -43,13 +43,8 @@ export interface Config {
   showIndicators: boolean;
   showRecents: boolean;
   bounceOnOpen: boolean;
-  notifications: boolean;
-  notificationPosition: NotificationPosition;
-  notificationDuration: number;
   notificationBadges: boolean;
   notificationBounce: boolean;
-  notificationDnd: boolean;
-  mutedApps: string[];
   mascot: boolean;
   checkUpdates: boolean;
   autoUpdate: boolean;

@@ -82,12 +82,12 @@ use windows::{
                 RegisterShellHookWindow, RegisterWindowMessageW, SM_CXDRAG, SM_SWAPBUTTON,
                 SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetTimer, SetWindowPos,
                 WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP,
-                WM_CAPTURECHANGED, WM_CLOSE, WM_COPYDATA, WM_DESTROY, WM_DISPLAYCHANGE,
-                WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-                WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_QUIT, WM_RBUTTONUP,
-                WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-                WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
-                WS_POPUP,
+                WM_CAPTURECHANGED, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED,
+                WM_DWMCOLORIZATIONCOLORCHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
+                WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_QUIT,
+                WM_RBUTTONUP, WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW,
+                WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
+                WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
             },
         },
     },
@@ -106,7 +106,6 @@ use crate::{
     menu::{self, MenuItem},
     menubar::{MenuBar, MenuBarWidgets},
     multi_window_view::{self, MultiWindowAction, MultiWindowView},
-    notification_banner,
     scene::{Drag, Frame, Scene, SceneInput, SlotContent, Theme},
     shell_work::{self, Action as ShellAction},
     strings::{self, text},
@@ -576,6 +575,7 @@ struct StageKey {
     glass: bool,
     bin_full: bool,
     auto_hide: bool,
+    smart_hide: bool,
     icon_size: u32,
     density: DockDensity,
     max_scale: f32,
@@ -657,6 +657,17 @@ struct SwitcherFollow {
     order: Vec<isize>,
     index: usize,
     tab_down: bool,
+}
+
+fn rects_overlap(a: RECT, b: RECT) -> bool {
+    a.left < a.right
+        && a.top < a.bottom
+        && b.left < b.right
+        && b.top < b.bottom
+        && a.left < b.right
+        && b.left < a.right
+        && a.top < b.bottom
+        && b.top < a.bottom
 }
 
 struct Stage {
@@ -770,6 +781,7 @@ pub(crate) struct App {
     taskbar_retry: bool,
     taskbar_attempts: u8,
     fullscreen: bool,
+    smart_hidden: bool,
     roster: Roster,
     tracker: WindowTracker,
     windows: Vec<TrackedWindow>,
@@ -825,7 +837,6 @@ pub(crate) struct App {
     pointed: bool,
     pending_drop: Option<Outside>,
     bounces: HashMap<String, Bounce>,
-    notifications: muelle_core::notifications::NotificationQueue,
     /// Minimized windows, in the order they were minimized.
     minimized: Vec<isize>,
     thumbnails: Thumbnails,
@@ -1336,6 +1347,7 @@ impl App {
             glass: transparency_enabled(),
             bin_full: self.bin_full,
             auto_hide: self.config.auto_hide,
+            smart_hide: self.config.smart_hide,
             icon_size: self.config.icon_size,
             density: self.config.dock_density,
             max_scale: self.config.max_scale(),
@@ -1432,7 +1444,7 @@ impl App {
         };
         let frame = DockFrame::new(edge, (dock_x, dock_y), dock.height);
         // A hidden dock leaves the whole screen to maximized windows.
-        let strip = if self.config.auto_hide {
+        let strip = if self.config.hides_automatically() {
             0
         } else {
             (dock.height + 2.0 * margin) as i32
@@ -1629,16 +1641,18 @@ impl App {
             layout: dock,
         };
         self.stage = Some(stage);
+        self.update_smart_hiding()?;
         self.sync_badge_visuals()?;
         self.place_windows()?;
         self.schedule_trim();
         self.render()?;
         // Last: reserving space is a synchronous call to Explorer (40-60 ms
         // measured), and the dock is already on screen meanwhile.
+        let automatic = self.config.hides_automatically();
         if let Some(appbar) = &mut self.appbar {
             // Auto-hide reserves zero height. Moving the dock must never
             // change the destination monitor's work area.
-            let reservation = if self.config.auto_hide {
+            let reservation = if automatic {
                 primary_monitor().map_or(screen, |primary| primary.screen)
             } else {
                 screen
@@ -1663,7 +1677,7 @@ impl App {
         // dock (for example, after launching an app with a dock click).
         let input_zone = if self.hovering || self.drag.is_some() {
             &stage.hover_zone
-        } else if self.config.auto_hide && self.slide.target == 1.0 {
+        } else if self.config.hides_automatically() && self.slide.target == 1.0 {
             &stage.edge_zone
         } else {
             &stage.rest_zone
@@ -2128,7 +2142,7 @@ impl App {
         unsafe {
             let _ = KillTimer(Some(self.input), PREVIEW_TIMER);
         }
-        if self.preview.take().is_some() && self.config.auto_hide && !self.hovering {
+        if self.preview.take().is_some() && self.config.hides_automatically() && !self.hovering {
             unsafe { SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None) };
         }
     }
@@ -2235,7 +2249,7 @@ impl App {
         }
         self.amount.target = 0.0;
         self.last_frame = Instant::now();
-        if self.config.auto_hide {
+        if self.config.hides_automatically() {
             // SAFETY: Timer on our own window.
             unsafe { SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None) };
         }
@@ -2272,7 +2286,7 @@ impl App {
             SetTimer(Some(self.input), SWITCHER_TIMER, SWITCHER_POLL_MS, None);
             let _ = KillTimer(Some(self.input), HIDE_TIMER);
         }
-        if self.config.auto_hide && !self.fullscreen {
+        if self.config.hides_automatically() && !self.fullscreen {
             self.slide.target = 0.0;
             self.last_frame = Instant::now();
             self.place_windows()?;
@@ -2551,7 +2565,7 @@ impl App {
                 return;
             }
         }
-        if matches!(place, mascot::Place::Along { .. }) && self.config.auto_hide {
+        if matches!(place, mascot::Place::Along { .. }) && self.config.hides_automatically() {
             // Reveal only after the mascot and its cleanup timer exist.
             unsafe {
                 let _ = KillTimer(Some(self.input), HIDE_TIMER);
@@ -2578,7 +2592,7 @@ impl App {
         // mascot timer, and resume the usual dock hiding delay after an act.
         unsafe {
             let _ = KillTimer(Some(self.input), MASCOT_TIMER);
-            if active && self.config.auto_hide {
+            if active && self.config.hides_automatically() {
                 SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None);
             }
         }
@@ -2673,7 +2687,7 @@ impl App {
     }
 
     fn hide_if_unused(&mut self) -> Result<()> {
-        if !self.config.auto_hide
+        if !(self.config.auto_hide || self.smart_hidden)
             || self.mascot.is_some()
             || self.menu_open
             || self.drag_over
@@ -3286,7 +3300,7 @@ impl App {
         if !drag.from_group || self.hovering {
             return Ok(());
         }
-        if self.config.auto_hide {
+        if self.config.hides_automatically() {
             // SAFETY: Timer on our own window.
             unsafe { SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None) };
         }
@@ -3509,7 +3523,7 @@ impl App {
 
     fn close_group_view(&mut self) {
         if self.group_view.take().is_some()
-            && self.config.auto_hide
+            && self.config.hides_automatically()
             && !self.hovering
             && self.drag.is_none()
         {
@@ -4037,18 +4051,21 @@ impl App {
             self.restore_transitions();
             self.snapshots.clear();
         }
-        if config.notification_dnd || !config.notifications {
-            self.notifications.clear_banners();
-            notification_banner::NotificationBannerView::hide();
-        }
-        if config.auto_hide != self.config.auto_hide {
-            self.slide.target = if config.auto_hide { 1.0 } else { 0.0 };
-            self.last_frame = Instant::now();
-        }
+        let hiding_changed = config.auto_hide != self.config.auto_hide
+            || config.smart_hide != self.config.smart_hide;
         let moved = config.dock_position != self.config.dock_position;
         apply_explorer_pin(&mut self.roster, config.pin_explorer);
         self.slide.omega = config.dock_auto_hide_speed.omega();
         self.config = config;
+        self.smart_hidden &= self.config.smart_hide;
+        if hiding_changed {
+            if self.config.auto_hide || self.smart_hidden {
+                self.hide_if_unused()?;
+            } else {
+                self.slide.target = 0.0;
+                self.last_frame = Instant::now();
+            }
+        }
         if moved {
             // A hidden dock comes out of its new edge on every display.
             self.apply_edge_settings();
@@ -4142,7 +4159,11 @@ impl App {
 
     fn toggle_hiding(&mut self) -> Result<()> {
         self.config.auto_hide = save_dock_config(&self.roster, &self.config, true)?.auto_hide;
-        self.slide.target = if self.config.auto_hide { 1.0 } else { 0.0 };
+        self.slide.target = if self.config.auto_hide || self.smart_hidden {
+            1.0
+        } else {
+            0.0
+        };
         self.last_frame = Instant::now();
         self.apply_edge_settings();
         self.refresh()?;
@@ -4206,162 +4227,29 @@ impl App {
                 self.sync_badge_visuals()?;
                 self.render()?;
             }
-            if (self.config.notification_badges || self.config.notifications)
-                && !self.config.muted_apps.contains(&app_id)
-            {
-                let title = tracker::title(hwnd);
-                let app_name = muelle_shell::names::display_name(&app_id);
-                let app_name = if app_name.is_empty() {
-                    title.clone()
-                } else {
-                    app_name
-                };
-                let pushed = self.notifications.push(
-                    app_id.clone(),
-                    app_name,
-                    title,
-                    String::new(),
-                    None,
-                    Some(hwnd),
-                    self.config.notification_duration as u64 * 1000,
-                    self.config.notification_dnd || !self.config.notifications,
-                    false,
-                );
-                if self.config.notification_badges {
-                    let _ = self.render();
-                }
-                if pushed.is_some() {
-                    self.show_active_banners();
-                }
-            }
+            // HSHELL_FLASH is only an attention request: it carries neither a
+            // notification body nor an unread count. Repeated flashes must not
+            // manufacture banners or increment message counters.
         }
         Ok(())
     }
 
-    fn show_active_banners(&self) {
-        if self.fullscreen || self.config.notification_dnd || !self.config.notifications {
-            return;
-        }
-        let pos = match self.config.notification_position {
-            muelle_config::NotificationPosition::TopRight => {
-                muelle_core::notifications::BannerPosition::TopRight
-            }
-            muelle_config::NotificationPosition::BottomRight => {
-                muelle_core::notifications::BannerPosition::BottomRight
-            }
-        };
-        let work_area = primary_monitor().map_or(
-            Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1920.0,
-                height: 1080.0,
-            },
-            |m| Rect {
-                x: m.screen.left as f32,
-                y: m.screen.top as f32,
-                width: (m.screen.right - m.screen.left) as f32,
-                height: (m.screen.bottom - m.screen.top) as f32,
-            },
-        );
-        let scale = self.dock_monitor().map_or(1.0, |m| m.scale);
-        let theme = Theme::for_system(uses_light_theme(), transparency_enabled());
-        let _ = notification_banner::NotificationBannerView::ensure_or_create(
-            &self.gfx, pos, work_area, scale, theme,
-        );
-        let _ =
-            notification_banner::NotificationBannerView::sync_queue(&self.gfx, &self.notifications);
-    }
-
-    pub fn on_notification(&mut self, payload: muelle_shell::dock_link::NotificationPayload) {
-        if !self.config.notifications {
-            return;
-        }
-        let muted = self.config.muted_apps.contains(&payload.app_id);
-        if muted {
-            return;
-        }
-
-        let duration_ms = (payload.duration_secs.max(1) as u64) * 1000;
-        let dnd = self.config.notification_dnd;
-
-        let pushed = self.notifications.push(
-            payload.app_id.clone(),
-            payload.app_name.clone(),
-            payload.title.clone(),
-            payload.body.clone(),
-            payload.icon_path.clone(),
-            None,
-            duration_ms,
-            dnd,
-            false,
-        );
-
-        if self.config.notification_bounce && animations_enabled() {
-            self.start_bounce(
-                payload.app_id.clone(),
-                Some(ATTENTION_HOPS * bounce::HOP_SECONDS),
-            );
-        }
-
-        if self.config.notification_badges {
-            let _ = self.sync_badge_visuals().and_then(|()| self.render());
-        }
-
-        if pushed.is_some() {
-            self.show_active_banners();
-        }
-    }
-
-    pub fn dismiss_notification(&mut self, id: u64) {
-        self.notifications.dismiss(id);
-        let _ =
-            notification_banner::NotificationBannerView::sync_queue(&self.gfx, &self.notifications);
-    }
-
-    pub fn tick_notifications(&mut self, delta_ms: u64) {
-        let expired = self.notifications.tick(delta_ms);
-        if !expired.is_empty() {
-            let _ = notification_banner::NotificationBannerView::sync_queue(
-                &self.gfx,
-                &self.notifications,
-            );
-        }
-    }
-
-    pub fn clear_notification_badge(&mut self, app_id: &str) {
-        if self.notifications.badge_count(app_id) > 0 {
-            self.notifications.clear_badge(app_id);
-            let _ = self.sync_badge_visuals().and_then(|()| self.render());
-        }
-    }
-
     fn sync_badge_visuals(&mut self) -> Result<()> {
         if let Some(stage) = &mut self.stage {
-            stage.scene.set_notification_counts(
-                &self.gfx,
-                self.entries.iter().map(|entry| {
-                    if self.config.notification_badges {
-                        entry
-                            .id
-                            .as_deref()
-                            .map_or(0, |id| self.notifications.badge_count(id))
-                    } else {
-                        0
-                    }
-                }),
-            )?;
             stage.scene.set_attention(
                 &self.gfx,
                 self.entries.iter().map(|entry| {
                     self.attention_enabled
+                        && self.config.notification_badges
                         && entry_has_attention(&self.attention, &self.windows, entry)
                 }),
             )?;
         }
         if let Some(view) = &mut self.group_view {
             view.set_attention(&self.gfx, |id| {
-                self.attention_enabled && app_has_attention(&self.attention, &self.windows, id)
+                self.attention_enabled
+                    && self.config.notification_badges
+                    && app_has_attention(&self.attention, &self.windows, id)
             })?;
         }
         Ok(())
@@ -4649,16 +4537,16 @@ impl App {
 
     fn dock_monitor(&self) -> Option<Monitor> {
         self.dock_display
-            .filter(|_| self.config.auto_hide)
+            .filter(|_| self.config.hides_automatically())
             .and_then(monitor_at)
             .or_else(primary_monitor)
     }
 
     fn apply_edge_settings(&mut self) {
-        if !self.config.auto_hide {
+        if !self.config.hides_automatically() {
             self.dock_display = None;
         }
-        let mut screens = if self.config.auto_hide {
+        let mut screens = if self.config.hides_automatically() {
             monitor_rects()
         } else {
             Vec::new()
@@ -4687,7 +4575,7 @@ impl App {
     fn edge_changed(&mut self) -> Result<()> {
         // Explorer can recreate a secondary taskbar while the dock is running.
         // Check on monitor entry so it is transparent before the edge dwell.
-        if self.config.auto_hide
+        if self.config.hides_automatically()
             && self.taskbar_worker.is_none()
             && taskbar::needs_visibility_repair()
         {
@@ -4697,7 +4585,11 @@ impl App {
         let on_dock_edge = matches!(target, Some(EdgeTarget::Dock(screen))
             if self.stage.as_ref().is_some_and(|stage| stage.key.screen == screen));
         self.arm_edge_timer(wait);
-        if !on_dock_edge && self.config.auto_hide && !self.hovering && self.slide.target == 0.0 {
+        if !on_dock_edge
+            && self.config.hides_automatically()
+            && !self.hovering
+            && self.slide.target == 0.0
+        {
             // SAFETY: Existing hide timer on the dock input window.
             unsafe {
                 SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None);
@@ -4742,7 +4634,7 @@ impl App {
         let mouse_down = [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON]
             .into_iter()
             .any(|key| unsafe { GetAsyncKeyState(i32::from(key.0)) < 0 });
-        if !self.config.auto_hide
+        if !self.config.hides_automatically()
             || self.hovering
             || self.menu_open
             || self.press.is_some()
@@ -4830,6 +4722,37 @@ impl App {
         }
     }
 
+    fn update_smart_hiding(&mut self) -> Result<()> {
+        let front = tracker::foreground_window();
+        let covered = self.config.smart_hide
+            && self.windows.iter().any(|window| window.hwnd == front)
+            && self.stage.as_ref().is_some_and(|stage| {
+                tracker::screen_rect(front).is_some_and(|(rect, _)| {
+                    rects_overlap(
+                        stage.screen_rect(Rect {
+                            x: 0.0,
+                            y: 0.0,
+                            width: stage.layout.width,
+                            height: stage.layout.height,
+                        }),
+                        rect,
+                    )
+                })
+            });
+        if covered != self.smart_hidden {
+            self.smart_hidden = covered;
+            if self.config.auto_hide || covered {
+                self.hide_if_unused()?;
+            } else {
+                self.slide.target = 0.0;
+                self.last_frame = Instant::now();
+                self.place_windows()?;
+            }
+            self.render()?;
+        }
+        Ok(())
+    }
+
     fn update_fullscreen(&mut self) -> Result<()> {
         // The window in front is where the user works: note where it is now.
         let front = tracker::foreground_window();
@@ -4897,6 +4820,7 @@ impl App {
                 let _ = KillTimer(Some(self.input), FULLSCREEN_TIMER);
             }
         }
+        self.update_smart_hiding()?;
         // Updating an app name can fail transiently; it must never prevent
         // the dock or bar from returning after full-screen mode.
         if let Err(error) = self.update_menu_bar_app() {
@@ -4908,10 +4832,6 @@ impl App {
     fn on_foreground_changed(&mut self) -> Result<()> {
         self.close_preview();
         let foreground = tracker::foreground_window();
-        if let Some(window) = self.windows.iter().find(|w| w.hwnd == foreground) {
-            let app_id = window.app_id.clone();
-            self.clear_notification_badge(&app_id);
-        }
         self.flights.retain(|flight| flight.is_current(foreground));
         // The app roster can stay identical while its windows change z-order.
         // Refresh their order so the next dock activation selects the actual
@@ -5580,6 +5500,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             unsafe { SetTimer(Some(hwnd), BIN_TIMER, BIN_DELAY_MS, None) };
         }
         WM_SETTINGCHANGE if w.0 == SPI_SETWORKAREA => {}
+        WM_DWMCOLORIZATIONCOLORCHANGED | WM_THEMECHANGED => {
+            with_app("material del sistema", |app| {
+                app.stage = None;
+                if let Some(bar) = &mut app.menubar {
+                    bar.invalidate_material();
+                }
+                Ok(())
+            });
+            // Reuse the deferred refresh so DWM can finish changing its backdrop.
+            unsafe {
+                SetTimer(Some(hwnd), REFRESH_TIMER, REFRESH_DELAY_MS, None);
+            }
+        }
         WM_SETTINGCHANGE | WM_DISPLAYCHANGE | WM_DPICHANGED => {
             if matches!(msg, WM_DISPLAYCHANGE | WM_DPICHANGED) {
                 with_app("pantalla de la mascota", |app| {
@@ -5717,28 +5650,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         }
         // A folder's submenu in the shortcuts folder's menu is about to open.
         WM_INITMENUPOPUP if folder_menu::init_popup(HMENU(w.0 as *mut _)) => {}
-        WM_COPYDATA => {
-            let cds =
-                unsafe { &*(l.0 as *const windows::Win32::System::DataExchange::COPYDATASTRUCT) };
-            if cds.dwData == muelle_shell::dock_link::NOTIFY_DATA_TAG && cds.cbData > 0 {
-                let bytes = unsafe {
-                    std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize)
-                };
-                if let Some(payload) = std::str::from_utf8(bytes)
-                    .ok()
-                    .and_then(muelle_shell::dock_link::NotificationPayload::decode)
-                {
-                    with_app("notificación", |app| {
-                        app.on_notification(payload);
-                        Ok(())
-                    });
-                    return LRESULT(1);
-                }
-            }
-        }
         WM_DESTROY => {
-            notification_banner::NotificationBannerView::hide();
-            muelle_shell::system::set_windows_toasts_enabled(true);
             unsafe { PostQuitMessage(0) };
         }
         _ if SHELL_HOOK.get() == Some(&msg) => match w.0 {
@@ -5898,6 +5810,7 @@ pub fn run() -> Result<()> {
             taskbar_retry: false,
             taskbar_attempts: 0,
             fullscreen: false,
+            smart_hidden: false,
             roster,
             tracker: WindowTracker::default(),
             windows: Vec::new(),
@@ -5935,7 +5848,6 @@ pub fn run() -> Result<()> {
             pointed: false,
             pending_drop: None,
             bounces: HashMap::new(),
-            notifications: muelle_core::notifications::NotificationQueue::new(),
             minimized: Vec::new(),
             thumbnails: Thumbnails::new(visual),
             flights: Vec::new(),
@@ -6050,9 +5962,6 @@ pub fn run() -> Result<()> {
         DROP_WINDOW.store(input.0 as isize, Ordering::Relaxed);
 
         app.schedule_update();
-        if app.config.notifications {
-            muelle_shell::system::set_windows_toasts_enabled(false);
-        }
         APP.set(Some(app));
     }
 
@@ -6086,7 +5995,6 @@ pub fn run() -> Result<()> {
             app.taskbar_worker.take()
         })
     });
-    muelle_shell::system::set_windows_toasts_enabled(true);
     APP.set(None);
     // SAFETY: Balances `OleInitialize` above, on the same thread.
     unsafe { OleUninitialize() };
@@ -6100,6 +6008,65 @@ pub fn run() -> Result<()> {
 #[cfg(test)]
 mod dock_preferences_tests {
     use super::*;
+
+    #[test]
+    fn intelligent_hiding_requires_real_overlap_on_every_dock_edge() {
+        let screen = RECT {
+            left: -1600,
+            top: -200,
+            right: 0,
+            bottom: 800,
+        };
+        for dock in [
+            RECT {
+                left: -1200,
+                top: 710,
+                right: -400,
+                bottom: 790,
+            },
+            RECT {
+                left: -1590,
+                top: 0,
+                right: -1510,
+                bottom: 600,
+            },
+            RECT {
+                left: -90,
+                top: 0,
+                right: -10,
+                bottom: 600,
+            },
+        ] {
+            assert!(rects_overlap(dock, screen));
+            assert!(!rects_overlap(
+                dock,
+                RECT {
+                    left: 10,
+                    top: 0,
+                    right: 810,
+                    bottom: 700
+                }
+            ));
+            assert!(!rects_overlap(
+                dock,
+                RECT {
+                    left: dock.right,
+                    top: dock.top,
+                    right: dock.right + 10,
+                    bottom: dock.bottom
+                }
+            ));
+            assert!(!rects_overlap(
+                dock,
+                RECT {
+                    left: dock.left + 1,
+                    right: dock.left + 1,
+                    top: dock.top,
+                    bottom: dock.bottom
+                }
+            ));
+        }
+    }
 
     #[test]
     fn removing_fixed_shortcuts_preserves_folders_pins_and_other_preferences() -> Result<()> {
@@ -6117,7 +6084,7 @@ mod dock_preferences_tests {
         let initial = Config {
             pinned: vec!["editor".into()],
             shortcuts_folder: Some("C:\\Projects".into()),
-            notification_dnd: true,
+            notification_badges: false,
             ..Config::default()
         };
         muelle_config::save(&file.0, &initial)?;
@@ -6129,7 +6096,7 @@ mod dock_preferences_tests {
         assert!(!saved.show_downloads && !saved.show_trash && !saved.show_start);
         assert_eq!(saved.pinned, initial.pinned);
         assert_eq!(saved.shortcuts_folder, initial.shortcuts_folder);
-        assert!(saved.notification_dnd);
+        assert!(!saved.notification_badges);
         let before = std::fs::read(&file.0)?;
         assert!(hide_fixed_item(&file.0, Role::App).is_err());
         assert_eq!(std::fs::read(&file.0)?, before);

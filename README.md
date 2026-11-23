@@ -160,6 +160,5 @@ project. It makes two kinds of network requests, both optional:
   the key from OpenCode's local `auth.json` or `ZAI_API_KEY` /
   `ZHIPU_API_KEY`, then sends it to Z.ai's quota service. Turn usage queries
   off in Settings → Menu bar → *Show AI provider usage*.
-- **Notifications:** notification content and banners are processed strictly in memory on your local machine and are never written to disk, saved in log files, or transmitted over the network.
 
 Details: [muelle.crafter.run/privacy](https://muelle.crafter.run/privacy).

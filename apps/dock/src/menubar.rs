@@ -972,6 +972,7 @@ fn draw_usage_row(
     } else {
         let message = match usage.state {
             State::Loading => text.usage_loading,
+            State::SignIn if provider == Provider::Claude => text.usage_claude_sign_in,
             State::SignIn => text.usage_sign_in,
             State::Ready | State::Unavailable => text.usage_unavailable,
         };
@@ -1752,6 +1753,12 @@ impl MenuBar {
                 x: self.bounds.left + ((left + right) * 0.5) as i32,
                 y: self.bounds.bottom + 6,
             })
+    }
+
+    /// Discards cached material after a Windows theme/compositor change.
+    pub fn invalidate_material(&mut self) {
+        // The host backdrop can change while light/glass booleans stay equal.
+        self.look = None;
     }
 
     /// Redraws the bar if anything it shows has changed.
@@ -4088,6 +4095,17 @@ mod island_tests {
         assert!(bar.release_volume(Some(200.0))?); // Late up after capture loss/timer.
         assert!(!bar.release_volume(Some(200.0))?);
         bar.status.volume = None;
+        // DWM/theme changes can require a new host backdrop while the visible
+        // theme flags remain identical. A cached Look must not suppress it.
+        bar.look = Some(look.clone());
+        let previous_material = bar.surface.Children()?.First()?.Current()?;
+        bar.invalidate_material();
+        assert!(bar.look.is_none());
+        bar.apply_look(&gfx, look.clone())?;
+        assert_ne!(
+            bar.surface.Children()?.First()?.Current()?,
+            previous_material
+        );
         bar.build(&gfx, &look)?;
         assert!(
             !bar.island_hits

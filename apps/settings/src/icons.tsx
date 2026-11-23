@@ -6,13 +6,12 @@
 
 import type { ReactNode } from "react";
 
-export type SectionId = "dock" | "windows" | "menubar" | "notifications" | "system";
+export type SectionId = "dock" | "windows" | "menubar" | "system";
 
 const TILES: Record<SectionId, [string, string]> = {
   dock: ["#4aa3ff", "#0a6cf0"],
   windows: ["#b57bff", "#7d3ff0"],
   menubar: ["#ff9f45", "#f0640a"],
-  notifications: ["#ff453a", "#d70015"],
   system: ["#a1a1a6", "#6e6e73"],
 };
 
@@ -40,14 +39,6 @@ const GLYPHS: Record<SectionId, ReactNode> = {
       <rect x="4" y="5" width="16" height="14" rx="2" fill="#fff" opacity="0.55" />
       <rect x="4" y="5" width="16" height="3.6" rx="1.6" fill="#fff" />
       <circle cx="16.8" cy="6.8" r="0.9" fill="#f0640a" />
-    </>
-  ),
-  // A notification banner card.
-  notifications: (
-    <>
-      <rect x="4" y="6" width="16" height="12" rx="2" fill="#fff" opacity="0.55" />
-      <rect x="4" y="6" width="16" height="4" rx="1.6" fill="#fff" />
-      <circle cx="17" cy="8" r="1.5" fill="#d70015" />
     </>
   ),
   // A gear.

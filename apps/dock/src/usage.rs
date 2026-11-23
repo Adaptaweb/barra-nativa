@@ -192,7 +192,12 @@ pub fn active_providers() -> ActiveProviders {
                 .unwrap_or(entry.szExeFile.len());
             let name = String::from_utf16_lossy(&entry.szExeFile[..name_len]);
             match name.to_ascii_lowercase().as_str() {
-                "claude.exe" => active.0[Provider::Claude as usize] = true,
+                "claude.exe" => {
+                    if !active.has(Provider::Claude) {
+                        active.0[Provider::Claude as usize] =
+                            claude_process_in_use(entry.th32ProcessID);
+                    }
+                }
                 "codex.exe" => active.0[Provider::Codex as usize] = true,
                 "opencode.exe" => {
                     active.0[Provider::OpenCode as usize] = true;
@@ -218,6 +223,114 @@ pub fn active_providers() -> ActiveProviders {
         let _ = CloseHandle(snapshot);
     }
     active
+}
+
+fn claude_process_in_use(pid: u32) -> bool {
+    use windows::Win32::{
+        System::Threading::{
+            OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+            QueryFullProcessImageNameW,
+        },
+        UI::WindowsAndMessaging::{
+            EnumWindows, GWL_EXSTYLE, GetWindowLongPtrW, GetWindowTextLengthW,
+            GetWindowThreadProcessId, IsWindowVisible, WS_EX_TOOLWINDOW,
+        },
+    };
+    use windows::core::{BOOL, PWSTR};
+    static IMAGES: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, bool>>> =
+        std::sync::OnceLock::new();
+    let path = unsafe {
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+            .ok()
+            .and_then(|handle| {
+                let mut buffer = [0u16; 1024];
+                let mut length = buffer.len() as u32;
+                let result = QueryFullProcessImageNameW(
+                    handle,
+                    PROCESS_NAME_WIN32,
+                    PWSTR(buffer.as_mut_ptr()),
+                    &mut length,
+                );
+                let _ = CloseHandle(handle);
+                result
+                    .ok()
+                    .map(|()| PathBuf::from(String::from_utf16_lossy(&buffer[..length as usize])))
+            })
+    };
+    if let Some(path) = path {
+        let cache = IMAGES.get_or_init(Default::default);
+        let cached = cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&path)
+            .copied();
+        let console = cached.unwrap_or_else(|| {
+            // The CLI and Desktop share a filename. Their PE subsystem reliably
+            // distinguishes a console client from Electron, independent of install path.
+            let Some(console) = console_image(&path) else {
+                return false;
+            };
+            let mut cache = cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if cache.len() >= 32 {
+                cache.clear();
+            }
+            cache.insert(path, console);
+            console
+        });
+        if console {
+            return true;
+        }
+    }
+    // Desktop is in use only while it owns an application window (minimized
+    // windows count). Background updaters/renderers do not qualify.
+    struct Visible {
+        pid: u32,
+        found: bool,
+    }
+    unsafe extern "system" fn find(hwnd: HWND, data: LPARAM) -> BOOL {
+        let state = unsafe { &mut *(data.0 as *mut Visible) };
+        let mut owner = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, Some(&mut owner));
+        }
+        if owner == state.pid
+            && unsafe { IsWindowVisible(hwnd) }.as_bool()
+            && unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } & WS_EX_TOOLWINDOW.0 as isize == 0
+            && unsafe { GetWindowTextLengthW(hwnd) } > 0
+        {
+            state.found = true;
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
+    let mut state = Visible { pid, found: false };
+    // SAFETY: EnumWindows invokes this callback synchronously while `state` lives.
+    unsafe {
+        let _ = EnumWindows(Some(find), LPARAM((&raw mut state) as isize));
+    }
+    state.found
+}
+
+fn console_image(path: &Path) -> Option<bool> {
+    let mut file = fs::File::open(path).ok()?;
+    let mut dos = [0u8; 64];
+    file.read_exact(&mut dos).ok()?;
+    if &dos[..2] != b"MZ" {
+        return None;
+    }
+    let offset = u32::from_le_bytes(dos[60..64].try_into().ok()?);
+    if !(64..=1024 * 1024).contains(&offset) {
+        return None;
+    }
+    file.seek(SeekFrom::Start(u64::from(offset))).ok()?;
+    let mut pe = [0u8; 94];
+    file.read_exact(&mut pe).ok()?;
+    if &pe[..4] != b"PE\0\0" {
+        return None;
+    }
+    Some(u16::from_le_bytes([pe[92], pe[93]]) == 3)
 }
 
 pub fn logo(provider: Provider) -> Option<&'static IconImage> {
@@ -483,7 +596,12 @@ fn fetch_claude(client: &Client) -> ProviderUsage {
     let Ok(value) = serde_json::from_str::<Value>(&body) else {
         return unavailable();
     };
-    ready(parse_claude(&value))
+    let windows = parse_claude(&value);
+    if windows.is_empty() {
+        unavailable()
+    } else {
+        ready(windows)
+    }
 }
 
 fn fetch_codex(client: &Client) -> ProviderUsage {
@@ -1281,6 +1399,42 @@ fn parse_codex(value: &Value) -> Vec<Window> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn claude_native_console_and_desktop_images_are_distinguished_without_path_guesses()
+    -> anyhow::Result<()> {
+        let path = env::temp_dir().join(format!("muelle-claude-pe-{}.exe", std::process::id()));
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+        let file = Fixture(path);
+        let mut image = vec![0u8; 64 + 94];
+        image[..2].copy_from_slice(b"MZ");
+        image[60..64].copy_from_slice(&64u32.to_le_bytes());
+        image[64..68].copy_from_slice(b"PE\0\0");
+        for (subsystem, console) in [(2u16, false), (3, true)] {
+            image[156..158].copy_from_slice(&subsystem.to_le_bytes());
+            fs::write(&file.0, &image)?;
+            assert_eq!(console_image(&file.0), Some(console));
+        }
+        fs::write(&file.0, b"MZ")?;
+        assert_eq!(console_image(&file.0), None);
+        Ok(())
+    }
+
+    #[test]
+    fn claude_real_quota_preserves_zero_and_reset_times() {
+        let windows = parse_claude(&json!({
+            "five_hour": {"utilization":0.0,"resets_at":"2026-11-23T03:00:00Z"},
+            "seven_day": {"utilization":32.0,"resets_at":"2026-11-29T03:00:00Z"}
+        }));
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].used_percent, 0);
+        assert!(windows[0].resets_at.is_some());
+    }
 
     #[test]
     fn opencode_go_reads_official_absolute_resets_and_rejects_overflowing_legacy_dates() {

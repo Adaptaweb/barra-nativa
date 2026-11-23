@@ -25,15 +25,15 @@ const texts = Object.fromEntries(["en", "es", "fr"].map((language) => [
   language, JSON.parse(readFileSync(path.join(source, "i18n", `${language}.json`), "utf8")),
 ]));
 const base = {
-  language: "en", menuBar: true, notifications: true, notificationDuration: 5,
-  notificationPosition: "top-right", iconSize: 48, magnifiedSize: 77,
+  language: "en", menuBar: true, smartHide: false, notificationBadges: true, notificationBounce: true,
+  iconSize: 48, magnifiedSize: 77,
   magnification: true, dockPosition: "bottom", genie: true, genieSpeed: "normal",
   dockDensity: "normal", dockAutoHideSpeed: "normal", showStart: true,
   showTrash: true, pinExplorer: true,
   showDownloads: true,
   menuBarIslandStyle: "notch", menuBarSearch: null, menuBarTaskView: null,
   menuBarWidgets: null, menuBarBatteryPercent: null, checkUpdates: false,
-  pinned: [], recent: [], mutedApps: [], shortcutsFolder: null,
+  pinned: [], recent: [], shortcutsFolder: null,
 };
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 function* elements(node) {
@@ -65,7 +65,7 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
   };
   const nativeWindow = { onCloseRequested(callback) { close = callback; return Promise.resolve(() => {}); } };
   const mocks = {
-    "@tauri-apps/api/app": { getVersion: async () => "0.1.20" },
+    "@tauri-apps/api/app": { getVersion: async () => "0.1.21" },
     "@tauri-apps/api/event": { listen: async () => () => {} },
     "@tauri-apps/api/window": { getCurrentWindow: () => nativeWindow },
     "@tauri-apps/api/core": { invoke: async (command, args) => {
@@ -112,10 +112,10 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
 }
 
 test("each section renders only its own controls, in every language and visibility state", () => {
-  const markers = { dock: "size", windows: "genie", menubar: "menuBarShow", notifications: "notificationsEnabled", system: "autostart" };
-  for (const language of Object.keys(texts)) for (const menuBar of [true, false]) for (const notifications of [true, false]) {
+  const markers = { dock: "size", windows: "genie", menubar: "menuBarShow", system: "autostart" };
+  for (const language of Object.keys(texts)) for (const menuBar of [true, false]) {
     for (const section of Object.keys(markers)) {
-      const view = fixture(section, { language, menuBar, notifications });
+      const view = fixture(section, { language, menuBar });
       const body = view.body();
       const html = renderToStaticMarkup(body);
       assert.doesNotMatch(html, /section\s*===|\)\s*:\s*section/);

@@ -431,7 +431,10 @@ export function App() {
                     onChange={(autoHide) => update({ autoHide })}
                   />
                 </Row>
-                <SubRow label={t.dockAutoHideSpeed} open={config.autoHide}>
+                <Row label={t.smartHide} hint={t.smartHideHint}>
+                  <Toggle label={t.smartHide} checked={config.smartHide ?? false} onChange={(smartHide) => update({ smartHide })} />
+                </Row>
+                <SubRow label={t.dockAutoHideSpeed} open={config.autoHide || (config.smartHide ?? false)}>
                   <Segmented<DockAutoHideSpeed>
                     label={t.dockAutoHideSpeed}
                     value={config.dockAutoHideSpeed ?? "normal"}
@@ -443,6 +446,12 @@ export function App() {
                     onChange={(dockAutoHideSpeed) => update({ dockAutoHideSpeed })}
                   />
                 </SubRow>
+                <Row label={t.notificationBadges} hint={t.notificationBadgesHint}>
+                  <Toggle label={t.notificationBadges} checked={config.notificationBadges} onChange={(notificationBadges) => update({ notificationBadges })} />
+                </Row>
+                <Row label={t.notificationBounce} hint={t.notificationBounceHint}>
+                  <Toggle label={t.notificationBounce} checked={config.notificationBounce} onChange={(notificationBounce) => update({ notificationBounce })} />
+                </Row>
                 <Row icon={<SettingIcon name="bounce" />} label={t.bounceOnOpen}>
                   <Toggle
                     label={t.bounceOnOpen}
@@ -633,62 +642,6 @@ export function App() {
                 </Card>
               )}
             </>
-          ) : section === "notifications" ? (
-            <>
-              <Card>
-                <Row label={t.notificationsEnabled} hint={t.notificationsHint}>
-                  <Toggle
-                    label={t.notificationsEnabled}
-                    checked={config.notifications}
-                    onChange={(notifications) => update({ notifications })}
-                  />
-                </Row>
-                <SubRow label={t.notificationPosition} open={config.notifications}>
-                  <Segmented
-                    label={t.notificationPosition}
-                    value={config.notificationPosition}
-                    options={[
-                      { value: "top-right", label: t.notificationPositionTopRight },
-                      { value: "bottom-right", label: t.notificationPositionBottomRight },
-                    ]}
-                    onChange={(notificationPosition) => update({ notificationPosition })}
-                  />
-                </SubRow>
-                <SubRow label={t.notificationDuration} open={config.notifications}>
-                  <Slider
-                    label={t.notificationDuration}
-                    min={2}
-                    max={15}
-                    value={config.notificationDuration}
-                    unit="s"
-                    onChange={(notificationDuration) => update({ notificationDuration })}
-                  />
-                </SubRow>
-              </Card>
-              <Card>
-                <Row label={t.notificationBadges} hint={t.notificationBadgesHint}>
-                  <Toggle
-                    label={t.notificationBadges}
-                    checked={config.notificationBadges}
-                    onChange={(notificationBadges) => update({ notificationBadges })}
-                  />
-                </Row>
-                <Row label={t.notificationBounce} hint={t.notificationBounceHint}>
-                  <Toggle
-                    label={t.notificationBounce}
-                    checked={config.notificationBounce}
-                    onChange={(notificationBounce) => update({ notificationBounce })}
-                  />
-                </Row>
-                <Row label={t.notificationDnd} hint={t.notificationDndHint}>
-                  <Toggle
-                    label={t.notificationDnd}
-                    checked={config.notificationDnd}
-                    onChange={(notificationDnd) => update({ notificationDnd })}
-                  />
-                </Row>
-              </Card>
-            </>
           ) : (
             <>
               <Card>
@@ -784,7 +737,7 @@ function updateHint(t: Texts, state: UpdateState, version: string): string {
   }
 }
 
-const SECTIONS: readonly SectionId[] = ["dock", "windows", "menubar", "notifications", "system"];
+const SECTIONS: readonly SectionId[] = ["dock", "windows", "menubar", "system"];
 
 function sectionTitle(t: Texts, section: SectionId): string {
   switch (section) {
@@ -794,8 +747,6 @@ function sectionTitle(t: Texts, section: SectionId): string {
       return t.windows;
     case "menubar":
       return t.menuBar;
-    case "notifications":
-      return t.notifications;
     case "system":
       return t.system;
   }
