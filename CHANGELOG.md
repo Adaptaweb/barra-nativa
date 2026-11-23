@@ -10,6 +10,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Fixed window previews disappearing while moving diagonally from the Dock icon
+  towards an outer card. The handoff area follows the picker width on every Dock
+  edge and delayed mouse-leave messages no longer cancel a newer hover.
 - The music/video popup now shows playback progress and elapsed/total time when
   provided by the player. The speaker button on its right opens a vertical volume
   capsule beside the player, with mute at the bottom. Timeline events and the
@@ -22,6 +25,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Corregido el cierre de previsualizaciones al ir en diagonal desde el icono
+  hacia una miniatura lateral. La zona de paso se adapta al selector en cada
+  borde del Dock; las salidas tardías del ratón no cancelan un hover más reciente.
 - El popup de música/vídeo muestra el progreso y los tiempos transcurrido/total
   cuando el reproductor los proporciona. El icono de audio a la derecha abre una
   cápsula de volumen vertical junto al panel, con silencio debajo. Se detiene el

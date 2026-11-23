@@ -153,24 +153,49 @@ impl MultiWindowLayout {
         if contains(self.bounds, point) || contains(anchor, point) {
             return true;
         }
-        // A bridge between the source icon and the view lets the pointer reach
-        // it without keeping the popup open over unrelated applications.
-        let bridge = match self.edge {
-            DockEdge::Bottom => RECT {
-                top: self.bounds.bottom.min(anchor.top),
-                ..anchor
-            },
-            DockEdge::Left => RECT {
-                right: self.bounds.left.max(anchor.right),
-                ..anchor
-            },
-            DockEdge::Right => RECT {
-                left: self.bounds.right.min(anchor.left),
-                ..anchor
-            },
-        };
-        contains(bridge, point)
+        // Widen towards the whole picker: a diagonal path to an outer card
+        // must stay connected, even when the picker is clamped to a screen edge.
+        // The narrow end still belongs only to the source icon.
+        match self.edge {
+            DockEdge::Bottom => in_handoff(
+                (point.x, point.y),
+                (anchor.left, anchor.right),
+                (self.bounds.left, self.bounds.right),
+                (anchor.top, self.bounds.bottom),
+            ),
+            DockEdge::Left => in_handoff(
+                (point.y, point.x),
+                (anchor.top, anchor.bottom),
+                (self.bounds.top, self.bounds.bottom),
+                (anchor.right, self.bounds.left),
+            ),
+            DockEdge::Right => in_handoff(
+                (point.y, point.x),
+                (anchor.top, anchor.bottom),
+                (self.bounds.top, self.bounds.bottom),
+                (anchor.left, self.bounds.right),
+            ),
+        }
     }
+}
+
+fn in_handoff(
+    point: (i32, i32),
+    source: (i32, i32),
+    picker: (i32, i32),
+    faces: (i32, i32),
+) -> bool {
+    let distance = f64::from(faces.1) - f64::from(faces.0);
+    if distance == 0.0 {
+        return false;
+    }
+    let t = (f64::from(point.1) - f64::from(faces.0)) / distance;
+    if !(0.0..=1.0).contains(&t) {
+        return false;
+    }
+    let left = f64::from(source.0) + (f64::from(picker.0) - f64::from(source.0)) * t;
+    let right = f64::from(source.1) + (f64::from(picker.1) - f64::from(source.1)) * t;
+    f64::from(point.0) >= left && f64::from(point.0) < right
 }
 
 fn contains(rect: RECT, point: POINT) -> bool {
@@ -599,9 +624,7 @@ impl MultiWindowView {
 
     /// Returns false after Escape, an outside click, or leaving the view/icon bridge.
     pub fn tick(&mut self) -> Result<bool> {
-        if tracker::foreground_window() != self.foreground {
-            return Ok(false);
-        }
+        let foreground = tracker::foreground_window();
         let mut point = POINT::default();
         // SAFETY: Read-only pointer/key state queries; no global input hook.
         let (escape, mouse_down) = unsafe {
@@ -611,6 +634,20 @@ impl MultiWindowView {
                 GetAsyncKeyState(i32::from(VK_LBUTTON.0)) < 0,
             )
         };
+        self.tick_at(point, foreground, escape, mouse_down, Instant::now())
+    }
+
+    fn tick_at(
+        &mut self,
+        point: POINT,
+        foreground: isize,
+        escape: bool,
+        mouse_down: bool,
+        now: Instant,
+    ) -> Result<bool> {
+        if foreground != self.foreground {
+            return Ok(false);
+        }
         let inside = self.layout.keeps_open(self.anchor, point);
         if escape || (mouse_down && !self.mouse_was_down && !inside) {
             return Ok(false);
@@ -618,7 +655,7 @@ impl MultiWindowView {
         self.mouse_was_down = mouse_down;
         if inside {
             self.left_at = None;
-        } else if self.left_at.get_or_insert_with(Instant::now).elapsed() >= LEAVE_DELAY {
+        } else if now.saturating_duration_since(*self.left_at.get_or_insert(now)) >= LEAVE_DELAY {
             return Ok(false);
         }
         self.update()?;
@@ -886,6 +923,38 @@ mod tests {
             )?;
             view.animated = false;
             view.update()?;
+            let bounds = view.layout.bounds;
+            let source = view.anchor;
+            let diagonal = POINT {
+                x: ((source.left + source.right) / 2 + bounds.left + 18) / 2,
+                y: (source.top + bounds.bottom) / 2,
+            };
+            assert!(
+                diagonal.x < source.left,
+                "exercise a diagonal outside the old icon-width bridge"
+            );
+            let now = Instant::now();
+            assert!(view.tick_at(diagonal, view.foreground, false, false, now)?);
+            assert!(
+                view.tick_at(
+                    diagonal,
+                    view.foreground,
+                    false,
+                    false,
+                    now + LEAVE_DELAY + Duration::from_secs(1)
+                )?,
+                "moving slowly to another card must not close the picker"
+            );
+            let outside = POINT {
+                x: bounds.right + 100,
+                y: bounds.bottom + 100,
+            };
+            let later = now + Duration::from_secs(2);
+            assert!(view.tick_at(outside, view.foreground, false, false, later)?);
+            assert!(!view.tick_at(outside, view.foreground, false, false, later + LEAVE_DELAY)?);
+            assert!(view.tick_at(diagonal, view.foreground, false, false, later + LEAVE_DELAY)?);
+            assert!(!view.tick_at(diagonal, view.foreground, true, false, later + LEAVE_DELAY)?);
+            assert!(!view.tick_at(outside, view.foreground, false, true, later + LEAVE_DELAY)?);
             for (&source, rect) in windows.iter().zip(&view.layout.cards) {
                 let image = view
                     .thumbnails
@@ -1013,6 +1082,99 @@ mod tests {
             };
             assert!(layout.keeps_open(anchor, POINT { x: gap_x, y: 510 }));
             assert!(!layout.keeps_open(anchor, POINT { x: gap_x, y: 40 }));
+        }
+    }
+
+    #[test]
+    fn diagonal_paths_reach_each_preview_without_leaving_the_handoff_area() {
+        for scale in [1.0, 1.25, 2.0] {
+            for origin in [0, -1920] {
+                let screen = RECT {
+                    left: origin,
+                    top: -200,
+                    right: origin + 1920,
+                    bottom: 1080,
+                };
+                for (edge, anchor) in [
+                    (
+                        DockEdge::Bottom,
+                        RECT {
+                            left: origin + 160,
+                            top: 950,
+                            right: origin + 240,
+                            bottom: 1030,
+                        },
+                    ),
+                    (
+                        DockEdge::Left,
+                        RECT {
+                            left: origin + 14,
+                            top: 480,
+                            right: origin + 94,
+                            bottom: 560,
+                        },
+                    ),
+                    (
+                        DockEdge::Right,
+                        RECT {
+                            left: origin + 1826,
+                            top: 480,
+                            right: origin + 1906,
+                            bottom: 560,
+                        },
+                    ),
+                ] {
+                    let layout = MultiWindowLayout::new(screen, anchor, edge, scale, 3);
+                    let b = layout.bounds;
+                    for fraction in [0.1, 0.5, 0.9] {
+                        let (source, target) = match edge {
+                            DockEdge::Bottom => (
+                                POINT {
+                                    x: (anchor.left + anchor.right) / 2,
+                                    y: anchor.top,
+                                },
+                                POINT {
+                                    x: b.left + ((b.right - b.left) as f32 * fraction) as i32,
+                                    y: b.bottom - 1,
+                                },
+                            ),
+                            DockEdge::Left => (
+                                POINT {
+                                    x: anchor.right - 1,
+                                    y: (anchor.top + anchor.bottom) / 2,
+                                },
+                                POINT {
+                                    x: b.left + 1,
+                                    y: b.top + ((b.bottom - b.top) as f32 * fraction) as i32,
+                                },
+                            ),
+                            DockEdge::Right => (
+                                POINT {
+                                    x: anchor.left,
+                                    y: (anchor.top + anchor.bottom) / 2,
+                                },
+                                POINT {
+                                    x: b.right - 1,
+                                    y: b.top + ((b.bottom - b.top) as f32 * fraction) as i32,
+                                },
+                            ),
+                        };
+                        for step in 0..=10 {
+                            let t = step as f32 / 10.0;
+                            let point = POINT {
+                                x: (source.x as f32 + (target.x - source.x) as f32 * t).round()
+                                    as i32,
+                                y: (source.y as f32 + (target.y - source.y) as f32 * t).round()
+                                    as i32,
+                            };
+                            assert!(
+                                layout.keeps_open(anchor, point),
+                                "edge={edge:?} scale={scale} target={fraction} step={step} point={point:?}"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 

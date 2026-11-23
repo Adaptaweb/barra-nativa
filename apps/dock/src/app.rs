@@ -2239,6 +2239,19 @@ impl App {
         }
     }
 
+    fn on_tracked_mouse_leave(&mut self) -> Result<()> {
+        let mut point = POINT::default();
+        // Moving/resizing the magnified input area can queue a leave before
+        // the pointer re-enters. Do not discard a newer hover/dwell on delivery.
+        if unsafe { GetCursorPos(&mut point) }.is_ok()
+            && unsafe { windows::Win32::UI::WindowsAndMessaging::WindowFromPoint(point) }
+                == self.input
+        {
+            return self.on_mouse_move();
+        }
+        self.on_mouse_leave()
+    }
+
     fn on_mouse_leave(&mut self) -> Result<()> {
         if !self.hovering || self.drag.is_some() || self.drag_over || self.menu_open {
             return Ok(());
@@ -5061,6 +5074,7 @@ pub fn multi_window_view_tick() {
             && !view.tick()?
         {
             app.close_preview();
+            app.render()?;
         }
         Ok(())
     });
@@ -5136,7 +5150,7 @@ pub fn multi_window_view_scroll(previous: bool) {
 pub fn multi_window_view_dismiss() {
     with_app("cerrar vistas", |app| {
         app.close_preview();
-        Ok(())
+        app.render()
     });
 }
 
@@ -5484,7 +5498,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             with_app("iconos del shell", App::assets_ready);
         }
         WM_MOUSEMOVE => with_app("movimiento del ratón", App::on_mouse_move),
-        WM_MOUSELEAVE => with_app("salida del ratón", App::on_mouse_leave),
+        WM_MOUSELEAVE => with_app("salida del ratón", App::on_tracked_mouse_leave),
         WM_LBUTTONDOWN => with_app("pulsación", App::on_press),
         WM_LBUTTONUP => with_app_then("clic", App::on_release),
         WM_MBUTTONUP => with_app_then("clic central", App::on_middle_click),
