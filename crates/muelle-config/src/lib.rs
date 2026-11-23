@@ -76,6 +76,9 @@ pub struct Config {
     /// Minimized windows get a live thumbnail in the right section of the
     /// dock. Off by default: they go into their app's icon instead.
     pub show_minimized: bool,
+    /// Include shell-cloaked windows from Windows/tiling-WM workspaces.
+    /// Off by default to preserve the current-desktop taskbar behavior.
+    pub show_other_workspaces: bool,
     /// An app's right-click menu starts with its jump list (pinned and recent
     /// items, tasks), as on the Windows taskbar. Off, the menu has only the
     /// dock's own items and no jump list is read.
@@ -306,6 +309,7 @@ impl Default for Config {
             genie: true,
             genie_speed: GenieSpeed::Normal,
             show_minimized: false,
+            show_other_workspaces: false,
             jump_lists: true,
             menu_bar: true,
             menu_bar_auto_hide: false,
@@ -462,6 +466,16 @@ fn write_config(path: &Path, config: &Config) -> Result<(), ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn other_workspaces_are_opt_in_and_preserved_when_saving() -> Result<(), serde_json::Error> {
+        let legacy: Config = serde_json::from_str("{}")?;
+        assert!(!legacy.show_other_workspaces);
+        let enabled: Config = serde_json::from_str(r#"{"showOtherWorkspaces":true}"#)?;
+        let restored: Config = serde_json::from_str(&serde_json::to_string(&enabled)?)?;
+        assert!(restored.show_other_workspaces);
+        Ok(())
+    }
 
     #[test]
     fn intelligent_hiding_defaults_off_and_retired_banner_preferences_are_ignored()

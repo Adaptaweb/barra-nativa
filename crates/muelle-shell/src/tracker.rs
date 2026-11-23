@@ -10,7 +10,7 @@ use windows::{
     Win32::{
         Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, WPARAM},
         Graphics::{
-            Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute},
+            Dwm::{DWM_CLOAKED_SHELL, DWMWA_CLOAKED, DwmGetWindowAttribute},
             Gdi::ClientToScreen,
         },
         Storage::{
@@ -69,6 +69,12 @@ pub struct WindowTracker {
 
 impl WindowTracker {
     pub fn list(&mut self) -> Vec<TrackedWindow> {
+        self.list_with_workspaces(false)
+    }
+
+    /// Optionally includes shell-cloaked windows on other Windows/tiling-WM
+    /// workspaces. App-cloaked and inherited-cloak windows remain excluded.
+    pub fn list_with_workspaces(&mut self, show_other_workspaces: bool) -> Vec<TrackedWindow> {
         unsafe extern "system" fn collect(hwnd: HWND, list: LPARAM) -> BOOL {
             // SAFETY: `list` points to the Vec passed by `list` and remains
             // alive for the entire synchronous enumeration.
@@ -84,7 +90,7 @@ impl WindowTracker {
 
         let windows: Vec<TrackedWindow> = all
             .into_iter()
-            .filter(|&hwnd| is_app_window(hwnd))
+            .filter(|&hwnd| is_app_window(hwnd, show_other_workspaces))
             .filter_map(|hwnd| {
                 let key = hwnd.0 as isize;
                 let app_id = match self.app_ids.get(&key) {
@@ -257,6 +263,7 @@ fn recover_browser_z_order_with(
     for window in windows {
         let browser = window.hwnd;
         if window.app_id == active.app_id
+            || is_cloaked(HWND(browser as *mut _))
             || !matches!(
                 window.app_id.rsplit('\\').next(),
                 Some("msedge.exe" | "brave.exe")
@@ -500,7 +507,11 @@ pub fn task_switcher_state() -> Option<bool> {
 
 /// Hidden by the system although "visible": on another virtual desktop, or
 /// a suspended Store app.
-fn is_cloaked(hwnd: HWND) -> bool {
+pub(crate) fn is_cloaked(hwnd: HWND) -> bool {
+    cloak_state(hwnd) != 0
+}
+
+fn cloak_state(hwnd: HWND) -> u32 {
     let mut cloaked = 0u32;
     // SAFETY: `cloaked` is a valid 4-byte output.
     unsafe {
@@ -511,7 +522,13 @@ fn is_cloaked(hwnd: HWND) -> bool {
             size_of::<u32>() as u32,
         );
     }
-    cloaked != 0
+    cloaked
+}
+
+fn workspace_cloak_allowed(cloaked: u32, show_other_workspaces: bool) -> bool {
+    // Do not expose suspended Store apps or owner-cloaked helper windows,
+    // including mixed flags. Windows desktops and tiling WMs share SHELL.
+    cloaked == 0 || (show_other_workspaces && cloaked == DWM_CLOAKED_SHELL)
 }
 
 /// The desktop and the (hidden) taskbar: shell windows, not apps.
@@ -529,7 +546,7 @@ fn covers(window: RECT, screen: RECT) -> bool {
         && window.bottom >= screen.bottom
 }
 
-fn is_app_window(hwnd: HWND) -> bool {
+fn is_app_window(hwnd: HWND, show_other_workspaces: bool) -> bool {
     // SAFETY: Read-only queries; calls on a destroyed `hwnd` have no effect.
     unsafe {
         if !IsWindowVisible(hwnd).as_bool() || GetWindowTextLengthW(hwnd) == 0 {
@@ -545,8 +562,7 @@ fn is_app_window(hwnd: HWND) -> bool {
         if (owned || has(WS_EX_NOACTIVATE)) && !has(WS_EX_APPWINDOW) {
             return false;
         }
-        // Windows hidden by the system, such as on other virtual desktops or suspended apps.
-        if is_cloaked(hwnd) {
+        if !workspace_cloak_allowed(cloak_state(hwnd), show_other_workspaces) {
             return false;
         }
         let mut pid = 0u32;
@@ -669,6 +685,26 @@ pub fn request_close_window(hwnd: isize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_cloaking_is_opt_in_without_exposing_app_or_inherited_cloaks() {
+        use windows::Win32::Graphics::Dwm::{DWM_CLOAKED_APP, DWM_CLOAKED_INHERITED};
+
+        assert!(workspace_cloak_allowed(0, false));
+        assert!(workspace_cloak_allowed(0, true));
+        assert!(!workspace_cloak_allowed(DWM_CLOAKED_SHELL, false));
+        assert!(workspace_cloak_allowed(DWM_CLOAKED_SHELL, true));
+        for flags in [
+            DWM_CLOAKED_APP,
+            DWM_CLOAKED_INHERITED,
+            DWM_CLOAKED_SHELL | DWM_CLOAKED_APP,
+            DWM_CLOAKED_SHELL | DWM_CLOAKED_INHERITED,
+            8,
+        ] {
+            assert!(!workspace_cloak_allowed(flags, false), "flags={flags}");
+            assert!(!workspace_cloak_allowed(flags, true), "flags={flags}");
+        }
+    }
 
     #[test]
     fn fullscreen_geometry_should_follow_content_instead_of_maximized_style()

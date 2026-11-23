@@ -296,7 +296,8 @@ fn restore_desktop() {
     taskbar::give_back_on_exit();
     // The dock turns off window transitions while it runs (genie effect); if
     // it died without restoring them, do it here.
-    for window in WindowTracker::default().list() {
+    // The opt-in workspace mode can also have calmed windows on other desktops.
+    for window in WindowTracker::default().list_with_workspaces(true) {
         set_window_transitions(window.hwnd, true);
     }
 }

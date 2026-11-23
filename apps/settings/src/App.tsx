@@ -546,6 +546,15 @@ export function App() {
                   />
                 </Row>
               </Card>
+              <Card>
+                <Row label={t.showOtherWorkspaces} hint={t.showOtherWorkspacesHint}>
+                  <Toggle
+                    label={t.showOtherWorkspaces}
+                    checked={config.showOtherWorkspaces ?? false}
+                    onChange={(showOtherWorkspaces) => update({ showOtherWorkspaces })}
+                  />
+                </Row>
+              </Card>
             </>
           ) : section === "menubar" ? (
             <>

@@ -27,6 +27,7 @@ export interface Config {
   genie: boolean;
   genieSpeed: GenieSpeed;
   showMinimized: boolean;
+  showOtherWorkspaces: boolean;
   showPreviewCloseButton: boolean;
   jumpLists: boolean;
   menuBar: boolean;

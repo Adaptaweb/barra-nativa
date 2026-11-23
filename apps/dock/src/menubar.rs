@@ -93,6 +93,7 @@ const VOLUME_CAPTURE_LOST: u32 = WM_APP + 31;
 const AUDIO_CHANGED: u32 = WM_APP + 32;
 const AUDIO_TICK: u32 = WM_APP + 33;
 const VOLUME_TIMER: usize = 4;
+const PROGRESS_TIMER: usize = 5;
 const ACCESSORIES_CHANGED: u32 = WM_APP + 30;
 
 const CLOCK_TIMER: usize = 1;
@@ -231,6 +232,7 @@ struct Look {
     panel: Option<Island>,
     usage_refreshing: bool,
     track: Option<Track>,
+    volume_expanded: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -252,7 +254,13 @@ fn accessory_readings(snapshot: &AccessorySnapshot) -> [Option<AccessoryReading>
 impl Look {
     fn panel_content_height(&self) -> f32 {
         match self.panel {
-            Some(Island::Music) => 164.0,
+            Some(Island::Music) => {
+                if self.volume_expanded {
+                    218.0
+                } else {
+                    180.0
+                }
+            }
             Some(Island::Usage) => {
                 74.0 + Provider::ALL
                     .into_iter()
@@ -301,6 +309,7 @@ enum IslandAction {
     Toggle(Island),
     Media(MediaControl),
     Volume(Span),
+    ToggleVolume,
     Mute,
     Refresh,
     ScrollUsage(i8),
@@ -344,6 +353,64 @@ struct VolumeControls {
     width: f32,
     position_percent: Option<u8>,
     label_percent: u8,
+}
+
+/// Only the progress fill and time labels change while the popup is open.
+struct ProgressControls {
+    fill: CompositionRoundedRectangleGeometry,
+    elapsed: SpriteVisual,
+    total: SpriteVisual,
+    geometry: IslandGeometry,
+    width: f32,
+    elapsed_seconds: Option<u64>,
+    total_seconds: Option<u64>,
+}
+
+impl ProgressControls {
+    fn paint(&mut self, gfx: &Gfx, timeline: media::Timeline, now: Instant) -> Result<()> {
+        let position = timeline.position_at(now);
+        let px = |v| self.geometry.px(v);
+        let filled = self.width * (position.as_secs_f64() / timeline.duration.as_secs_f64()) as f32;
+        self.fill.SetSize(Vector2::new(filled, px(4.0)))?;
+        self.fill
+            .SetCornerRadius(Vector2::new(px(2.0).min(filled / 2.0), px(2.0)))?;
+        for (visual, cached, seconds, right) in [
+            (
+                &self.elapsed,
+                &mut self.elapsed_seconds,
+                position.as_secs(),
+                false,
+            ),
+            (
+                &self.total,
+                &mut self.total_seconds,
+                timeline.duration.as_secs(),
+                true,
+            ),
+        ] {
+            if *cached == Some(seconds) {
+                continue;
+            }
+            let label = gfx.text_brush_sized(
+                &media_time(seconds),
+                self.geometry.scale,
+                10.0,
+                false,
+                self.geometry.ink(),
+            )?;
+            visual.SetBrush(&label.brush.cast::<CompositionBrush>()?)?;
+            visual.SetSize(Vector2::new(label.width, label.height))?;
+            if right {
+                visual.SetOffset(Vector3::new(
+                    px(26.0) + self.width - label.width,
+                    px(148.0),
+                    0.0,
+                ))?;
+            }
+            *cached = Some(seconds);
+        }
+        Ok(())
+    }
 }
 
 impl VolumeControls {
@@ -426,6 +493,9 @@ pub struct MenuBar {
     pending_volume: Option<u8>,
     volume_target: Option<u8>,
     volume_controls: Option<VolumeControls>,
+    volume_expanded: bool,
+    progress_controls: Option<ProgressControls>,
+    progress_timer: bool,
     usage_scroll: f32,
     usage_viewport: Option<UsageViewport>,
     suppress_volume_release: bool,
@@ -478,6 +548,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         }
         WM_TIMER if w.0 == POINTER_TIMER => app::menu_bar_check_pointer(),
         WM_TIMER if w.0 == VOLUME_TIMER => app::menu_bar_volume_flush(),
+        WM_TIMER if w.0 == PROGRESS_TIMER => app::menu_bar_progress_tick(),
         WM_CAPTURECHANGED => {
             // Avoid reentering the app borrow inside Set/ReleaseCapture.
             unsafe {
@@ -1090,6 +1161,9 @@ impl MenuBar {
             pending_volume: None,
             volume_target: None,
             volume_controls: None,
+            volume_expanded: false,
+            progress_controls: None,
+            progress_timer: false,
             usage_scroll: 0.0,
             usage_viewport: None,
             suppress_volume_release: false,
@@ -1457,6 +1531,7 @@ impl MenuBar {
 
     /// Positions the window and reserves (or frees) its strip of the screen.
     fn place(&mut self) -> Result<()> {
+        self.sync_progress_watch();
         let bounds = self.bounds;
         let bar_height = bounds.bottom - bounds.top;
         if bar_height <= 0 {
@@ -1689,6 +1764,14 @@ impl MenuBar {
                     return Ok(());
                 }
                 IslandAction::Volume(_) => return Ok(()), // Handled on press/drag.
+                IslandAction::ToggleVolume => {
+                    self.release_volume(None)?;
+                    self.volume_expanded = !self.volume_expanded;
+                    let Some(look) = self.look.clone() else {
+                        return self.refresh(gfx);
+                    };
+                    return self.apply_look(gfx, look);
+                }
                 IslandAction::Mute => {
                     if let Some(audio) = &mut self.audio {
                         audio.toggle_mute()?;
@@ -1807,6 +1890,7 @@ impl MenuBar {
             panel: self.panel,
             usage_refreshing: self.usage.as_ref().is_some_and(UsageMonitor::is_refreshing),
             track,
+            volume_expanded: self.volume_expanded,
         };
         self.apply_look(gfx, look)
     }
@@ -1816,7 +1900,19 @@ impl MenuBar {
         let Some(mut look) = self.look.clone() else {
             return self.refresh(gfx);
         };
-        look.track = self.media.as_ref().and_then(media::Watch::snapshot);
+        let track = self.media.as_ref().and_then(media::Watch::snapshot);
+        let timeline_only = look
+            .track
+            .as_ref()
+            .zip(track.as_ref())
+            .is_some_and(|(old, new)| {
+                old.same_content(new) && old.timeline.is_some() == new.timeline.is_some()
+            });
+        look.track = track;
+        if timeline_only {
+            self.look = Some(look);
+            return self.progress_tick(gfx);
+        }
         self.panel = available_panel(self.panel, look.track.is_some(), look.usage_enabled);
         look.panel = self.panel;
         self.apply_look(gfx, look)
@@ -1827,6 +1923,10 @@ impl MenuBar {
         look.usage_enabled &= look.active_providers.any();
         self.panel = available_panel(look.panel, look.track.is_some(), look.usage_enabled);
         look.panel = self.panel;
+        if look.panel != Some(Island::Music) || look.status.volume.is_none() {
+            self.volume_expanded = false;
+        }
+        look.volume_expanded = self.volume_expanded;
         if look.panel != Some(Island::Usage) {
             self.usage_scroll = 0.0;
         }
@@ -1853,6 +1953,7 @@ impl MenuBar {
             self.build(gfx, &look)?;
         }
         self.look = Some(look);
+        self.sync_progress_watch();
         if let Some((provider, act)) = moment
             && let Some(&(_, x)) = self.usage_anchors.iter().find(|(p, _)| *p == provider)
         {
@@ -2077,6 +2178,7 @@ impl MenuBar {
 
         self.island_hits.clear();
         self.volume_controls = None;
+        self.progress_controls = None;
         self.usage_viewport = None;
         self.triggers_span = Span::default();
         self.panel_span = Span::default();
@@ -2316,7 +2418,14 @@ impl MenuBar {
             match kind {
                 Island::Music => {
                     if let Some(track) = &look.track {
-                        self.draw_player(gfx, &content, geometry, track, cover.as_ref())?;
+                        self.draw_player(
+                            gfx,
+                            &content,
+                            geometry,
+                            track,
+                            cover.as_ref(),
+                            look.volume_expanded,
+                        )?;
                     }
                 }
                 Island::Usage => {
@@ -2503,6 +2612,7 @@ impl MenuBar {
         geometry: IslandGeometry,
         track: &Track,
         cover: Option<&CompositionSurfaceBrush>,
+        volume_expanded: bool,
     ) -> Result<()> {
         let px = |v| geometry.px(v);
         let c = &gfx.compositor;
@@ -2626,6 +2736,7 @@ impl MenuBar {
                     .push(geometry.hit(x, y, size, size, IslandAction::Media(control)));
             }
         }
+        self.draw_progress(gfx, layers, geometry, track)?;
         if let Some(volume) = self.status.volume {
             let symbol = if volume.muted {
                 glyph::MUTE
@@ -2633,18 +2744,62 @@ impl MenuBar {
                 glyph::VOLUME[volume.level.min(3) as usize]
             };
             let label = gfx.glyph_brush(&[(symbol, 1.0)], geometry.scale, ink)?;
+            let button_x = geometry.width - px(52.0);
+            if volume_expanded {
+                add_rounded_box(
+                    c,
+                    layers,
+                    button_x,
+                    px(127.0),
+                    px(28.0),
+                    px(28.0),
+                    px(9.0),
+                    geometry.control_fill(),
+                    None,
+                )?;
+            }
+            add_visual(
+                c,
+                layers,
+                &label.brush.cast()?,
+                button_x + (px(28.0) - label.width) / 2.0,
+                px(141.0) - label.height / 2.0,
+                label.width,
+                label.height,
+            )?;
+            self.island_hits.push(geometry.hit(
+                button_x,
+                px(127.0),
+                px(28.0),
+                px(28.0),
+                IslandAction::ToggleVolume,
+            ));
+            if !volume_expanded {
+                return Ok(());
+            }
+            add_rounded_box(
+                c,
+                layers,
+                px(26.0),
+                px(175.0),
+                geometry.width - px(52.0),
+                px(1.0),
+                0.0,
+                geometry.border(),
+                None,
+            )?;
             add_visual(
                 c,
                 layers,
                 &label.brush.cast()?,
                 px(25.0),
-                px(140.0) - label.height / 2.0,
+                px(192.0) - label.height / 2.0,
                 label.width,
                 label.height,
             )?;
             self.island_hits.push(geometry.hit(
                 px(18.0),
-                px(126.0),
+                px(178.0),
                 px(32.0),
                 px(28.0),
                 IslandAction::Mute,
@@ -2656,7 +2811,7 @@ impl MenuBar {
                 c,
                 layers,
                 left,
-                px(138.0),
+                px(190.0),
                 width,
                 px(4.0),
                 px(2.0),
@@ -2667,7 +2822,7 @@ impl MenuBar {
                 c,
                 layers,
                 left,
-                px(138.0),
+                px(190.0),
                 width,
                 px(4.0),
                 px(2.0),
@@ -2685,7 +2840,7 @@ impl MenuBar {
                 layers,
                 &label.brush.cast()?,
                 geometry.width - px(51.0),
-                px(133.0),
+                px(185.0),
                 label.width,
                 label.height,
             )?;
@@ -2702,7 +2857,7 @@ impl MenuBar {
             self.volume_controls = Some(controls);
             self.island_hits.push(geometry.hit(
                 left - px(6.0),
-                px(127.0),
+                px(179.0),
                 width + px(12.0),
                 px(29.0),
                 IslandAction::Volume(Span {
@@ -2710,20 +2865,146 @@ impl MenuBar {
                     right: geometry.left + left + width,
                 }),
             ));
-        } else {
-            add_panel_text(
-                gfx,
-                layers,
-                strings::text().media_no_output,
-                px(25.0),
-                px(135.0),
-                geometry.scale,
-                11.0,
-                false,
-                ink,
-                0.5,
-            )?;
         }
+        Ok(())
+    }
+
+    fn draw_progress(
+        &mut self,
+        gfx: &Gfx,
+        layers: &VisualCollection,
+        geometry: IslandGeometry,
+        track: &Track,
+    ) -> Result<()> {
+        let px = |v| geometry.px(v);
+        let c = &gfx.compositor;
+        let width = (geometry.width
+            - px(if self.status.volume.is_some() {
+                92.0
+            } else {
+                52.0
+            }))
+        .max(px(1.0));
+        let Some(timeline) = track.timeline else {
+            let text = if self.status.volume.is_some() {
+                strings::text().media_no_progress
+            } else {
+                strings::text().media_no_output
+            };
+            let label =
+                gfx.text_brush_fitted(text, geometry.scale, 11.0, false, geometry.ink(), width)?;
+            add_visual(
+                c,
+                layers,
+                &label.brush.cast()?,
+                px(26.0),
+                px(135.0),
+                label.width,
+                label.height,
+            )?
+            .SetOpacity(0.55)?;
+            return Ok(());
+        };
+        add_rounded_box(
+            c,
+            layers,
+            px(26.0),
+            px(139.0),
+            width,
+            px(4.0),
+            px(2.0),
+            geometry.control_fill(),
+            None,
+        )?;
+        let (_, fill) = retained_rounded_box(
+            c,
+            layers,
+            px(26.0),
+            px(139.0),
+            width,
+            px(4.0),
+            px(2.0),
+            if geometry.light {
+                rgba(40, 48, 58, 220)
+            } else {
+                rgba(240, 244, 250, 235)
+            },
+            None,
+        )?;
+        let label = gfx.text_brush_sized("0:00", geometry.scale, 10.0, false, geometry.ink())?;
+        let elapsed = add_visual(
+            c,
+            layers,
+            &label.brush.cast()?,
+            px(26.0),
+            px(148.0),
+            label.width,
+            label.height,
+        )?;
+        let total = add_visual(
+            c,
+            layers,
+            &label.brush.cast()?,
+            px(26.0),
+            px(148.0),
+            label.width,
+            label.height,
+        )?;
+        elapsed.SetOpacity(0.6)?;
+        total.SetOpacity(0.6)?;
+        let mut controls = ProgressControls {
+            fill,
+            elapsed,
+            total,
+            geometry,
+            width,
+            elapsed_seconds: None,
+            total_seconds: None,
+        };
+        controls.paint(gfx, timeline, Instant::now())?;
+        self.progress_controls = Some(controls);
+        Ok(())
+    }
+
+    fn sync_progress_watch(&mut self) {
+        let shown =
+            self.panel == Some(Island::Music) && self.visible && (!self.auto_hide || self.revealed);
+        if let Some(media) = &self.media {
+            media.show_progress(shown);
+        }
+        let ticking = shown
+            && self.progress_controls.is_some()
+            && self
+                .look
+                .as_ref()
+                .and_then(|look| look.track.as_ref())
+                .and_then(|track| track.timeline)
+                .is_some_and(|timeline| timeline.advancing(Instant::now()));
+        if ticking != self.progress_timer {
+            // This timer only advances cached position/time labels while the
+            // player popup is visible. No API calls, artwork reads or polling.
+            unsafe {
+                self.progress_timer = if ticking {
+                    SetTimer(Some(self.hwnd), PROGRESS_TIMER, 1000, None) != 0
+                } else {
+                    let _ = KillTimer(Some(self.hwnd), PROGRESS_TIMER);
+                    false
+                };
+            }
+        }
+    }
+
+    pub fn progress_tick(&mut self, gfx: &Gfx) -> Result<()> {
+        if let Some(timeline) = self
+            .look
+            .as_ref()
+            .and_then(|look| look.track.as_ref())
+            .and_then(|track| track.timeline)
+            && let Some(controls) = &mut self.progress_controls
+        {
+            controls.paint(gfx, timeline, Instant::now())?;
+        }
+        self.sync_progress_watch();
         Ok(())
     }
 
@@ -2876,6 +3157,19 @@ fn volume_percent(span: Span, x: f32) -> u8 {
         return 0;
     }
     (((x - span.left) / span.width()).clamp(0.0, 1.0) * 100.0).round() as u8
+}
+
+fn media_time(seconds: u64) -> String {
+    if seconds >= 3600 {
+        format!(
+            "{}:{:02}:{:02}",
+            seconds / 3600,
+            seconds / 60 % 60,
+            seconds % 60
+        )
+    } else {
+        format!("{}:{:02}", seconds / 60, seconds % 60)
+    }
 }
 
 fn same_volume_indicator(old: Option<Volume>, new: Option<Volume>) -> bool {
@@ -3810,6 +4104,9 @@ mod island_tests {
             muted: false,
             percent: 50,
         });
+        bar.volume_expanded = true;
+        look.volume_expanded = true;
+        look.status = bar.status;
         bar.apply_look(&gfx, look.clone())?;
         bar.apply_volume_reading(
             &gfx,
@@ -3890,6 +4187,19 @@ mod island_tests {
     }
 
     #[test]
+    fn playback_timestamps_include_hours_without_affecting_short_tracks() {
+        for (seconds, expected) in [
+            (0, "0:00"),
+            (65, "1:05"),
+            (3599, "59:59"),
+            (3600, "1:00:00"),
+            (3661, "1:01:01"),
+        ] {
+            assert_eq!(media_time(seconds), expected);
+        }
+    }
+
+    #[test]
     fn percentage_changes_keep_the_same_indicator_but_mute_and_device_changes_do_not() {
         let volume = Volume {
             level: 2,
@@ -3953,8 +4263,41 @@ mod island_tests {
                 for (light, glass) in [(true, true), (false, true), (true, false), (false, false)] {
                     look.light = light;
                     look.glass = glass;
+                    look.volume_expanded = false;
+                    bar.volume_expanded = false;
                     bar.build(&gfx, &look)?;
                     assert!(bar.cover.is_some());
+                    assert!(bar.progress_controls.is_some());
+                    assert!(bar.volume_controls.is_none());
+                    assert!(!bar.island_hits.iter().any(|hit| matches!(
+                        hit.action,
+                        IslandAction::Volume(_) | IslandAction::Mute
+                    )));
+                    let audio = *bar
+                        .island_hits
+                        .iter()
+                        .find(|hit| matches!(hit.action, IslandAction::ToggleVolume))
+                        .context("volume expander")?;
+                    let (audio_left, audio_top, audio_right, audio_bottom) = audio.bounds;
+                    let progress = bar.progress_controls.as_ref().context("progress")?;
+                    assert!(
+                        progress.geometry.left + progress.geometry.px(26.0) + progress.width
+                            < audio_left
+                    );
+                    assert!(
+                        audio_right <= bar.panel_span.right
+                            && audio_bottom
+                                <= (HEIGHT + PANEL_GAP + look.panel_height()) * scale + 1.0
+                    );
+                    bar.panel = look.panel;
+                    bar.look = Some(look.clone());
+                    bar.click(
+                        &gfx,
+                        (audio_left + audio_right) / 2.0,
+                        (audio_top + audio_bottom) / 2.0,
+                    )?;
+                    look = bar.look.clone().context("expanded look")?;
+                    assert!(bar.volume_expanded && look.volume_expanded);
                     let brush = bar.cover.as_ref().context("missing cover")?.1.clone();
                     bar.build(&gfx, &look)?;
                     assert_eq!(bar.cover.as_ref().context("cached cover")?.1, brush);
@@ -3982,7 +4325,7 @@ mod island_tests {
                         .find(|hit| {
                             hit.at(
                                 geometry.left + geometry.px(30.0),
-                                geometry.top + geometry.px(140.0),
+                                geometry.top + geometry.px(192.0),
                             )
                         })
                         .context("speaker has no hit target")?;
@@ -3990,12 +4333,24 @@ mod island_tests {
                     let slider = bar
                         .island_hits
                         .iter()
-                        .find(|hit| hit.at((left + right) / 2.0, geometry.top + geometry.px(140.0)))
+                        .find(|hit| hit.at((left + right) / 2.0, geometry.top + geometry.px(192.0)))
                         .context("slider has no hit target")?;
                     assert!(matches!(slider.action, IslandAction::Volume(_)));
                 }
             }
         }
+        let audio = *bar
+            .island_hits
+            .iter()
+            .find(|hit| matches!(hit.action, IslandAction::ToggleVolume))
+            .context("collapse volume")?;
+        let (left, top, right, bottom) = audio.bounds;
+        bar.click(&gfx, (left + right) / 2.0, (top + bottom) / 2.0)?;
+        assert!(!bar.volume_expanded && bar.volume_controls.is_none());
+        assert!(bar.progress_controls.is_some());
+        bar.click(&gfx, (left + right) / 2.0, (top + bottom) / 2.0)?;
+        assert!(bar.volume_expanded && bar.volume_controls.is_some());
+        look = bar.look.clone().context("reopened volume")?;
         let image = Arc::new(muelle_shell::icons::IconImage {
             width: 8,
             height: 8,
@@ -4025,6 +4380,25 @@ mod island_tests {
         let full_redraw = started.elapsed();
         bar.look = Some(look.clone());
         let root = bar.surface.Children()?.First()?.Current()?;
+        let mut update = look.track.clone().context("track for progress update")?;
+        update.timeline = Track::test_fixture().timeline;
+        bar.media = Some(media::Watch::test_snapshot(update));
+        bar.media_changed(&gfx)?;
+        assert_eq!(
+            bar.surface.Children()?.First()?.Current()?,
+            root,
+            "position events retain the visual tree"
+        );
+        bar.visible = true; // The native window stays hidden throughout the fixture.
+        bar.revealed = true;
+        bar.sync_progress_watch();
+        assert!(bar.progress_timer);
+        bar.visible = false;
+        bar.sync_progress_watch();
+        assert!(
+            !bar.progress_timer,
+            "hidden popups must have no progress timer"
+        );
         let started = Instant::now();
         for step in 0..64 {
             bar.apply_volume_reading(
@@ -4095,6 +4469,7 @@ mod island_tests {
         assert!(bar.release_volume(Some(200.0))?); // Late up after capture loss/timer.
         assert!(!bar.release_volume(Some(200.0))?);
         bar.status.volume = None;
+        look.status = bar.status;
         // DWM/theme changes can require a new host backdrop while the visible
         // theme flags remain identical. A cached Look must not suppress it.
         bar.look = Some(look.clone());
@@ -4112,6 +4487,9 @@ mod island_tests {
                 .iter()
                 .any(|hit| matches!(hit.action, IslandAction::Volume(_) | IslandAction::Mute))
         );
+        look.track.as_mut().context("track")?.timeline = None;
+        bar.apply_look(&gfx, look)?;
+        assert!(bar.progress_controls.is_none() && !bar.progress_timer);
         Ok(())
     }
 

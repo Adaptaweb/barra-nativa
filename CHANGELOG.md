@@ -8,6 +8,30 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+### English
+
+- The music/video popup now shows playback progress and elapsed/total time when
+  provided by the player. The speaker button on its right expands the volume
+  controls on demand. Timeline events and the local progress timer stop when
+  the popup is hidden; progress updates retain the existing visual tree.
+- Added an opt-in setting under Settings > Windows to show other workspaces. With
+  compatible shell-cloaking window managers (such as komorebi's Cloak mode),
+  clicking a pinned app can reuse its existing window instead of launching
+  another instance. Also includes other Windows virtual desktops; app-cloaked
+  and inherited-cloak windows remain excluded. No additional polling.
+
+### Español
+
+- El popup de música/vídeo muestra el progreso y los tiempos transcurrido/total
+  cuando el reproductor los proporciona. El icono de audio a la derecha despliega
+  el volumen al pulsarlo. Al ocultar el popup se detienen su suscripción al
+  progreso y su temporizador local, sin reconstruir la interfaz en cada avance.
+- Añadida una opción desactivada por defecto en Ventanas para mostrar ventanas
+  de otros espacios de trabajo. Con gestores compatibles (como el modo Cloak
+  de komorebi), permite reutilizar la ventana de una app fijada en vez de abrir
+  otra instancia. También incluye otros escritorios virtuales de Windows;
+  siguen excluidas las ventanas ocultas por la app o por herencia. Sin sondeo nuevo.
+
 ## [0.1.21]
 
 ### English

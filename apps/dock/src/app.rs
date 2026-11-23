@@ -4053,6 +4053,7 @@ impl App {
         }
         let hiding_changed = config.auto_hide != self.config.auto_hide
             || config.smart_hide != self.config.smart_hide;
+        let workspaces_changed = config.show_other_workspaces != self.config.show_other_workspaces;
         let moved = config.dock_position != self.config.dock_position;
         apply_explorer_pin(&mut self.roster, config.pin_explorer);
         self.slide.omega = config.dock_auto_hide_speed.omega();
@@ -4072,6 +4073,9 @@ impl App {
         }
         // Updates may have been turned on or off.
         self.schedule_update();
+        if workspaces_changed {
+            self.sync()?;
+        }
         self.sync_thumbnails();
         self.apply_menu_bar_setting();
         self.update_menu_bar_app()?;
@@ -4848,7 +4852,9 @@ impl App {
     }
 
     fn read_windows(&mut self) -> bool {
-        self.windows = self.tracker.list();
+        self.windows = self
+            .tracker
+            .list_with_workspaces(self.config.show_other_workspaces);
         self.preview_order.update(&self.windows);
         let pruned = self
             .attention
@@ -5010,6 +5016,13 @@ pub fn menu_bar_volume_release(x: Option<f32>) -> bool {
 pub fn menu_bar_volume_flush() {
     with_app("volumen", |app| match &mut app.menubar {
         Some(bar) => bar.flush_volume(),
+        None => Ok(()),
+    });
+}
+
+pub fn menu_bar_progress_tick() {
+    with_app("progreso multimedia", |app| match &mut app.menubar {
+        Some(bar) => bar.progress_tick(&app.gfx),
         None => Ok(()),
     });
 }

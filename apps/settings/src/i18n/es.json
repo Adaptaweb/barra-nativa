@@ -37,6 +37,8 @@
   "genieOffAction": "Abrir la configuración de Windows",
   "showMinimized": "Mostrar ventanas minimizadas",
   "showMinimizedHint": "Miniaturas separadas de los iconos de las apps.",
+  "showOtherWorkspaces": "Mostrar ventanas de otros espacios de trabajo",
+  "showOtherWorkspacesHint": "Reutiliza ventanas abiertas en escritorios virtuales de Windows y espacios compatibles, como el modo Cloak de komorebi.",
   "showPreviewCloseButton": "Mostrar botón de cerrar en previsualizaciones",
   "showPreviewCloseButtonHint": "Muestra un botón de cerrar en las previsualizaciones y permite cerrar con clic central.",
   "menuBar": "Barra superior",

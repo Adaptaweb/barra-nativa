@@ -386,7 +386,10 @@ fn activate_with(windows: &[isize], request_focus: impl FnOnce(HWND) -> bool) {
     unsafe {
         let valid = |hwnd: HWND| IsWindow(Some(hwnd)).as_bool() && IsWindowVisible(hwnd).as_bool();
         let Some(front) = handles()
-            .find(|&hwnd| valid(hwnd) && !IsIconic(hwnd).as_bool())
+            .find(|&hwnd| {
+                valid(hwnd) && !IsIconic(hwnd).as_bool() && !crate::tracker::is_cloaked(hwnd)
+            })
+            .or_else(|| handles().find(|&hwnd| valid(hwnd) && !IsIconic(hwnd).as_bool()))
             .or_else(|| handles().find(|&hwnd| valid(hwnd)))
         else {
             return;
@@ -445,6 +448,7 @@ fn stack_group_behind(front: HWND, windows: &[isize], foreground: impl Fn() -> H
                 || !IsWindow(Some(hwnd)).as_bool()
                 || !IsWindowVisible(hwnd).as_bool()
                 || IsIconic(hwnd).as_bool()
+                || crate::tracker::is_cloaked(hwnd)
                 || GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0
             {
                 continue;
@@ -473,7 +477,10 @@ pub fn minimize(windows: &[isize]) {
         let hwnd = HWND(raw as *mut _);
         // SAFETY: Calls on another window; they fail without effect if it is gone.
         unsafe {
-            if IsWindowVisible(hwnd).as_bool() && !IsIconic(hwnd).as_bool() {
+            if IsWindowVisible(hwnd).as_bool()
+                && !IsIconic(hwnd).as_bool()
+                && !crate::tracker::is_cloaked(hwnd)
+            {
                 let _ = ShowWindowAsync(hwnd, SW_MINIMIZE);
             }
         }
@@ -552,6 +559,53 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    #[ignore = "requires a Windows desktop; cloaks only a test-owned window without taking focus"]
+    fn native_workspace_activation_prefers_visible_peers_and_preserves_background_cloaks()
+    -> windows::core::Result<()> {
+        use std::cell::Cell;
+        use windows::Win32::Graphics::Dwm::{DWMWA_CLOAK, DwmSetWindowAttribute};
+
+        let desktop = Desktop::new()?;
+        let [cloaked, visible, _] = desktop.windows[..] else {
+            unreachable!("three test windows");
+        };
+        let cloak = windows::core::BOOL::from(true);
+        // SAFETY: Only the fixture's own window is cloaked, never user apps.
+        unsafe {
+            DwmSetWindowAttribute(
+                cloaked,
+                DWMWA_CLOAK,
+                (&raw const cloak).cast(),
+                size_of::<windows::core::BOOL>() as u32,
+            )?;
+        }
+        assert!(crate::tracker::is_cloaked(cloaked));
+        let group = [cloaked.0 as isize, visible.0 as isize];
+        let selected = Cell::new(HWND::default());
+        activate_with(&group, |target| {
+            selected.set(target);
+            false // Record the request without changing the user's foreground.
+        });
+        assert_eq!(selected.get(), visible);
+        activate_with(&group[..1], |target| {
+            selected.set(target);
+            false
+        });
+        assert_eq!(
+            selected.get(),
+            cloaked,
+            "a remote-only window remains activatable"
+        );
+        let before = desktop.order()?;
+        stack_group_behind(visible, &group, || visible);
+        assert_eq!(desktop.order()?, before, "do not reposition a cloaked peer");
+        minimize(&group[..1]);
+        assert!(!unsafe { IsIconic(cloaked) }.as_bool());
+        assert!(crate::tracker::is_cloaked(cloaked));
+        Ok(())
     }
 
     #[test]

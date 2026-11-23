@@ -31,6 +31,7 @@ const base = {
   dockDensity: "normal", dockAutoHideSpeed: "normal", showStart: true,
   showTrash: true, pinExplorer: true,
   showDownloads: true,
+  showOtherWorkspaces: false,
   menuBarIslandStyle: "notch", menuBarSearch: null, menuBarTaskView: null,
   menuBarWidgets: null, menuBarBatteryPercent: null, checkUpdates: false,
   pinned: [], recent: [], shortcutsFolder: null,
@@ -126,6 +127,26 @@ test("each section renders only its own controls, in every language and visibili
       assert.equal(body.key, section, "navigation resets the scroll container");
     }
   }
+});
+
+test("other workspaces are opt-in and save without changing other window preferences", async () => {
+  const view = fixture("windows", { showOtherWorkspaces: undefined });
+  const checked = () => [...elements(view.body())].find((node) =>
+    node.props.label === texts.en.showOtherWorkspaces && "checked" in node.props).props.checked;
+  const unmount = await view.mount();
+  try {
+    assert.equal(checked(), false);
+    view.change(texts.en.showOtherWorkspaces, true);
+    view.fire(60);
+    await settle();
+    assert.equal(checked(), true);
+    assert.deepEqual(view.calls, [{ showOtherWorkspaces: true }]);
+    view.change(texts.en.showOtherWorkspaces, false);
+    view.fire(60);
+    await settle();
+    assert.equal(checked(), false);
+    assert.deepEqual(view.calls.at(-1), { showOtherWorkspaces: false });
+  } finally { unmount(); }
 });
 
 test("failed writes remain retryable and prevent closing until saved", async () => {

@@ -37,6 +37,8 @@
   "genieOffAction": "Ouvrir les paramètres de Windows",
   "showMinimized": "Afficher les fenêtres réduites",
   "showMinimizedHint": "Des miniatures séparées des icônes des apps.",
+  "showOtherWorkspaces": "Afficher les fenêtres des autres espaces de travail",
+  "showOtherWorkspacesHint": "Réutilise les fenêtres ouvertes sur les bureaux virtuels Windows et les espaces compatibles, comme le mode Cloak de komorebi.",
   "showPreviewCloseButton": "Afficher le bouton de fermeture sur les aperçus",
   "showPreviewCloseButtonHint": "Affiche un bouton de fermeture sur les aperçus et permet de fermer avec le clic du milieu.",
   "menuBar": "Barre de menus",

@@ -5,11 +5,11 @@ use muelle_shell::{icons::IconImage, imagery};
 use std::{
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicIsize, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicIsize, AtomicU8, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use windows::{
     Foundation::TypedEventHandler,
@@ -31,7 +31,60 @@ use windows_future::IAsyncOperation;
 const SESSION: u8 = 1;
 const TRACK: u8 = 2;
 const PLAYBACK: u8 = 4;
+const TIMELINE: u8 = 8;
 const TIMEOUT: Duration = Duration::from_secs(3);
+
+/// A local monotonic anchor, advanced without querying the player on each tick.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Timeline {
+    position: Duration,
+    pub duration: Duration,
+    recorded: Instant,
+    rate: f64,
+}
+
+impl Timeline {
+    fn new(start: i64, end: i64, position: i64, age: Duration, rate: f64) -> Option<Self> {
+        let length = end.checked_sub(start).filter(|length| *length > 0)?;
+        let duration = Duration::from_secs_f64(length as f64 / 10_000_000.0);
+        let relative = position.clamp(start, end).checked_sub(start)?;
+        let rate = if rate.is_finite() { rate } else { 1.0 };
+        let seconds = (relative as f64 / 10_000_000.0 + age.as_secs_f64() * rate)
+            .clamp(0.0, duration.as_secs_f64());
+        Some(Self {
+            position: Duration::from_secs_f64(seconds),
+            duration,
+            recorded: Instant::now(),
+            rate,
+        })
+    }
+
+    pub fn position_at(self, now: Instant) -> Duration {
+        Duration::from_secs_f64(
+            (self.position.as_secs_f64()
+                + now.saturating_duration_since(self.recorded).as_secs_f64() * self.rate)
+                .clamp(0.0, self.duration.as_secs_f64()),
+        )
+    }
+
+    pub fn advancing(self, now: Instant) -> bool {
+        let position = self.position_at(now);
+        (self.rate > 0.0 && position < self.duration) || (self.rate < 0.0 && !position.is_zero())
+    }
+}
+
+fn timeline_age(updated: i64, now: SystemTime) -> Duration {
+    const UNIX_OFFSET: u128 = 116_444_736_000_000_000;
+    if updated <= 0 {
+        return Duration::ZERO;
+    }
+    let ticks = now
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos() / 100 + UNIX_OFFSET)
+        .unwrap_or(0)
+        .saturating_sub(updated as u128);
+    Duration::from_secs_f64(ticks as f64 / 10_000_000.0)
+}
 
 #[derive(Clone, Copy)]
 pub enum Control {
@@ -50,6 +103,24 @@ pub struct Track {
     pub toggle: bool,
     pub next: bool,
     pub artwork: Option<Arc<IconImage>>,
+    pub timeline: Option<Timeline>,
+}
+
+impl Track {
+    pub fn same_content(&self, other: &Self) -> bool {
+        self.generation == other.generation
+            && self.title == other.title
+            && self.artist == other.artist
+            && self.playing == other.playing
+            && self.previous == other.previous
+            && self.toggle == other.toggle
+            && self.next == other.next
+            && match (&self.artwork, &other.artwork) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+    }
 }
 
 #[cfg(test)]
@@ -62,6 +133,7 @@ impl Track {
             previous: true,
             toggle: true,
             next: true,
+            timeline: Timeline::new(0, 2_400_000_000, 420_000_000, Duration::ZERO, 1.0),
             ..Default::default()
         }
     }
@@ -125,12 +197,30 @@ pub struct Watch {
     state: Arc<Mutex<Option<Track>>>,
     events: Events,
     commands: SyncSender<(u64, Control)>,
+    progress: Arc<AtomicBool>,
 }
 
 impl Watch {
+    #[cfg(test)]
+    pub fn test_snapshot(track: Track) -> Self {
+        let (wake, _inbox) = mpsc::sync_channel(1);
+        let (commands, _requests) = mpsc::sync_channel(4);
+        Self {
+            window: Arc::new(AtomicIsize::new(0)),
+            state: Arc::new(Mutex::new(Some(track))),
+            events: Events {
+                wake,
+                dirty: Arc::new(AtomicU8::new(0)),
+            },
+            commands,
+            progress: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
     pub fn start(hwnd: HWND, message: u32) -> Option<Self> {
         let window = Arc::new(AtomicIsize::new(hwnd.0 as isize));
         let state = Arc::new(Mutex::new(None));
+        let progress = Arc::new(AtomicBool::new(false));
         let (wake, inbox) = mpsc::sync_channel(1);
         let (commands, requests) = mpsc::sync_channel(4);
         let events = Events {
@@ -139,13 +229,16 @@ impl Watch {
         };
         {
             let (window, state, events) = (window.clone(), state.clone(), events.clone());
+            let progress = progress.clone();
             thread::Builder::new()
                 .name("muelle-media".into())
                 .spawn(move || {
                     // SAFETY: This is a new thread. The apartment is kept alive
                     // until all of the worker's WinRT objects have been dropped.
                     if unsafe { RoInitialize(RO_INIT_MULTITHREADED) }.is_ok() {
-                        run(&window, message, &state, &events, &inbox, &requests);
+                        run(
+                            &window, message, &state, &events, &inbox, &requests, &progress,
+                        );
                         unsafe { RoUninitialize() };
                     }
                 })
@@ -156,11 +249,20 @@ impl Watch {
             state,
             events,
             commands,
+            progress,
         })
     }
 
     pub fn snapshot(&self) -> Option<Track> {
         self.state.lock().ok().and_then(|state| state.clone())
+    }
+
+    /// Subscribe only while the music popup is visible. Closing it also stops
+    /// timeline reads, independently of the existing metadata/playback watch.
+    pub fn show_progress(&self, visible: bool) {
+        if self.progress.swap(visible, Ordering::AcqRel) != visible {
+            self.events.mark(TIMELINE);
+        }
     }
 
     pub fn send(&self, track: &Track, control: Control) {
@@ -210,6 +312,7 @@ struct Current {
     session: Session,
     track_event: Option<i64>,
     playback_event: Option<i64>,
+    timeline_event: Option<i64>,
     title: String,
     artist: String,
     artwork: Option<Arc<IconImage>>,
@@ -235,6 +338,7 @@ impl Current {
             session,
             track_event,
             playback_event,
+            timeline_event: None,
             title: String::new(),
             artist: String::new(),
             artwork: None,
@@ -265,7 +369,22 @@ impl Current {
         }
     }
 
-    fn snapshot(&self, generation: u64) -> Option<Track> {
+    fn watch_timeline(&mut self, enabled: bool, events: &Events) {
+        if enabled && self.timeline_event.is_none() {
+            let events = events.clone();
+            self.timeline_event = self
+                .session
+                .TimelinePropertiesChanged(&TypedEventHandler::new(move |_, _| {
+                    events.mark(TIMELINE);
+                    Ok(())
+                }))
+                .ok();
+        } else if !enabled && let Some(token) = self.timeline_event.take() {
+            let _ = self.session.RemoveTimelinePropertiesChanged(token);
+        }
+    }
+
+    fn snapshot(&self, generation: u64, progress: bool) -> Option<Track> {
         let info = self.session.GetPlaybackInfo().ok()?;
         let status = info.PlaybackStatus().ok()?;
         if !matches!(status, Status::Playing | Status::Paused | Status::Changing) {
@@ -273,12 +392,36 @@ impl Current {
         }
         let playing = matches!(status, Status::Playing | Status::Changing);
         let controls = info.Controls().ok()?;
+        let timeline = progress
+            .then(|| {
+                let timeline = self.session.GetTimelineProperties().ok()?;
+                let rate = if playing {
+                    info.PlaybackRate()
+                        .ok()
+                        .and_then(|rate| rate.Value().ok())
+                        .unwrap_or(1.0)
+                } else {
+                    0.0
+                };
+                Timeline::new(
+                    timeline.StartTime().ok()?.Duration,
+                    timeline.EndTime().ok()?.Duration,
+                    timeline.Position().ok()?.Duration,
+                    timeline
+                        .LastUpdatedTime()
+                        .map(|time| timeline_age(time.UniversalTime, SystemTime::now()))
+                        .unwrap_or_default(),
+                    rate,
+                )
+            })
+            .flatten();
         Some(Track {
             generation,
             title: self.title.clone(),
             artist: self.artist.clone(),
             artwork: self.artwork.clone(),
             playing,
+            timeline,
             previous: controls.IsPreviousEnabled().unwrap_or(false),
             next: controls.IsNextEnabled().unwrap_or(false),
             toggle: controls.IsPlayPauseToggleEnabled().unwrap_or(false)
@@ -330,6 +473,9 @@ impl Drop for Current {
         if let Some(token) = self.playback_event {
             let _ = self.session.RemovePlaybackInfoChanged(token);
         }
+        if let Some(token) = self.timeline_event {
+            let _ = self.session.RemoveTimelinePropertiesChanged(token);
+        }
     }
 }
 
@@ -340,6 +486,7 @@ fn run(
     events: &Events,
     inbox: &Receiver<()>,
     requests: &Receiver<(u64, Control)>,
+    progress: &AtomicBool,
 ) {
     let Some(manager) = Manager::RequestAsync().ok().and_then(complete) else {
         return;
@@ -371,6 +518,10 @@ fn run(
                 dirty |= TRACK;
             }
         }
+        let progress = progress.load(Ordering::Acquire);
+        if let Some(active) = &mut current {
+            active.watch_timeline(progress, events);
+        }
         if dirty != 0 {
             if dirty & TRACK != 0
                 && let Some(current) = &mut current
@@ -379,7 +530,7 @@ fn run(
             }
             let latest = current
                 .as_ref()
-                .and_then(|current| current.snapshot(generation));
+                .and_then(|current| current.snapshot(generation, progress));
             if let Ok(mut snapshot) = state.lock()
                 && *snapshot != latest
             {
@@ -419,6 +570,106 @@ fn run(
 #[cfg(test)]
 mod native_probe {
     use super::*;
+    use anyhow::Context;
+
+    #[test]
+    fn progress_uses_source_age_and_playback_rate_then_clamps_at_both_ends() -> anyhow::Result<()> {
+        let mut timeline = Timeline::new(
+            300_000_000,
+            1_500_000_000,
+            450_000_000,
+            Duration::from_secs(5),
+            2.0,
+        )
+        .context("finite playing timeline")?;
+        let anchor = Instant::now();
+        timeline.recorded = anchor;
+        assert_eq!(timeline.position_at(anchor), Duration::from_secs(25));
+        assert_eq!(
+            timeline.position_at(anchor + Duration::from_secs(10)),
+            Duration::from_secs(45)
+        );
+        assert!(timeline.advancing(anchor));
+        assert_eq!(
+            timeline.position_at(anchor + Duration::from_secs(100)),
+            Duration::from_secs(120)
+        );
+        assert!(!timeline.advancing(anchor + Duration::from_secs(100)));
+        timeline.rate = -2.0;
+        assert_eq!(
+            timeline.position_at(anchor + Duration::from_secs(100)),
+            Duration::ZERO
+        );
+        assert!(!timeline.advancing(anchor + Duration::from_secs(100)));
+        Ok(())
+    }
+
+    #[test]
+    fn paused_live_and_invalid_timelines_do_not_invent_progress() -> anyhow::Result<()> {
+        let paused = Timeline::new(0, 900_000_000, 150_000_000, Duration::from_secs(300), 0.0)
+            .context("finite paused timeline")?;
+        assert_eq!(
+            paused.position_at(paused.recorded + Duration::from_secs(60)),
+            Duration::from_secs(15)
+        );
+        assert!(!paused.advancing(paused.recorded));
+        for (start, end) in [(0, 0), (100, 20), (i64::MIN, i64::MAX)] {
+            assert!(Timeline::new(start, end, 0, Duration::ZERO, 1.0).is_none());
+        }
+        let normalized = Timeline::new(0, 900_000_000, -1, Duration::ZERO, f64::NAN)
+            .context("normalized timeline")?;
+        assert_eq!(normalized.position_at(normalized.recorded), Duration::ZERO);
+        Ok(())
+    }
+
+    #[test]
+    fn timeline_utc_age_ignores_missing_or_future_timestamps() {
+        const UNIX_OFFSET: i64 = 116_444_736_000_000_000;
+        let now = UNIX_EPOCH + Duration::from_secs(100);
+        assert_eq!(
+            timeline_age(UNIX_OFFSET + 970_000_000, now),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            timeline_age(UNIX_OFFSET + 1_010_000_000, now),
+            Duration::ZERO
+        );
+        assert_eq!(timeline_age(0, now), Duration::ZERO);
+    }
+
+    #[test]
+    fn progress_visibility_wakes_the_worker_only_when_it_changes() {
+        let (wake, inbox) = mpsc::sync_channel(1);
+        let (commands, _requests) = mpsc::sync_channel(4);
+        let watch = Watch {
+            window: Arc::new(AtomicIsize::new(0)),
+            state: Arc::new(Mutex::new(None)),
+            events: Events {
+                wake,
+                dirty: Arc::new(AtomicU8::new(0)),
+            },
+            commands,
+            progress: Arc::new(AtomicBool::new(false)),
+        };
+        watch.show_progress(false);
+        assert!(inbox.try_recv().is_err());
+        watch.show_progress(true);
+        assert!(inbox.try_recv().is_ok());
+        watch.show_progress(true);
+        assert!(inbox.try_recv().is_err());
+        watch.show_progress(false);
+        assert!(inbox.try_recv().is_ok());
+    }
+
+    #[test]
+    fn a_position_update_does_not_invalidate_track_content_but_transport_changes_do() {
+        let old = Track::test_fixture();
+        let mut new = old.clone();
+        new.timeline = Timeline::new(0, 2_400_000_000, 840_000_000, Duration::ZERO, 1.0);
+        assert!(old.same_content(&new));
+        new.playing = false;
+        assert!(!old.same_content(&new));
+    }
 
     #[test]
     #[ignore = "Read-only artwork probe of the current Windows media session"]
@@ -464,6 +715,21 @@ mod native_probe {
                 };
                 let mut current = Current::new(session, &events);
                 current.update_track();
+                current.watch_timeline(true, &events);
+                assert!(current.timeline_event.is_some());
+                if let Some(track) = current.snapshot(1, true) {
+                    if let Some(timeline) = track.timeline {
+                        eprintln!(
+                            "Native timeline: {} / {} seconds",
+                            timeline.position_at(Instant::now()).as_secs(),
+                            timeline.duration.as_secs()
+                        );
+                    } else {
+                        eprintln!("Current session does not publish a finite timeline");
+                    }
+                }
+                current.watch_timeline(false, &events);
+                assert!(current.timeline_event.is_none());
                 if let Some(image) = &current.artwork {
                     assert!(image.width <= 128 && image.height <= 128);
                     eprintln!("Windows media artwork: {}x{}", image.width, image.height);
