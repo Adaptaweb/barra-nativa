@@ -5006,9 +5006,9 @@ pub fn menu_bar_scrolled(point: POINT, delta: i16) -> bool {
     })
 }
 
-pub fn menu_bar_volume_release(x: Option<f32>) -> bool {
+pub fn menu_bar_volume_release(y: Option<f32>) -> bool {
     with_app_value("volumen", |app| match &mut app.menubar {
-        Some(bar) => bar.release_volume(x),
+        Some(bar) => bar.release_volume(y),
         None => Ok(false),
     })
 }

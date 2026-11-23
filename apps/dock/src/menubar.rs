@@ -254,13 +254,7 @@ fn accessory_readings(snapshot: &AccessorySnapshot) -> [Option<AccessoryReading>
 impl Look {
     fn panel_content_height(&self) -> f32 {
         match self.panel {
-            Some(Island::Music) => {
-                if self.volume_expanded {
-                    218.0
-                } else {
-                    180.0
-                }
-            }
+            Some(Island::Music) => 180.0,
             Some(Island::Usage) => {
                 74.0 + Provider::ALL
                     .into_iter()
@@ -304,11 +298,18 @@ impl Span {
     }
 }
 
+#[derive(Clone, Copy, Default, PartialEq)]
+struct VolumeTrack {
+    center_x: f32,
+    top: f32,
+    bottom: f32,
+}
+
 #[derive(Clone, Copy)]
 enum IslandAction {
     Toggle(Island),
     Media(MediaControl),
-    Volume(Span),
+    Volume(VolumeTrack),
     ToggleVolume,
     Mute,
     Refresh,
@@ -350,7 +351,7 @@ struct VolumeControls {
     fill: CompositionRoundedRectangleGeometry,
     value: SpriteVisual,
     geometry: IslandGeometry,
-    width: f32,
+    height: f32,
     position_percent: Option<u8>,
     label_percent: u8,
 }
@@ -419,10 +420,12 @@ impl VolumeControls {
             return Ok(());
         }
         let px = |v| self.geometry.px(v);
-        let filled = self.width * f32::from(percent) / 100.0;
-        self.fill.SetSize(Vector2::new(filled, px(4.0)))?;
+        let filled = self.height * f32::from(percent) / 100.0;
+        self.fill.SetSize(Vector2::new(px(4.0), filled))?;
         self.fill
-            .SetCornerRadius(Vector2::new(px(2.0).min(filled / 2.0), px(2.0)))?;
+            .SetOffset(Vector2::new(0.0, self.height - filled))?;
+        self.fill
+            .SetCornerRadius(Vector2::new(px(2.0), px(2.0).min(filled / 2.0)))?;
         self.position_percent = Some(percent);
         Ok(())
     }
@@ -441,6 +444,11 @@ impl VolumeControls {
                 .SetBrush(&label.brush.cast::<CompositionBrush>()?)?;
             self.value
                 .SetSize(Vector2::new(label.width, label.height))?;
+            self.value.SetOffset(Vector3::new(
+                (self.geometry.width - label.width) / 2.0,
+                self.geometry.px(12.0),
+                0.0,
+            ))?;
             self.label_percent = percent;
         }
         Ok(())
@@ -489,7 +497,7 @@ pub struct MenuBar {
         Option<Arc<muelle_shell::icons::IconImage>>,
         CompositionSurfaceBrush,
     )>,
-    volume_drag: Option<Span>,
+    volume_drag: Option<VolumeTrack>,
     pending_volume: Option<u8>,
     volume_target: Option<u8>,
     volume_controls: Option<VolumeControls>,
@@ -525,7 +533,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         WM_LBUTTONUP => {
             let x = (l.0 & 0xFFFF) as i16;
             let y = (l.0 >> 16) as i16;
-            if !app::menu_bar_volume_release(Some(f32::from(x))) {
+            if !app::menu_bar_volume_release(Some(f32::from(y))) {
                 app::menu_bar_clicked(f32::from(x), f32::from(y));
             }
         }
@@ -1467,7 +1475,8 @@ impl MenuBar {
     fn pointer_left_at(&mut self, gfx: &Gfx, point: POINT) -> Result<()> {
         let x = (point.x - self.bounds.left) as f32;
         if let Some(span) = self.volume_drag {
-            self.queue_volume(span, x);
+            let y = (point.y - self.bounds.top) as f32;
+            self.queue_volume(span, y);
             // A nonactivating background window may not receive mouse-up
             // outside its visible bounds. Reuse the existing popup pointer
             // check to finish the gesture without ever stealing app focus.
@@ -1483,7 +1492,7 @@ impl MenuBar {
             if pressed {
                 return self.paint_volume_preview(gfx);
             }
-            self.release_volume(Some(x))?;
+            self.release_volume(Some(y))?;
         }
         let within_bar = point.x >= self.bounds.left
             && point.x < self.bounds.right
@@ -1507,7 +1516,7 @@ impl MenuBar {
     /// Leaving the island sideways still stays inside the full-width bar window.
     pub fn pointer_moved(&mut self, gfx: &Gfx, x: f32, y: f32) -> Result<()> {
         if let Some(span) = self.volume_drag {
-            self.queue_volume(span, x);
+            self.queue_volume(span, y);
             return self.paint_volume_preview(gfx);
         }
         let span = if y < (self.bounds.bottom - self.bounds.top) as f32 {
@@ -2411,10 +2420,17 @@ impl MenuBar {
                 IslandStyle::Notch => panel_span(span, width, desired),
                 IslandStyle::Bubble => bubble_panel_span(self.triggers_span, width, desired),
             };
+            let volume_span = if kind == Island::Music && look.volume_expanded {
+                let (music, volume) = volume_popover_layout(self.panel_span, width, look.scale);
+                self.panel_span = music;
+                Some(volume)
+            } else {
+                None
+            };
             let geometry = IslandGeometry::new(self.panel_span, bar_height + px(PANEL_GAP), look);
             let height = px(look.panel_height());
             let theme = Theme::for_popup(look.light, look.glass);
-            let content = popup_surface(gfx, theme, layers, geometry, height)?;
+            let content = popup_surface(gfx, theme, layers, geometry, height, px(PANEL_RADIUS))?;
             match kind {
                 Island::Music => {
                     if let Some(track) = &look.track {
@@ -2426,6 +2442,22 @@ impl MenuBar {
                             cover.as_ref(),
                             look.volume_expanded,
                         )?;
+                    }
+                    if let Some(span) = volume_span {
+                        let volume_geometry = IslandGeometry::new(span, geometry.top, look);
+                        let volume_content = popup_surface(
+                            gfx,
+                            theme,
+                            layers,
+                            volume_geometry,
+                            height,
+                            span.width() / 2.0,
+                        )?;
+                        self.draw_volume_capsule(gfx, &volume_content, volume_geometry)?;
+                        // Keep the small bridge between surfaces interactive,
+                        // so moving towards the volume does not dismiss it.
+                        self.panel_span.left = self.panel_span.left.min(span.left);
+                        self.panel_span.right = self.panel_span.right.max(span.right);
                     }
                 }
                 Island::Usage => {
@@ -2774,46 +2806,53 @@ impl MenuBar {
                 px(28.0),
                 IslandAction::ToggleVolume,
             ));
-            if !volume_expanded {
-                return Ok(());
-            }
-            add_rounded_box(
-                c,
-                layers,
-                px(26.0),
-                px(175.0),
-                geometry.width - px(52.0),
-                px(1.0),
-                0.0,
-                geometry.border(),
-                None,
-            )?;
+        }
+        Ok(())
+    }
+
+    fn draw_volume_capsule(
+        &mut self,
+        gfx: &Gfx,
+        layers: &VisualCollection,
+        geometry: IslandGeometry,
+    ) -> Result<()> {
+        let px = |v| geometry.px(v);
+        let c = &gfx.compositor;
+        let ink = geometry.ink();
+        if let Some(volume) = self.status.volume {
+            let symbol = if volume.muted {
+                glyph::MUTE
+            } else {
+                glyph::VOLUME[volume.level.min(3) as usize]
+            };
+            let label = gfx.glyph_brush(&[(symbol, 1.0)], geometry.scale, ink)?;
             add_visual(
                 c,
                 layers,
                 &label.brush.cast()?,
-                px(25.0),
-                px(192.0) - label.height / 2.0,
+                (geometry.width - label.width) / 2.0,
+                px(155.0) - label.height / 2.0,
                 label.width,
                 label.height,
             )?;
             self.island_hits.push(geometry.hit(
-                px(18.0),
-                px(178.0),
-                px(32.0),
+                (geometry.width - px(28.0)) / 2.0,
+                px(141.0),
+                px(28.0),
                 px(28.0),
                 IslandAction::Mute,
             ));
-            let left = px(59.0);
-            let width = (geometry.width - left - px(66.0)).max(px(1.0));
+            let left = (geometry.width - px(4.0)) / 2.0;
+            let top = px(34.0);
+            let height = px(96.0);
             let percent = self.volume_target.unwrap_or(volume.percent);
             add_rounded_box(
                 c,
                 layers,
                 left,
-                px(190.0),
-                width,
+                top,
                 px(4.0),
+                height,
                 px(2.0),
                 geometry.control_fill(),
                 None,
@@ -2822,9 +2861,9 @@ impl MenuBar {
                 c,
                 layers,
                 left,
-                px(190.0),
-                width,
+                top,
                 px(4.0),
+                height,
                 px(2.0),
                 if geometry.light {
                     rgba(40, 48, 58, 220)
@@ -2839,8 +2878,8 @@ impl MenuBar {
                 c,
                 layers,
                 &label.brush.cast()?,
-                geometry.width - px(51.0),
-                px(185.0),
+                (geometry.width - label.width) / 2.0,
+                px(12.0),
                 label.width,
                 label.height,
             )?;
@@ -2849,20 +2888,21 @@ impl MenuBar {
                 fill,
                 value,
                 geometry,
-                width,
+                height,
                 position_percent: None,
                 label_percent: percent,
             };
             controls.move_to(percent)?;
             self.volume_controls = Some(controls);
             self.island_hits.push(geometry.hit(
-                left - px(6.0),
-                px(179.0),
-                width + px(12.0),
-                px(29.0),
-                IslandAction::Volume(Span {
-                    left: geometry.left + left,
-                    right: geometry.left + left + width,
+                (geometry.width - px(28.0)) / 2.0,
+                top - px(8.0),
+                px(28.0),
+                height + px(16.0),
+                IslandAction::Volume(VolumeTrack {
+                    center_x: geometry.left + geometry.width / 2.0,
+                    top: geometry.top + top,
+                    bottom: geometry.top + top + height,
                 }),
             ));
         }
@@ -3025,7 +3065,7 @@ impl MenuBar {
         unsafe {
             SetCapture(self.hwnd);
         }
-        self.queue_volume(span, x);
+        self.queue_volume(span, y);
         self.paint_volume_preview(gfx)
     }
 
@@ -3089,8 +3129,8 @@ impl MenuBar {
         Ok(())
     }
 
-    fn queue_volume(&mut self, span: Span, x: f32) {
-        let percent = volume_percent(span, x);
+    fn queue_volume(&mut self, span: VolumeTrack, y: f32) {
+        let percent = volume_percent(span, y);
         self.volume_target = Some(percent);
         if let Some(controls) = &mut self.volume_controls {
             // Optimistic GPU-only feedback is independent of endpoint latency.
@@ -3130,13 +3170,13 @@ impl MenuBar {
         Ok(())
     }
 
-    pub fn release_volume(&mut self, x: Option<f32>) -> Result<bool> {
+    pub fn release_volume(&mut self, y: Option<f32>) -> Result<bool> {
         let Some(span) = self.volume_drag.take() else {
-            return Ok(x.is_some() && std::mem::take(&mut self.suppress_volume_release));
+            return Ok(y.is_some() && std::mem::take(&mut self.suppress_volume_release));
         };
         self.suppress_volume_release = true;
-        if let Some(x) = x {
-            self.queue_volume(span, x);
+        if let Some(y) = y {
+            self.queue_volume(span, y);
         }
         // Clear state first: ReleaseCapture posts a capture-lost notification.
         unsafe {
@@ -3152,11 +3192,44 @@ impl MenuBar {
     }
 }
 
-fn volume_percent(span: Span, x: f32) -> u8 {
-    if span.width() <= 0.0 || !x.is_finite() {
+fn volume_percent(span: VolumeTrack, y: f32) -> u8 {
+    let height = span.bottom - span.top;
+    if height <= 0.0 || !y.is_finite() {
         return 0;
     }
-    (((x - span.left) / span.width()).clamp(0.0, 1.0) * 100.0).round() as u8
+    (((span.bottom - y) / height).clamp(0.0, 1.0) * 100.0).round() as u8
+}
+
+/// Prefer the player's right edge, then its left. On narrow displays reserve
+/// space for the capsule instead of covering the progress or playback buttons.
+fn volume_popover_layout(panel: Span, width: f32, scale: f32) -> (Span, Span) {
+    let px = |value: f32| (value * scale).round();
+    let margin = px(12.0).min(width / 10.0);
+    let available = (width - margin * 2.0).max(0.0);
+    let capsule = px(44.0).min(available / 3.0);
+    let gap = px(8.0).min(available / 10.0);
+    let player_width = panel.width().min((available - capsule - gap).max(0.0));
+    let mut left = panel
+        .left
+        .clamp(margin, (width - margin - player_width).max(margin));
+    let volume_left = if left + player_width + gap + capsule <= width - margin {
+        left + player_width + gap
+    } else if left - gap - capsule >= margin {
+        left - gap - capsule
+    } else {
+        left = (width - margin - player_width - gap - capsule).max(margin);
+        left + player_width + gap
+    };
+    (
+        Span {
+            left,
+            right: left + player_width,
+        },
+        Span {
+            left: volume_left,
+            right: volume_left + capsule,
+        },
+    )
 }
 
 fn media_time(seconds: u64) -> String {
@@ -3384,10 +3457,10 @@ fn popup_surface(
     layers: &VisualCollection,
     geometry: IslandGeometry,
     height: f32,
+    radius: f32,
 ) -> Result<VisualCollection> {
     let c = &gfx.compositor;
     let size = Vector2::new(geometry.width, height);
-    let radius = geometry.px(PANEL_RADIUS);
     let panel = theme.panel(gfx, size, radius, geometry.scale)?;
     let popup = c.CreateContainerVisual()?;
     popup.SetSize(size)?;
@@ -4133,7 +4206,7 @@ mod island_tests {
             })
             .context("slider")?;
         bar.volume_drag = Some(span); // Never capture the user's mouse in a test.
-        bar.queue_volume(span, span.left);
+        bar.queue_volume(span, span.top);
         look.scale = 1.5;
         bar.apply_look(&gfx, look.clone())?;
         assert!(
@@ -4141,7 +4214,7 @@ mod island_tests {
                 && bar.pending_volume.is_none()
                 && bar.volume_target.is_none()
         );
-        assert!(bar.release_volume(Some(span.right))?); // Late up must not activate another button.
+        assert!(bar.release_volume(Some(span.bottom))?); // Late up must not activate another button.
         let span = bar
             .island_hits
             .iter()
@@ -4151,8 +4224,10 @@ mod island_tests {
             })
             .context("new slider")?;
         bar.volume_drag = Some(span);
-        bar.queue_volume(span, span.right);
-        look.active_providers.0.fill(true); // Changes popup placement without changing monitor/DPI.
+        bar.queue_volume(span, span.bottom);
+        // Move the capsule by changing its anchor style, without changing the
+        // monitor/DPI. A provider count can now leave the capsule in place.
+        look.widgets.island_style = IslandStyle::Notch;
         bar.apply_look(&gfx, look.clone())?;
         assert!(bar.volume_drag.is_none() && bar.pending_volume.is_none());
 
@@ -4168,22 +4243,59 @@ mod island_tests {
     }
 
     #[test]
-    fn volume_coordinates_clamp_and_round_at_both_ends() {
-        let span = Span {
-            left: 100.0,
-            right: 300.0,
+    fn vertical_volume_coordinates_increase_upwards_and_clamp_at_both_ends() {
+        let span = VolumeTrack {
+            center_x: 200.0,
+            top: 100.0,
+            bottom: 300.0,
         };
-        for (x, expected) in [
-            (-100.0, 0),
-            (100.0, 0),
+        for (y, expected) in [
+            (-100.0, 100),
+            (100.0, 100),
             (200.0, 50),
-            (299.0, 100),
-            (500.0, 100),
+            (299.0, 1),
+            (300.0, 0),
+            (500.0, 0),
             (f32::NAN, 0),
+            (f32::INFINITY, 0),
         ] {
-            assert_eq!(volume_percent(span, x), expected);
+            assert_eq!(volume_percent(span, y), expected);
         }
-        assert_eq!(volume_percent(Span::default(), 1.0), 0);
+        assert_eq!(volume_percent(VolumeTrack::default(), 1.0), 0);
+    }
+
+    #[test]
+    fn volume_capsule_stays_beside_the_player_and_inside_each_screen_edge() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for (left, right, width) in [
+                (12.0, 372.0, 800.0),
+                (428.0, 788.0, 800.0),
+                (220.0, 580.0, 800.0),
+                (12.0, 380.0, 392.0),
+            ] {
+                let (music, capsule) = volume_popover_layout(
+                    Span {
+                        left: left * scale,
+                        right: right * scale,
+                    },
+                    width * scale,
+                    scale,
+                );
+                assert!(music.left >= 0.0 && capsule.left >= 0.0);
+                assert!(music.right <= width * scale && capsule.right <= width * scale);
+                assert!(
+                    music.right < capsule.left || capsule.right < music.left,
+                    "never cover playback controls"
+                );
+                assert!(music.width() > capsule.width());
+            }
+        }
+        let panel = Span {
+            left: 428.0,
+            right: 788.0,
+        };
+        let (music, capsule) = volume_popover_layout(panel, 800.0, 1.0);
+        assert!(music == panel && capsule.right < music.left);
     }
 
     #[test]
@@ -4324,8 +4436,8 @@ mod island_tests {
                         .iter()
                         .find(|hit| {
                             hit.at(
-                                geometry.left + geometry.px(30.0),
-                                geometry.top + geometry.px(192.0),
+                                geometry.left + geometry.width / 2.0,
+                                geometry.top + geometry.px(155.0),
                             )
                         })
                         .context("speaker has no hit target")?;
@@ -4333,7 +4445,7 @@ mod island_tests {
                     let slider = bar
                         .island_hits
                         .iter()
-                        .find(|hit| hit.at((left + right) / 2.0, geometry.top + geometry.px(192.0)))
+                        .find(|hit| hit.at((left + right) / 2.0, geometry.top + geometry.px(82.0)))
                         .context("slider has no hit target")?;
                     assert!(matches!(slider.action, IslandAction::Volume(_)));
                 }
@@ -4423,13 +4535,14 @@ mod island_tests {
             full_redraw,
             started.elapsed()
         );
-        let span = Span {
-            left: 100.0,
-            right: 300.0,
+        let span = VolumeTrack {
+            center_x: 200.0,
+            top: 100.0,
+            bottom: 300.0,
         };
         bar.volume_drag = Some(span); // No SetCapture in a test.
-        bar.queue_volume(span, 140.0);
-        bar.pointer_moved(&gfx, 260.0, 0.0)?;
+        bar.queue_volume(span, 260.0);
+        bar.pointer_moved(&gfx, 999.0, 140.0)?;
         assert_eq!(bar.pending_volume, Some(80));
         assert_eq!(
             bar.volume_controls
@@ -4444,6 +4557,17 @@ mod island_tests {
                 .context("immediate fill")?
                 .position_percent,
             Some(80)
+        );
+        let controls = bar.volume_controls.as_ref().context("vertical fill")?;
+        assert!((controls.fill.Size()?.Y - controls.height * 0.8).abs() < 0.01);
+        assert!(
+            (controls.fill.Offset()?.Y + controls.fill.Size()?.Y - controls.height).abs() < 0.01,
+            "fill stays attached to the bottom"
+        );
+        let label = controls.value.Size()?;
+        assert!(
+            (controls.value.Offset()?.X + label.X / 2.0 - controls.geometry.width / 2.0).abs()
+                < 0.01
         );
         // An endpoint acknowledgement must not drag the fill backwards while
         // a newer pointer target is still waiting for its coalesced write.
@@ -5049,7 +5173,14 @@ mod island_tests {
                 scale: 1.0,
                 light,
             };
-            popup_surface(&gfx, theme, &root.Children()?, geometry, 136.0)?;
+            popup_surface(
+                &gfx,
+                theme,
+                &root.Children()?,
+                geometry,
+                136.0,
+                geometry.px(PANEL_RADIUS),
+            )?;
         }
         Ok(())
     }
