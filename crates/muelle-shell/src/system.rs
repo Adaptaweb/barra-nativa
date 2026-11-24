@@ -256,18 +256,31 @@ pub enum UiLanguage {
     Spanish,
     English,
     French,
+    Chinese,
+    Hindi,
+    Arabic,
+    Bengali,
+    Portuguese,
 }
 
 /// The Windows display language, or English when Muelle has no text in it.
 #[must_use]
 pub fn ui_language() -> UiLanguage {
-    const LANG_SPANISH: u16 = 0x0A;
-    const LANG_FRENCH: u16 = 0x0C;
     // SAFETY: Read-only query.
     let language = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
+    ui_language_from_id(language)
+}
+
+fn ui_language_from_id(language: u16) -> UiLanguage {
+    // PRIMARYLANGID: regional variants share the low ten bits.
     match language & 0x3FF {
-        LANG_SPANISH => UiLanguage::Spanish,
-        LANG_FRENCH => UiLanguage::French,
+        0x0A => UiLanguage::Spanish,
+        0x0C => UiLanguage::French,
+        0x04 => UiLanguage::Chinese,
+        0x39 => UiLanguage::Hindi,
+        0x01 => UiLanguage::Arabic,
+        0x45 => UiLanguage::Bengali,
+        0x16 => UiLanguage::Portuguese,
         _ => UiLanguage::English,
     }
 }
@@ -355,4 +368,30 @@ pub fn clock_text() -> String {
     let text =
         |buffer: &[u16], len: i32| String::from_utf16_lossy(&buffer[..(len - 1).max(0) as usize]);
     format!("{}  {}", text(&date, date_len), text(&time, time_len))
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::{UiLanguage, ui_language_from_id};
+
+    #[test]
+    fn windows_display_languages_include_regional_variants() {
+        for (id, expected) in [
+            (0x0409, UiLanguage::English),
+            (0x080A, UiLanguage::Spanish),
+            (0x0C0C, UiLanguage::French),
+            (0x0804, UiLanguage::Chinese),
+            (0x1004, UiLanguage::Chinese),
+            (0x0439, UiLanguage::Hindi),
+            (0x0401, UiLanguage::Arabic),
+            (0x0C01, UiLanguage::Arabic),
+            (0x0445, UiLanguage::Bengali),
+            (0x0845, UiLanguage::Bengali),
+            (0x0416, UiLanguage::Portuguese),
+            (0x0816, UiLanguage::Portuguese),
+            (0x0407, UiLanguage::English),
+        ] {
+            assert_eq!(ui_language_from_id(id), expected, "LANGID {id:04x}");
+        }
+    }
 }

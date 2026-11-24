@@ -69,8 +69,8 @@ export function WallpaperGallery({ texts, onApplied }: { texts: WallpaperTexts; 
             {selected === id ? <span className="wallpaper-check" aria-hidden="true">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="m4 8 2.5 2.5L12 5" /></svg>
             </span> : null}
+            <span className="wallpaper-name" aria-hidden="true">{name}</span>
           </span>
-          <span className="wallpaper-name">{name}</span>
         </button>;
       })}
     </div>

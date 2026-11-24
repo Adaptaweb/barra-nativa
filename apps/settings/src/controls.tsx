@@ -125,7 +125,7 @@ export function Select<T extends string>({ value, label, options, onChange }: Se
   return <span className="select-wrap">
     <select className="select-control" aria-label={label} value={value}
       onChange={(event) => onChange(event.target.value as T)}>
-      {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+      {options.map((option) => <option key={option.value} value={option.value} dir="auto">{option.label}</option>)}
     </select>
     <svg className="select-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
       <path d="m4 6 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />

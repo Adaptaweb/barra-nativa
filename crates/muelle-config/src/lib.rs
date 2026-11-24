@@ -238,6 +238,11 @@ pub enum Language {
     Es,
     En,
     Fr,
+    Zh,
+    Hi,
+    Ar,
+    Bn,
+    Pt,
     /// Follow the Windows display language. Also what a language added by a
     /// newer version reads as, so the file stays valid for older versions
     /// (serde requires this fallback to be the last variant).
@@ -814,6 +819,29 @@ mod tests {
         .ok();
         let config = load(&path).ok().flatten().unwrap_or_default();
         assert!(!config.show_recents && !config.bounce_on_open);
+    }
+
+    #[test]
+    fn supported_languages_round_trip_without_changing_other_settings()
+    -> Result<(), serde_json::Error> {
+        for (code, language) in [
+            ("auto", Language::Auto),
+            ("en", Language::En),
+            ("es", Language::Es),
+            ("fr", Language::Fr),
+            ("zh", Language::Zh),
+            ("hi", Language::Hi),
+            ("ar", Language::Ar),
+            ("bn", Language::Bn),
+            ("pt", Language::Pt),
+        ] {
+            let value = serde_json::json!({"language": code, "iconSize": 56});
+            let config: Config = serde_json::from_value(value)?;
+            assert_eq!(config.language, language);
+            assert_eq!(config.icon_size, 56);
+            assert_eq!(serde_json::to_value(&config)?["language"], code);
+        }
+        Ok(())
     }
 
     #[test]

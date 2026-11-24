@@ -35,9 +35,7 @@ import { DockDensityPreview, DockPreview, IslandPreview, SettingIcon, SpeedPrevi
 import { type SectionId, SectionIcon } from "./icons";
 import { UpdateBanner } from "./UpdateBanner";
 import { WallpaperGallery } from "./WallpaperGallery";
-import en from "./i18n/en.json";
-import es from "./i18n/es.json";
-import fr from "./i18n/fr.json";
+import { type Texts, LANGUAGE_OPTIONS, resolveLanguage, textsFor } from "./i18n";
 
 type UpdateState =
   | { kind: "off" }
@@ -61,23 +59,11 @@ interface ProgressEvent {
   downloaded: number;
   total: number | null;
 }
-type Texts = typeof es;
 
 /** Dragging a slider saves at most this often; the dock redraws on each save. */
 const SAVE_DELAY_MS = 60;
 /** How long the reset button stays armed after the first click. */
 const RESET_CONFIRM_MS = 4000;
-
-const TEXTS: Record<Exclude<Language, "auto">, Texts> = { es, en, fr };
-
-function textsFor(language: Language): Texts {
-  if (language !== "auto") {
-    return TEXTS[language];
-  }
-  // Follow the Windows display language, English when there is no text in it.
-  const windows = navigator.language.toLowerCase().slice(0, 2);
-  return windows === "es" || windows === "fr" ? TEXTS[windows] : en;
-}
 
 export function App() {
   const [config, setConfig] = useState<Config | null>(null);
@@ -266,7 +252,8 @@ export function App() {
   }, [appearance]);
 
   if (!config) return <div className="window" />;
-  const t = textsFor(config.language);
+  const language = resolveLanguage(config.language, config.language === "auto" ? navigator.language : "");
+  const t = textsFor(language);
   const durationFormat = new Intl.NumberFormat(config.language === "auto" ? navigator.language : config.language);
   const chooseFolder = () => {
     pickFolder(config.shortcutsFolder)
@@ -280,7 +267,7 @@ export function App() {
     waiting !== null && (!bannerDismissed || updateState.kind !== "available");
 
   return (
-    <div className="window">
+    <div className="window" lang={language} dir={language === "ar" ? "rtl" : "ltr"}>
       <aside className="sidebar" data-tauri-drag-region>
         <div className="traffic">
           <button
@@ -638,14 +625,12 @@ export function App() {
                   <Toggle label={t.autostart} checked={autostart} onChange={changeAutostart} />
                 </Row>
                 <Row icon={<SettingIcon name="language" />} label={t.language}>
-                  <Segmented<Language>
+                  <Select<Language>
                     label={t.language}
                     value={config.language}
                     options={[
                       { value: "auto", label: t.languageAuto },
-                      { value: "es", label: "Español" },
-                      { value: "en", label: "English" },
-                      { value: "fr", label: "Français" },
+                      ...LANGUAGE_OPTIONS,
                     ]}
                     onChange={(language) => update({ language })}
                   />

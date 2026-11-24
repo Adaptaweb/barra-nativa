@@ -21,7 +21,7 @@ for (const file of readdirSync(source).filter((name) => /\.tsx?$/.test(name))) {
   });
   compiled.set(filename, runInThisContext(`(function(require,module,exports){${code}\n})`, { filename }));
 }
-const texts = Object.fromEntries(["en", "es", "fr"].map((language) => [
+const texts = Object.fromEntries(["en", "es", "fr", "zh", "hi", "ar", "bn", "pt"].map((language) => [
   language, JSON.parse(readFileSync(path.join(source, "i18n", `${language}.json`), "utf8")),
 ]));
 const base = {
@@ -429,5 +429,45 @@ test("the alert bounce and the preview close button are always on, with no switc
   for (const section of ["dock", "windows"]) for (const old of [false, true]) {
     const html = renderToStaticMarkup(fixture(section, { notificationBounce: old, showPreviewCloseButton: old }).body());
     assert.doesNotMatch(html, /Bounce icon on alert|close button on previews/i);
+  }
+});
+
+
+test("all translations have complete keys, wallpaper names and intact placeholders", () => {
+  const placeholders = (text) => [...text.matchAll(/\{[^}]+\}/g)].map(([match]) => match).sort();
+  for (const [language, catalog] of Object.entries(texts)) {
+    assert.deepEqual(Object.keys(catalog).sort(), Object.keys(texts.en).sort(), language);
+    for (const [key, original] of Object.entries(texts.en)) {
+      const values = Array.isArray(original) ? catalog[key] : [catalog[key]];
+      const originals = Array.isArray(original) ? original : [original];
+      assert.equal(values.length, originals.length, `${language}/${key}`);
+      values.forEach((value, index) => {
+        assert.equal(typeof value, "string");
+        assert.ok(value.trim(), `${language}/${key}`);
+        assert.deepEqual(placeholders(value), placeholders(originals[index]), `${language}/${key}`);
+      });
+    }
+  }
+});
+
+test("language uses one dropdown and changing it preserves other preferences", async () => {
+  for (const language of Object.keys(texts)) {
+    const view = fixture("system", { language });
+    const control = [...elements(view.body())].find((node) => node.props.label === texts[language].language && typeof node.props.onChange === "function");
+    const html = renderToStaticMarkup(control);
+    assert.match(html, /<select /);
+    assert.doesNotMatch(html, /radiogroup/);
+    assert.equal((html.match(/<option /g) ?? []).length, 9);
+    for (const other of Object.keys(texts)) {
+      view.change(texts[language].language, other);
+      view.fire(60); await settle();
+      assert.deepEqual(view.calls.at(-1), { language: other });
+      const root = view.render();
+      assert.equal(root.props.lang, other);
+      assert.equal(root.props.dir, other === "ar" ? "rtl" : "ltr");
+      // Return through the current locale's control, not a stale label.
+      view.change(texts[other].language, language);
+      view.fire(60); await settle();
+    }
   }
 });

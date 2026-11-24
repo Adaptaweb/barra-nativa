@@ -41,9 +41,10 @@ use windows::{
                 DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
                 DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
-                DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_METRICS, DWRITE_TRIMMING,
+                DWRITE_READING_DIRECTION_RIGHT_TO_LEFT, DWRITE_TEXT_ALIGNMENT_CENTER,
+                DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_TEXT_METRICS, DWRITE_TRIMMING,
                 DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP,
-                DWriteCreateFactory, IDWriteFactory, IDWriteTextLayout,
+                DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, IDWriteTextLayout,
             },
             Dxgi::{Common::DXGI_FORMAT_B8G8R8A8_UNORM, IDXGIDevice},
         },
@@ -52,6 +53,27 @@ use windows::{
     core::{Interface, w},
 };
 use windows_numerics::{Matrix3x2, Vector2};
+
+/// Use the first letter, not the app language: media and window titles may
+/// use another script. Skip punctuation, numbers and bidi isolation marks.
+fn text_reads_rtl(text: &str) -> bool {
+    text.chars()
+        .find(|c| c.is_alphabetic())
+        .is_some_and(|c| matches!(c as u32, 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF))
+}
+
+fn set_text_direction(format: &IDWriteTextFormat, text: &str) -> Result<()> {
+    if text_reads_rtl(text) {
+        // SAFETY: The format is live and belongs to the current drawing thread.
+        unsafe {
+            format.SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT)?;
+            // The brush is cropped to the measured text width. Keep the text
+            // at physical x=0 instead of the far end of its 4096px layout box.
+            format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING)?;
+        }
+    }
+    Ok(())
+}
 
 const TRANSPARENT: D2D1_COLOR_F = D2D1_COLOR_F {
     r: 0.0,
@@ -427,6 +449,7 @@ impl Gfx {
                 13.0 * scale,
                 w!(""),
             )?;
+            set_text_direction(&format, text)?;
             let layout = self
                 .dwrite
                 .CreateTextLayout(&utf16, &format, 4096.0, 256.0)?;
@@ -671,6 +694,7 @@ impl Gfx {
                 13.0 * scale,
                 w!(""),
             )?;
+            set_text_direction(&format, text)?;
             let layout = self.dwrite.CreateTextLayout(&utf16, &format, room, 256.0)?;
             layout.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
             let ellipsis = self.dwrite.CreateEllipsisTrimmingSign(&format)?;
@@ -974,6 +998,7 @@ impl Gfx {
                 font_size * scale,
                 w!(""),
             )?;
+            set_text_direction(&format, text)?;
             let layout = self
                 .dwrite
                 .CreateTextLayout(&utf16, &format, max_width, 256.0)?;
@@ -1410,6 +1435,29 @@ mod recovery_tests {
             DispatcherQueueOptions,
         },
     };
+
+    #[test]
+    fn labels_follow_the_first_letter_instead_of_the_ui_locale() {
+        for text in [
+            "العربية",
+            "(فارغ)",
+            "65% مستخدم",
+            "\u{2067}جارٍ التحديث…\u{2069}",
+        ] {
+            assert!(text_reads_rtl(text), "{text}");
+        }
+        for text in [
+            "Muelle",
+            "Claude Code (العربية)",
+            "简体中文",
+            "हिन्दी",
+            "বাংলা",
+            "65%",
+            "",
+        ] {
+            assert!(!text_reads_rtl(text), "{text}");
+        }
+    }
 
     #[test]
     fn drawing_error_reaches_observer_and_balances_begin_end_draw() -> Result<()> {

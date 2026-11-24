@@ -10,6 +10,10 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Added Simplified Chinese, Hindi, Arabic, Bengali and Portuguese to Settings,
+  Dock menus and menu-bar panels. Language now uses a dropdown with native
+  language names and an Automatic option that follows Windows. Arabic Settings
+  use a right-to-left layout; native labels respect their text's reading direction.
 - Added an offline wallpaper gallery to Appearance with 12 desktop backgrounds.
   Selecting an image applies it through Windows; opening the gallery leaves the
   current background untouched. Small lazy-loaded previews, serialized background
@@ -58,6 +62,11 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Añadidos chino simplificado, hindi, árabe, bengalí y portugués en Ajustes,
+  menús del Dock y paneles de la barra superior. El idioma se elige en un
+  desplegable con nombres nativos y Automático para seguir Windows. Ajustes
+  admite distribución de derecha a izquierda en árabe; las etiquetas nativas
+  respetan el sentido de lectura de su texto.
 - Galería de 12 fondos de pantalla sin conexión en Apariencia. Elegir una imagen
   la aplica mediante Windows; abrir la galería conserva el fondo actual.
   Miniaturas ligeras bajo demanda, trabajo en segundo plano y originales

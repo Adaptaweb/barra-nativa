@@ -1,4 +1,4 @@
-//! User-facing dock text in Spanish, English and French. The language follows
+//! User-facing dock text. The language follows
 //! the Windows display language unless the user overrides it in Settings.
 //! `&` marks the menu access key.
 
@@ -6,6 +6,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use muelle_config::Language;
 use muelle_shell::system::{UiLanguage, ui_language};
+
+mod ar;
+mod bn;
+mod hi;
+mod pt;
+mod zh;
 
 pub struct Strings {
     pub open: &'static str,
@@ -199,7 +205,7 @@ const FR: Strings = Strings {
     remove_from_dock: "&Retirer du Dock",
 };
 
-/// 0 = not chosen yet (follow Windows), 1 = Spanish, 2 = English, 3 = French.
+/// 0 = not chosen yet (follow Windows). Nonzero values identify static catalogs.
 static LANGUAGE: AtomicU8 = AtomicU8::new(0);
 
 pub fn set_language(language: Language) {
@@ -208,11 +214,21 @@ pub fn set_language(language: Language) {
         Language::Es => UiLanguage::Spanish,
         Language::En => UiLanguage::English,
         Language::Fr => UiLanguage::French,
+        Language::Zh => UiLanguage::Chinese,
+        Language::Hi => UiLanguage::Hindi,
+        Language::Ar => UiLanguage::Arabic,
+        Language::Bn => UiLanguage::Bengali,
+        Language::Pt => UiLanguage::Portuguese,
     };
     let stored = match chosen {
         UiLanguage::Spanish => 1,
         UiLanguage::English => 2,
         UiLanguage::French => 3,
+        UiLanguage::Chinese => 4,
+        UiLanguage::Hindi => 5,
+        UiLanguage::Arabic => 6,
+        UiLanguage::Bengali => 7,
+        UiLanguage::Portuguese => 8,
     };
     LANGUAGE.store(stored, Ordering::Relaxed);
 }
@@ -231,6 +247,11 @@ pub fn text() -> &'static Strings {
     match chosen_language() {
         1 => &ES,
         3 => &FR,
+        4 => &zh::TEXT,
+        5 => &hi::TEXT,
+        6 => &ar::TEXT,
+        7 => &bn::TEXT,
+        8 => &pt::TEXT,
         _ => &EN,
     }
 }
@@ -241,6 +262,11 @@ pub fn language() -> Language {
     match chosen_language() {
         1 => Language::Es,
         3 => Language::Fr,
+        4 => Language::Zh,
+        5 => Language::Hi,
+        6 => Language::Ar,
+        7 => Language::Bn,
+        8 => Language::Pt,
         _ => Language::En,
     }
 }

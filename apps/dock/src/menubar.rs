@@ -5033,19 +5033,41 @@ mod island_tests {
                 .as_ref()
                 .is_some_and(|look| look.language == Language::Es)
         );
-        let previous = bar.surface.Children()?.First()?.Current()?;
-        strings::set_language(Language::En);
-        bar.refresh(&gfx)?;
-        assert_ne!(
-            previous,
-            bar.surface.Children()?.First()?.Current()?,
-            "translation-only changes must rebuild the content"
-        );
-        assert!(
-            bar.look
-                .as_ref()
-                .is_some_and(|look| look.language == Language::En)
-        );
+        for language in [
+            Language::En,
+            Language::Fr,
+            Language::Zh,
+            Language::Hi,
+            Language::Ar,
+            Language::Bn,
+            Language::Pt,
+            Language::Es,
+        ] {
+            let previous = bar.surface.Children()?.First()?.Current()?;
+            strings::set_language(language);
+            bar.refresh(&gfx)?;
+            assert_ne!(
+                previous,
+                bar.surface.Children()?.First()?.Current()?,
+                "translation-only changes must rebuild the content"
+            );
+            assert!(
+                bar.look
+                    .as_ref()
+                    .is_some_and(|look| look.language == language)
+            );
+            // Exercise Windows shaping/font fallback and compact surface bounds,
+            // including mixed Arabic + Latin text and Hindi/Bengali conjuncts.
+            for text in [
+                strings::text().usage_title,
+                strings::text().media_title,
+                strings::text().usage_claude_sign_in,
+            ] {
+                let label = gfx.text_brush_fitted(text, 1.0, 13.0, false, Ink::Dark, 160.0)?;
+                assert!(label.width > 0.0 && label.width <= 160.0);
+                assert!(label.height > 0.0 && label.height < 100.0);
+            }
+        }
         Ok(())
     }
 
