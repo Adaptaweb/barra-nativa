@@ -198,6 +198,7 @@ pub fn run() -> Result<()> {
 
         muelle_config::migrate_legacy_folder();
         let config = load_config();
+        crate::widgets::configure(&config.widgets);
         strings::set_language(config.language);
         crate::appearance::set(config.appearance);
         let roster = roster_from(&config);

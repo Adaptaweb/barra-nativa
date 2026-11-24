@@ -78,6 +78,15 @@ impl App {
                     .map(|&hwnd| icon(&window_id(hwnd), Role::Window, false)),
             );
         }
+        let placed = crate::widgets::dock();
+        if !placed.is_empty() {
+            entries.extend(
+                placed
+                    .into_iter()
+                    .map(|widget| icon(&widget.entry_id(), Role::Widget, false)),
+            );
+            entries.push(separator());
+        }
         if let Some(folder) = &self.config.shortcuts_folder {
             entries.push(icon(folder, Role::Shortcuts, false));
         }

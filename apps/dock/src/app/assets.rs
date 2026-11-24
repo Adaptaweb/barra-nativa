@@ -84,6 +84,34 @@ impl App {
                 );
                 continue;
             }
+            if entry.role == Role::Widget {
+                let Some(widget) = crate::widgets::WidgetId::from_entry(id) else {
+                    continue;
+                };
+                let readings = crate::widgets::readings();
+                let print = vec![widget.fingerprint(&readings)];
+                if self
+                    .assets
+                    .get(id)
+                    .is_some_and(|asset| asset.drawn_for == print)
+                {
+                    continue;
+                }
+                let icon = crate::widgets::render_tile(&self.gfx, widget, &readings, wanted, light)
+                    .inspect_err(|error| eprintln!("muelle: widget `{id}`: {error:#}"))
+                    .ok()
+                    .or_else(|| self.placeholder.clone());
+                let label = self.gfx.label_brush(widget.name(), scale, light, edge).ok();
+                self.assets.insert(
+                    id.clone(),
+                    Asset {
+                        icon,
+                        label,
+                        drawn_for: print,
+                    },
+                );
+                continue;
+            }
             let variant = if id == recycle_bin::PARSING_NAME {
                 if self.bin_full {
                     recycle_bin::FULL
@@ -166,6 +194,57 @@ impl App {
                 })
                 || windows.iter().any(|window| window.app_id == id)
         });
+    }
+
+    /// A widget reading changed: repaint the dock tiles that show it, in place.
+    pub(crate) fn widgets_changed(&mut self) -> Result<()> {
+        let (scale, light, wanted, edge) = self.assets_for;
+        if wanted == 0 {
+            return Ok(());
+        }
+        if self.current_entries() != self.entries {
+            return self.refresh();
+        }
+        let readings = crate::widgets::readings();
+        for (index, entry) in self.entries.iter().enumerate() {
+            if entry.role != Role::Widget {
+                continue;
+            }
+            let Some(id) = entry.id.as_ref() else {
+                continue;
+            };
+            let Some(widget) = crate::widgets::WidgetId::from_entry(id) else {
+                continue;
+            };
+            let print = vec![widget.fingerprint(&readings)];
+            if self
+                .assets
+                .get(id)
+                .is_some_and(|asset| asset.drawn_for == print)
+            {
+                continue;
+            }
+            let Ok(icon) = crate::widgets::render_tile(&self.gfx, widget, &readings, wanted, light)
+            else {
+                continue;
+            };
+            if let Some(stage) = &self.stage {
+                stage.scene.set_slot_brush(index, &icon)?;
+            }
+            let label = match self.assets.remove(id) {
+                Some(asset) => asset.label,
+                None => self.gfx.label_brush(widget.name(), scale, light, edge).ok(),
+            };
+            self.assets.insert(
+                id.clone(),
+                Asset {
+                    icon: Some(icon),
+                    label,
+                    drawn_for: print,
+                },
+            );
+        }
+        Ok(())
     }
 
     pub(super) fn assets_ready(&mut self) -> Result<()> {

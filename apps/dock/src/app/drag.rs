@@ -216,6 +216,7 @@ impl App {
                 DropAction::OpenWith(id)
             }
             Role::Trash => DropAction::Recycle,
+            Role::Widget => DropAction::Nothing,
             Role::Folder => DropAction::Transfer {
                 copy: !self
                     .incoming

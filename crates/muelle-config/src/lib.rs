@@ -126,6 +126,34 @@ pub struct Config {
     /// always bounces too, and window previews always have a close button:
     /// those two switches were retired, and their saved values are ignored.
     pub notification_badges: bool,
+    /// Barra widgets: where each one goes and their settings.
+    pub widgets: Widgets,
+}
+
+/// Widgets in the menu bar and the dock, by id (`sistema`, `clima`), in order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+#[serde(rename_all = "camelCase")]
+pub struct Widgets {
+    /// Left side of the menu bar, after the name of the app in front.
+    pub bar_left: Vec<String>,
+    /// Right side of the menu bar, before the status icons.
+    pub bar_right: Vec<String>,
+    /// The dock, after the apps.
+    pub dock: Vec<String>,
+    /// City for the weather widget.
+    pub weather_city: String,
+}
+
+impl Default for Widgets {
+    fn default() -> Self {
+        Self {
+            bar_left: Vec::new(),
+            bar_right: vec!["clima".into(), "sistema".into()],
+            dock: Vec::new(),
+            weather_city: "Santiago".into(),
+        }
+    }
 }
 
 /// Pinned apps the user gathered in one dock icon by dropping one on
@@ -346,6 +374,7 @@ impl Default for Config {
             appearance: Appearance::Auto,
             shortcuts_folder: None,
             notification_badges: true,
+            widgets: Widgets::default(),
         }
     }
 }

@@ -276,6 +276,8 @@ impl App {
             Role::Window => window_of(&id).and_then(|hwnd| self.activating(vec![hwnd])),
             Role::Shortcuts => self.folder_menu(id)?,
             Role::Folder | Role::Trash => Some(Outside::Open(id)),
+            Role::Widget => crate::widgets::WidgetId::from_entry(&id)
+                .map(|widget| Outside::Open(widget.target().to_owned())),
         })
     }
 

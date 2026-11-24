@@ -17,6 +17,7 @@
 //! and volume changes arrive through separate notifications; nothing polls.
 
 use anyhow::Result;
+use crate::widgets::{self, BarLayout, WidgetId};
 use muelle_config::{IslandStyle, Language};
 use muelle_shell::{
     accessories::{Kind as AccessoryKind, Snapshot as AccessorySnapshot},
@@ -89,8 +90,12 @@ const SIDE_MARGIN: f32 = 14.0;
 const ITEM_GAP: f32 = 16.0;
 /// Extra clickable room around an item.
 const HIT_SLOP: f32 = 7.0;
+/// Height of a Barra widget in the bar, logical pixels.
+const WIDGET_HEIGHT: f32 = 24.0;
 
 const MEDIA_CHANGED: u32 = WM_APP + 28;
+/// A widget reading changed (see `widgets`).
+const WIDGETS_CHANGED: u32 = WM_APP + 27;
 const VOLUME_CAPTURE_LOST: u32 = WM_APP + 31;
 const AUDIO_CHANGED: u32 = WM_APP + 32;
 const AUDIO_TICK: u32 = WM_APP + 33;
@@ -177,6 +182,7 @@ enum Action {
     Microphone,
     Camera,
     Bluetooth,
+    Widget(WidgetId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -230,6 +236,8 @@ struct Look {
     usage_refreshing: bool,
     track: Option<Track>,
     volume_expanded: bool,
+    /// Barra widgets placed in the bar.
+    bar_widgets: BarLayout,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -522,6 +530,9 @@ pub struct MenuBar {
     /// Energy saver on or off arrives as `WM_POWERBROADCAST`; glass follows.
     _saver_watch: muelle_shell::power::SaverWatch,
     audio: Option<AudioWatch>,
+    /// Widgets on the bar, to repaint one alone when its reading changes:
+    /// its visual, and the width it was drawn at.
+    widget_visuals: Vec<(WidgetId, SpriteVisual, f32)>,
 }
 
 unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -575,6 +586,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         REGISTRY_CHANGED => app::menu_bar_registry_changed(),
         ACCESSORIES_CHANGED => app::menu_bar_accessories_changed(),
         MEDIA_CHANGED => app::menu_bar_media_changed(),
+        WIDGETS_CHANGED => app::menu_bar_widgets_changed(),
         BLUETOOTH_CHANGED => app::menu_bar_bluetooth_changed(),
         AUDIO_CHANGED => {
             if !AUDIO_TICK_PENDING.swap(true, Ordering::Relaxed) {
@@ -1190,7 +1202,9 @@ impl MenuBar {
             search_watch: status::watch_search_settings(hwnd.0 as isize, REGISTRY_CHANGED),
             _saver_watch: muelle_shell::power::SaverWatch::new(hwnd.0 as isize),
             audio: AudioWatch::new(hwnd.0 as isize, AUDIO_CHANGED),
+            widget_visuals: Vec::new(),
         };
+        widgets::set_target(hwnd, WIDGETS_CHANGED);
         AUDIO_TICK_PENDING.store(false, Ordering::Relaxed);
         bar.update_status();
         bar.refresh(gfx)?;
@@ -1862,6 +1876,7 @@ impl MenuBar {
             Some(Action::Camera) => {
                 let _ = launcher::open("ms-settings:privacy-webcam");
             }
+            Some(Action::Widget(id)) => widgets::open(id),
             None => {}
         }
         Ok(())
@@ -1937,8 +1952,52 @@ impl MenuBar {
             usage_refreshing: self.usage.as_ref().is_some_and(UsageMonitor::is_refreshing),
             track,
             volume_expanded: self.volume_expanded,
+            bar_widgets: widgets::bar_layout(),
         };
         self.apply_look(gfx, look)
+    }
+
+    /// A widget reading changed: repaint those widgets in place. A widget
+    /// that appears, disappears or changes width needs the full layout.
+    pub fn widgets_changed(&mut self, gfx: &Gfx) -> Result<()> {
+        let Some(look) = self.look.as_ref() else {
+            return self.refresh(gfx);
+        };
+        let readings = widgets::readings();
+        let (scale, light) = (look.scale, look.light);
+        let height = (WIDGET_HEIGHT * scale).round();
+        let shown: Vec<WidgetId> = self.widget_visuals.iter().map(|(id, _, _)| *id).collect();
+        let wanted = look
+            .bar_widgets
+            .left
+            .iter()
+            .chain(&look.bar_widgets.right)
+            .filter(|id| match id {
+                WidgetId::Sistema => readings.sistema.is_some(),
+                WidgetId::Clima => readings.clima.is_some(),
+            })
+            .count();
+        if wanted != shown.len() {
+            return self.rebuild(gfx);
+        }
+        for (id, visual, width) in &self.widget_visuals {
+            let Some(item) = widgets::render_bar(gfx, *id, &readings, scale, height, light)? else {
+                return self.rebuild(gfx);
+            };
+            if (item.width - width).abs() > 0.5 {
+                return self.rebuild(gfx);
+            }
+            visual.SetBrush(&item.brush)?;
+        }
+        Ok(())
+    }
+
+    /// Lays the bar out again with the current look.
+    fn rebuild(&mut self, gfx: &Gfx) -> Result<()> {
+        match self.look.clone() {
+            Some(look) => self.build(gfx, &look),
+            None => self.refresh(gfx),
+        }
     }
 
     /// Track changes only need to update the contents of the island.
@@ -2094,8 +2153,24 @@ impl MenuBar {
             left_end += name.width;
         }
 
-        // Right side, from the edge inward.
+        self.widget_visuals.clear();
+        let readings = widgets::readings();
+        let widget_height = px(WIDGET_HEIGHT);
         let slop = px(HIT_SLOP);
+        for id in &look.bar_widgets.left {
+            if let Some(item) =
+                widgets::render_bar(gfx, *id, &readings, scale, widget_height, look.light)?
+            {
+                left_end += px(ITEM_GAP);
+                let visual = place(&layers, &item, left_end)?;
+                self.zones
+                    .push((left_end - slop, left_end + item.width + slop, Action::Widget(*id)));
+                self.widget_visuals.push((*id, visual, item.width));
+                left_end += item.width;
+            }
+        }
+
+        // Right side, from the edge inward.
         let mut right = width - px(SIDE_MARGIN);
         let status = look.status;
         let symbol = |layers: &[(char, f32)]| gfx.glyph_brush(layers, scale, ink);
@@ -2204,6 +2279,20 @@ impl MenuBar {
                 self.zones.push((left - slop, zone_right + slop, *action));
             }
             right = left - px(ITEM_GAP);
+        }
+
+        // Widgets sit before the status icons, the first one leftmost.
+        for id in look.bar_widgets.right.iter().rev() {
+            if let Some(item) =
+                widgets::render_bar(gfx, *id, &readings, scale, widget_height, look.light)?
+            {
+                let left = right - item.width;
+                let visual = place(&layers, &item, left)?;
+                self.zones
+                    .push((left - slop, right + slop, Action::Widget(*id)));
+                self.widget_visuals.push((*id, visual, item.width));
+                right = left - px(ITEM_GAP);
+            }
         }
 
         self.island_hits.clear();

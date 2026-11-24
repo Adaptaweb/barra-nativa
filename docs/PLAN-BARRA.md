@@ -30,13 +30,21 @@ uses far less RAM and CPU.
 ## Steps
 
 1. [x] Fork into `Proyectos\barra-nativa`, branch `barra`.
-2. [ ] Build and run (`cargo run -p muelle`; `cargo run -p muelle -- --restore` restores the taskbar).
+2. [x] Build and run (`cargo run -p muelle`; `cargo run -p muelle -- --restore` restores the taskbar).
    During development the Windows taskbar must stay visible: add a dev switch that skips hiding it.
-3. [ ] Widget framework: a `Widget` trait (measure, draw with `Gfx`, hit test, click, panel)
-   in a new `apps/dock/src/widgets/` module, with two hosts: the top bar (left / right zones)
-   and the dock (right side, after the separator). Config lists which widgets go in which zone.
+3. [x] Widget framework in `apps/dock/src/widgets/`: sources on their own threads publish
+   readings and post `WIDGETS_CHANGED` to the menu bar, which repaints only the widgets
+   (and the dock tiles) whose reading changed. Free-form drawing through `gfx::Pen`
+   (`gfx/pen.rs`). Placement in `config.json` → `widgets`:
+   `{"barLeft":[], "barRight":["clima","sistema"], "dock":["sistema","clima"], "weatherCity":"Santiago"}`.
+   Clicks: sistema opens Task Manager, clima opens the Weather app. Widgets are a dock
+   `Role::Widget` between the apps and the folders.
+   Measured idle cost in a debug build with both widgets in bar and dock: ~0.02 s CPU per 10 s.
 4. [ ] Port data sources from the Tauri Barra (`barra/src-tauri/src/fuentes/*.rs`, already Rust):
-   system (CPU/RAM/temperature), weather, calendar (iCal), Home Assistant, projects.
+   done: system (CPU/RAM via Win32, temperature via LHM/fan helper), weather (Open-Meteo).
+   Next: calendar (iCal) with the clock, Home Assistant, projects, AI limits (Muelle's
+   `usage.rs` already covers Claude/Codex/Gemini in its island).
+   Then: a panel (flyout) per widget on click, and drag to reorder.
 5. [ ] Draw each widget natively (designs from the Tauri Barra and the user's references).
 6. [ ] Settings app: widget editor (zones, order, sizes) in `apps/settings`.
 7. [ ] One dock and top bar per monitor, with per-screen widgets and on/off.

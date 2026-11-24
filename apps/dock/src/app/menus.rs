@@ -453,6 +453,7 @@ impl App {
                 items.push(MenuItem::Separator);
                 items.push(MenuItem::action(CMD_REMOVE_FOLDER, t.remove_from_dock));
             }
+            Role::Widget => items.push(MenuItem::action(CMD_OPEN, t.open)),
             Role::Trash => {
                 items.push(MenuItem::action(CMD_OPEN, t.open));
                 items.push(MenuItem::Separator);
@@ -544,7 +545,10 @@ impl App {
                 if role == Role::App {
                     self.start_bounce(id.clone(), None);
                 }
-                Some(Outside::Open(id))
+                match crate::widgets::WidgetId::from_entry(&id) {
+                    Some(widget) => Some(Outside::Open(widget.target().to_owned())),
+                    None => Some(Outside::Open(id)),
+                }
             }
             CMD_TOGGLE_PIN => {
                 // Unpinning here also unpins on the Windows taskbar, as there is

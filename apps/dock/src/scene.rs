@@ -587,6 +587,14 @@ impl Scene {
         Some(along - length / 2.0)
     }
 
+    /// Replaces the picture of one slot (a widget whose reading changed).
+    pub fn set_slot_brush(&self, index: usize, brush: &CompositionSurfaceBrush) -> Result<()> {
+        if let Some(slot) = self.slots.get(index) {
+            slot.SetBrush(brush)?;
+        }
+        Ok(())
+    }
+
     pub fn build(gfx: &Gfx, input: &SceneInput<'_>) -> Result<Self> {
         let c = &gfx.compositor;
         let SceneInput {

@@ -34,6 +34,7 @@ mod shell_work;
 mod strings;
 mod thumbnails;
 mod usage;
+mod widgets;
 
 use std::env;
 

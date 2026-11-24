@@ -159,6 +159,15 @@ pub fn menu_bar_media_changed() {
     });
 }
 
+pub fn menu_bar_widgets_changed() {
+    with_app("widgets", |app| {
+        if let Some(bar) = &mut app.menubar {
+            bar.widgets_changed(&app.gfx)?;
+        }
+        app.widgets_changed()
+    });
+}
+
 pub fn menu_bar_audio_changed() {
     with_app("audio", |app| match &mut app.menubar {
         Some(bar) => bar.audio_changed(&app.gfx),
