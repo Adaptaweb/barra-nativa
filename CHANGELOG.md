@@ -10,6 +10,8 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Internal: split the dock coordinator into private modules by responsibility,
+  keeping its shared state, event entry points, timers and behavior unchanged.
 - Battery percentage, Search, Task View and Widgets now follow Windows settings
   directly. Removed their duplicate Settings switches and retired saved overrides.
   Search changes also update through registry notifications; no new polling.
@@ -31,6 +33,8 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Interno: separado el coordinador del dock en módulos privados por
+  responsabilidad, conservando estado, eventos, temporizadores y comportamiento.
 - Porcentaje de batería, Búsqueda, Vista de tareas y Widgets siguen directamente
   los ajustes de Windows. Retirados sus interruptores duplicados y preferencias
   antiguas. Búsqueda también se actualiza por eventos del registro, sin sondeo.
