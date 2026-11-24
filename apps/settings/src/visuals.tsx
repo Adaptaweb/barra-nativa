@@ -31,6 +31,20 @@ export function SettingIcon({ name, size = 18 }: { name: keyof typeof PATHS; siz
 
 const MINI_ICONS = <><i /><i /><i /><i /><i /></>;
 
+const DENSITY_PREVIEW_SPACING = {
+  compact: { gap: 3, padding: 2.25 },
+  normal: { gap: 4.5, padding: 3.375 },
+  spacious: { gap: 6, padding: 4.5 },
+} satisfies Record<DockDensity, CSSProperties>;
+
+/** A closer view for comparing spacing, independent of the desktop layout. */
+export function DockDensityPreview({ density }: { density: DockDensity }) {
+  return <span className="preview-density">
+    <span className="preview-dock" data-density={density}
+      style={DENSITY_PREVIEW_SPACING[density]}>{MINI_ICONS}</span>
+  </span>;
+}
+
 /** Illustrations only: no window capture, network, timers or animation loop. */
 export function DockPreview({ position, iconSize, wallpaper, density = "normal" }: { position: DockPosition; iconSize: number; wallpaper: string | null; density?: DockDensity }) {
   return <span className="preview-screen">

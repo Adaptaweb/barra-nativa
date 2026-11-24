@@ -31,7 +31,7 @@ import {
   setAutostart,
 } from "./config";
 import { Card, Row, Segmented, Select, Slider, SubRow, Toggle, VisualChoices } from "./controls";
-import { DockPreview, IslandPreview, SettingIcon, SpeedPreview, ThemePreview } from "./visuals";
+import { DockDensityPreview, DockPreview, IslandPreview, SettingIcon, SpeedPreview, ThemePreview } from "./visuals";
 import { type SectionId, SectionIcon } from "./icons";
 import { UpdateBanner } from "./UpdateBanner";
 import en from "./i18n/en.json";
@@ -411,9 +411,9 @@ export function App() {
                   label={t.dockDensity}
                   value={config.dockDensity ?? "normal"}
                   options={[
-                    { value: "compact", label: t.dockDensityCompact, preview: <DockPreview position="bottom" iconSize={48} density="compact" wallpaper={wallpaper} /> },
-                    { value: "normal", label: t.dockDensityNormal, preview: <DockPreview position="bottom" iconSize={48} density="normal" wallpaper={wallpaper} /> },
-                    { value: "spacious", label: t.dockDensitySpacious, preview: <DockPreview position="bottom" iconSize={48} density="spacious" wallpaper={wallpaper} /> },
+                    { value: "compact", label: t.dockDensityCompact, preview: <DockDensityPreview density="compact" /> },
+                    { value: "normal", label: t.dockDensityNormal, preview: <DockDensityPreview density="normal" /> },
+                    { value: "spacious", label: t.dockDensitySpacious, preview: <DockDensityPreview density="spacious" /> },
                   ]}
                   onChange={(dockDensity) => update({ dockDensity })}
                 />

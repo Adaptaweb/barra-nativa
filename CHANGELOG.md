@@ -10,6 +10,8 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- The Genie minimize animation now defaults to Fast (0.35 s). Saved speed
+  choices remain unchanged.
 - Fixed the "Show hidden icons" tooltip appearing over the desktop after closing
   a full-screen app or the last window (issue #48). Windows gave the focus to
   the hidden taskbar; the dock now hands it to the window in front, or to the
@@ -50,6 +52,8 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- El efecto genio al minimizar ahora viene en velocidad Rápida (0,35 s).
+  Se conservan las velocidades guardadas.
 - Corregido el globo «Mostrar iconos ocultos» que aparecía sobre el escritorio
   al cerrar una app a pantalla completa o la última ventana (issue #48). Windows
   daba el foco a la barra de tareas oculta; ahora el dock lo pasa a la ventana

@@ -679,3 +679,9 @@ input:focus-visible {
 .select-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .select-control option { background: var(--content); color: var(--text); }
 .select-chevron { position: absolute; right: 9px; top: 50%; width: 12px; height: 12px; transform: translateY(-50%); pointer-events: none; color: var(--text-dim); }
+
+
+/* Spacing previews isolate the dock at a larger, consistent icon size. */
+.preview-density { display: grid; place-items: center; width: 100%; height: 72px; }
+.preview-density .preview-dock { --mini-icon: 18px; position: static; border-radius: 9px; }
+.preview-density .preview-dock i { flex: 0 0 var(--mini-icon); border-radius: 4px; }

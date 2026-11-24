@@ -156,13 +156,13 @@ pub enum DockPosition {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GenieSpeed {
-    Fast,
     Faster,
-    /// The original 0.5 s, close to the macOS Dock. Also what an unknown
-    /// value from a newer version reads as (serde needs it last).
+    Normal,
+    /// Also what an unknown value from a newer version reads as (serde needs
+    /// the fallback variant last).
     #[default]
     #[serde(other)]
-    Normal,
+    Fast,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -321,7 +321,7 @@ impl Default for Config {
             pin_explorer: true,
             magnified_size: 77,
             genie: true,
-            genie_speed: GenieSpeed::Normal,
+            genie_speed: GenieSpeed::Fast,
             show_minimized: false,
             show_other_workspaces: false,
             jump_lists: true,
@@ -894,7 +894,7 @@ mod tests {
     #[test]
     fn genie_should_be_on_by_default() {
         assert!(Config::default().genie);
-        assert_eq!(Config::default().genie_speed, GenieSpeed::Normal);
+        assert_eq!(Config::default().genie_speed, GenieSpeed::Fast);
     }
 
     #[test]
@@ -920,14 +920,21 @@ mod tests {
     }
 
     #[test]
-    fn genie_speed_keeps_the_original_speed_unless_chosen() {
-        // Files from before the setting, and values from newer versions.
-        for json in [r#"{}"#, r#"{"genieSpeed":"warp"}"#] {
-            let config: Config = serde_json::from_str(json).unwrap_or_default();
-            assert_eq!(config.genie_speed, GenieSpeed::Normal);
-        }
-        let fast: Config = serde_json::from_str(r#"{"genieSpeed":"faster"}"#).unwrap_or_default();
-        assert_eq!(fast.genie_speed, GenieSpeed::Faster);
+    fn genie_speed_defaults_to_fast_and_preserves_saved_choices() {
+        let missing: Config = serde_json::from_str(r#"{}"#).unwrap_or_default();
+        assert_eq!(missing.genie_speed, GenieSpeed::Fast);
+
+        let unknown: Config = serde_json::from_str(r#"{"genieSpeed":"warp"}"#).unwrap_or_default();
+        assert_eq!(unknown.genie_speed, GenieSpeed::Fast);
+
+        let normal: Config = serde_json::from_str(r#"{"genieSpeed":"normal"}"#).unwrap_or_default();
+        assert_eq!(normal.genie_speed, GenieSpeed::Normal);
+
+        let fast: Config = serde_json::from_str(r#"{"genieSpeed":"fast"}"#).unwrap_or_default();
+        assert_eq!(fast.genie_speed, GenieSpeed::Fast);
+
+        let faster: Config = serde_json::from_str(r#"{"genieSpeed":"faster"}"#).unwrap_or_default();
+        assert_eq!(faster.genie_speed, GenieSpeed::Faster);
         assert!(GenieSpeed::Faster.seconds() < GenieSpeed::Fast.seconds());
         assert!(GenieSpeed::Fast.seconds() < GenieSpeed::Normal.seconds());
     }
