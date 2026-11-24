@@ -10,11 +10,23 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
-- Fixed Dock hiding-policy transitions and pending input: automatic hiding takes
-  precedence over intelligent hiding, which is visibly paused in Settings without
-  discarding its saved choice. Returning to a visible mode clears stale hiding;
-  menus and held clicks keep the Dock open, with the existing hide delay resumed
-  after release/cancellation. Overlap checks are skipped in automatic mode.
+- Fixed the "Show hidden icons" tooltip appearing over the desktop after closing
+  a full-screen app or the last window (issue #48). Windows gave the focus to
+  the hidden taskbar; the dock now hands it to the window in front, or to the
+  desktop. The menu bar's hidden-icons button keeps working.
+- Window previews always have their close button, and icons always bounce when
+  an app asks for attention: both Settings switches were removed and their
+  saved values are ignored.
+- New Appearance section in Settings (issue #50): the dock, the menu bar and
+  their menus and panels follow Windows by default (Automatic) or take one of
+  five themes: Light, Dark, Frosted glass, Clear and Aurora, each previewed over
+  your own wallpaper. Glass themes fall back to solid while Windows transparency
+  is off. Settings follows the chosen theme too. No new timers or polling.
+- Dock visibility now uses one dropdown: Always visible, Automatic or
+  Intelligent. New installs and Reset use Intelligent; existing choices are
+  preserved. Fixed policy transitions and pending input; menus and held clicks
+  keep the Dock open, and release/cancellation resumes the existing hide delay.
+  The context-menu toggle also keeps the selected policies mutually exclusive.
 - Internal: split the dock coordinator into private modules by responsibility,
   keeping its shared state, event entry points, timers and behavior unchanged.
 - Battery percentage, Search, Task View and Widgets now follow Windows settings
@@ -38,11 +50,26 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
-- Corregidas las transiciones de ocultación y pulsaciones pendientes del Dock:
-  la automática tiene prioridad y la inteligente queda en pausa en Ajustes,
-  conservando su preferencia. Volver a un modo visible limpia ocultaciones
-  anteriores; menús y pulsaciones mantienen el Dock abierto y al terminar se
-  retoma el retraso existente. Sin consultas de solapamiento en modo automático.
+- Corregido el globo «Mostrar iconos ocultos» que aparecía sobre el escritorio
+  al cerrar una app a pantalla completa o la última ventana (issue #48). Windows
+  daba el foco a la barra de tareas oculta; ahora el dock lo pasa a la ventana
+  del frente o al escritorio. El botón de iconos ocultos de la barra superior
+  sigue funcionando.
+- Las previsualizaciones de ventanas siempre tienen su botón de cerrar y los
+  iconos siempre rebotan cuando una app pide atención: se quitaron ambos
+  interruptores de Ajustes y se ignoran sus valores guardados.
+- Nueva sección Apariencia en Ajustes (issue #50): el dock, la barra superior y
+  sus menús y paneles siguen a Windows por defecto (Automático) o usan uno de
+  cinco temas: Claro, Oscuro, Cristal esmerilado, Transparente y Aurora, cada uno
+  con su vista previa sobre tu propio fondo de pantalla. Los temas de cristal se
+  ven sólidos mientras Windows tenga la transparencia desactivada. Ajustes
+  también sigue el tema elegido. Sin temporizadores ni sondeos nuevos.
+- Visibilidad del Dock en un único desplegable: Siempre visible, Automática
+  o Inteligente. Las instalaciones nuevas y Restablecer usan Inteligente;
+  se conservan las elecciones anteriores. Corregidas las transiciones y
+  pulsaciones pendientes; menús y pulsaciones mantienen el Dock abierto y al
+  terminar se retoma el retraso existente. El menú contextual también evita
+  activar ambas políticas a la vez.
 - Interno: separado el coordinador del dock en módulos privados por
   responsabilidad, conservando estado, eventos, temporizadores y comportamiento.
 - Porcentaje de batería, Búsqueda, Vista de tareas y Widgets siguen directamente

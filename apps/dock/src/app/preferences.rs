@@ -1,6 +1,6 @@
 //! Persisted dock preferences, pinned apps and menu-bar coordination.
 
-use std::env;
+use std::{env, path::Path};
 
 use anyhow::{Context, Result};
 use muelle_config::{Config, DockGroup};
@@ -94,17 +94,18 @@ pub(super) fn roster_from(config: &Config) -> Roster {
 }
 
 pub(super) fn save_settings(roster: &Roster, config: &Config) {
-    if let Err(error) = save_dock_config(roster, config, false) {
+    if let Err(error) = save_dock_config(&muelle_config::default_path(), roster, config, false) {
         eprintln!("muelle: {error}");
     }
 }
 
 pub(super) fn save_dock_config(
+    path: &Path,
     roster: &Roster,
     config: &Config,
     toggle_hide: bool,
 ) -> Result<Config> {
-    let saved = muelle_config::update(&muelle_config::default_path(), |saved| {
+    let saved = muelle_config::update(path, |saved| {
         let mut saved = saved.unwrap_or_else(|| config.clone());
         saved.pinned = roster.pinned().to_vec();
         saved.groups = roster
@@ -118,7 +119,8 @@ pub(super) fn save_dock_config(
         saved.recent = roster.recent().to_vec();
         saved.taskbar_pins.clone_from(&config.taskbar_pins);
         if toggle_hide {
-            saved.auto_hide = !saved.auto_hide;
+            saved.auto_hide = !saved.hides_automatically();
+            saved.smart_hide = false;
         }
         Ok(saved)
     })?;
@@ -290,7 +292,14 @@ impl App {
     }
 
     pub(super) fn toggle_hiding(&mut self) -> Result<()> {
-        self.config.auto_hide = save_dock_config(&self.roster, &self.config, true)?.auto_hide;
+        let saved = save_dock_config(
+            &muelle_config::default_path(),
+            &self.roster,
+            &self.config,
+            true,
+        )?;
+        self.config.auto_hide = saved.auto_hide;
+        self.config.smart_hide = saved.smart_hide;
         self.apply_edge_settings();
         self.refresh()?;
         self.hide_if_unused()?;
@@ -374,6 +383,38 @@ mod dock_preferences_tests {
         spring::Spring,
     };
     use windows::Win32::Foundation::RECT;
+
+    #[test]
+    fn dock_menu_toggles_the_selected_mode_without_creating_combined_policies() -> Result<()> {
+        for (auto_hide, smart_hide) in [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let path = std::env::temp_dir().join(format!(
+                "muelle-hide-menu-{}-{auto_hide}-{smart_hide}.json",
+                std::process::id()
+            ));
+            let config = Config {
+                auto_hide,
+                smart_hide,
+                icon_size: 64,
+                ..Config::default()
+            };
+            muelle_config::save(&path, &config)?;
+            let snapshot = Config::default(); // The latest saved choice wins over a stale view.
+            let saved = save_dock_config(&path, &Roster::default(), &snapshot, true)?;
+            assert_eq!(
+                (saved.auto_hide, saved.smart_hide),
+                (!(auto_hide || smart_hide), false)
+            );
+            assert_eq!(saved.icon_size, 64);
+            let untouched = save_dock_config(&path, &Roster::default(), &snapshot, false)?;
+            assert_eq!(
+                (untouched.auto_hide, untouched.smart_hide),
+                (saved.auto_hide, saved.smart_hide)
+            );
+            std::fs::remove_file(path)?;
+        }
+        Ok(())
+    }
 
     #[test]
     fn intelligent_hiding_requires_real_overlap_on_every_dock_edge() {

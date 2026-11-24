@@ -5,7 +5,7 @@ use std::{sync::atomic::Ordering, time::Instant};
 use anyhow::Result;
 use muelle_core::bounce;
 use muelle_shell::{
-    status,
+    launcher, status,
     system::{animations_enabled, set_window_transitions},
     tracker,
 };
@@ -602,6 +602,16 @@ impl App {
             self.sync_badge_visuals()?;
             self.render()?;
         }
+        Ok(())
+    }
+
+    /// The hidden taskbar got the focus (see `taskbar::is_hidden`): it goes
+    /// to the window in front instead, or to the desktop when none is left,
+    /// so that no tooltip of the invisible taskbar shows (issue #48).
+    pub(super) fn leave_hidden_taskbar(&mut self) -> Result<()> {
+        self.on_foreground_changed()?;
+        let windows: Vec<isize> = self.windows.iter().map(|window| window.hwnd).collect();
+        launcher::focus_front_or_desktop(&windows);
         Ok(())
     }
 

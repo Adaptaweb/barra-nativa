@@ -48,9 +48,9 @@ pub struct Theme {
 
 /// Aurora: green, violet and pink lights over a night-blue tint.
 const AURORA: [Color; 3] = [
-    rgba(36, 214, 168, 120),
-    rgba(118, 92, 255, 110),
-    rgba(246, 96, 182, 105),
+    rgba(36, 214, 168, 150),
+    rgba(118, 92, 255, 140),
+    rgba(246, 96, 182, 132),
 ];
 
 impl Theme {
@@ -66,7 +66,7 @@ impl Theme {
         let tint = match (material, light) {
             (Material::Standard, true) => pick(rgba(255, 255, 255, 46), rgba(226, 226, 228, 255)),
             (Material::Standard, false) => pick(rgba(28, 28, 30, 82), rgba(44, 44, 46, 255)),
-            (Material::Frosted, _) => pick(rgba(250, 251, 253, 158), rgba(236, 238, 242, 255)),
+            (Material::Frosted, _) => pick(rgba(250, 251, 253, 184), rgba(236, 238, 242, 255)),
             (Material::Clear, _) => pick(rgba(255, 255, 255, 14), rgba(38, 40, 46, 255)),
             (Material::Aurora, _) => pick(rgba(12, 16, 42, 92), rgba(22, 22, 50, 255)),
         };
@@ -113,7 +113,7 @@ impl Theme {
         let tint = match (look.material, look.light) {
             (Material::Standard, true) => pick(rgba(255, 255, 255, 110), rgba(236, 236, 238, 255)),
             (Material::Standard, false) => pick(rgba(24, 24, 26, 120), rgba(36, 36, 38, 255)),
-            (Material::Frosted, _) => pick(rgba(250, 251, 253, 178), rgba(238, 240, 244, 255)),
+            (Material::Frosted, _) => pick(rgba(250, 251, 253, 196), rgba(238, 240, 244, 255)),
             (Material::Clear, _) => pick(rgba(0, 0, 0, 38), rgba(30, 32, 38, 255)),
             (Material::Aurora, _) => pick(rgba(10, 14, 38, 120), rgba(20, 20, 46, 255)),
         };

@@ -113,21 +113,43 @@ export function Slider({ value, min, max, label, unit = "px", disabled, onChange
   );
 }
 
+interface SelectProps<T extends string> {
+  value: T;
+  label: string;
+  options: readonly { value: T; label: string }[];
+  onChange: (value: T) => void;
+}
+
+/** Native popup and keyboard navigation, styled like the other Settings controls. */
+export function Select<T extends string>({ value, label, options, onChange }: SelectProps<T>) {
+  return <span className="select-wrap">
+    <select className="select-control" aria-label={label} value={value}
+      onChange={(event) => onChange(event.target.value as T)}>
+      {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>
+    <svg className="select-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <path d="m4 6 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  </span>;
+}
+
 interface VisualChoicesProps<T extends string> {
   label: string;
   value: T;
   hideLabel?: boolean;
+  /** Wrap into rows of this many; one row by default. */
+  columns?: number;
   options: readonly { value: T; label: string; preview: ReactNode; detail?: string }[];
   onChange: (value: T) => void;
 }
 
 /** Native radios provide arrow-key navigation without extra listeners or state. */
-export function VisualChoices<T extends string>({ label, value, hideLabel, options, onChange }: VisualChoicesProps<T>) {
+export function VisualChoices<T extends string>({ label, value, hideLabel, columns, options, onChange }: VisualChoicesProps<T>) {
   const name = useId();
   return (
     <fieldset className="visual-setting">
       <legend className={hideLabel ? "sr-only" : "visual-legend"}>{label}</legend>
-      <div className="visual-choices" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
+      <div className="visual-choices" style={{ gridTemplateColumns: `repeat(${columns ?? options.length}, minmax(0, 1fr))` }}>
         {options.map((option) => (
           <label className="visual-choice" key={option.value}>
             <input type="radio" name={name} value={option.value} checked={value === option.value}

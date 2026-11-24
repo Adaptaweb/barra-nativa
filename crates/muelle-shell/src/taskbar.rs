@@ -113,6 +113,15 @@ pub fn give_back() {
     let _ = fs::remove_file(file);
 }
 
+/// Whether `hwnd` is a taskbar Muelle has hidden. Windows still gives it the
+/// foreground when nothing else can take it (the last window closes, a
+/// full-screen app ends), and its focused "^" button then shows its tooltip,
+/// "Show hidden icons", in a popup of its own over the desktop (issue #48).
+#[must_use]
+pub fn is_hidden(hwnd: HWND) -> bool {
+    taskbars().contains(&hwnd) && is_ghosted(hwnd)
+}
+
 fn taskbars() -> Vec<HWND> {
     let mut found = Vec::new();
     // SAFETY: Read-only calls with valid static strings.

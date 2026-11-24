@@ -3,7 +3,7 @@
 use std::sync::atomic::Ordering;
 
 use anyhow::Result;
-use muelle_shell::{power, tracker};
+use muelle_shell::{launcher, power, taskbar, tracker};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
     System::Ole::DROPEFFECT,
@@ -61,6 +61,8 @@ pub(super) unsafe extern "system" fn on_win_event(
     } else if event == EVENT_SYSTEM_FOREGROUND {
         if tracker::is_task_switcher(hwnd) {
             with_app("Alt+Tab", App::task_switcher_opened);
+        } else if taskbar::is_hidden(hwnd) && !launcher::opening_hidden_icons() {
+            with_app("barra de tareas oculta", App::leave_hidden_taskbar);
         } else if !tracker::is_switch_transient(hwnd) {
             LAST_FRONT.store(hwnd.0 as isize, Ordering::Relaxed);
             with_app("ventana activa", App::on_foreground_changed);

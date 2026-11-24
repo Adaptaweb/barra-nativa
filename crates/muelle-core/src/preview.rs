@@ -68,16 +68,14 @@ pub fn contains(rect: Rect, point: Point) -> bool {
         && point.y < rect.y + rect.height
 }
 
-/// Hit-tests a list of preview card rects against a point.
-/// If `show_close` is true, close button hit targets take precedence over card bodies.
+/// Hit-tests a list of preview card rects against a point. Close button hit
+/// targets take precedence over card bodies.
 #[must_use]
-pub fn hit_test_cards(cards: &[Rect], scale: f32, show_close: bool, point: Point) -> CardHit {
-    if show_close {
-        for (i, card) in cards.iter().enumerate() {
-            let bounds = close_button_bounds(*card, scale);
-            if contains(bounds.hit, point) {
-                return CardHit::Close(i);
-            }
+pub fn hit_test_cards(cards: &[Rect], scale: f32, point: Point) -> CardHit {
+    for (i, card) in cards.iter().enumerate() {
+        let bounds = close_button_bounds(*card, scale);
+        if contains(bounds.hit, point) {
+            return CardHit::Close(i);
         }
     }
     for (i, card) in cards.iter().enumerate() {
@@ -182,30 +180,21 @@ mod tests {
             x: bounds.hit.x + bounds.hit.width / 2.0,
             y: bounds.hit.y + bounds.hit.height / 2.0,
         };
-        assert_eq!(
-            hit_test_cards(&cards, 1.0, true, close_pt),
-            CardHit::Close(0)
-        );
-
-        // When show_close is false, the same point hits the card body
-        assert_eq!(
-            hit_test_cards(&cards, 1.0, false, close_pt),
-            CardHit::Card(0)
-        );
+        assert_eq!(hit_test_cards(&cards, 1.0, close_pt), CardHit::Close(0));
 
         // Point inside card but outside close button
         let body_pt = Point {
             x: card.x + card.width / 2.0,
             y: card.y + card.height / 2.0,
         };
-        assert_eq!(hit_test_cards(&cards, 1.0, true, body_pt), CardHit::Card(0));
+        assert_eq!(hit_test_cards(&cards, 1.0, body_pt), CardHit::Card(0));
 
         // Point outside card
         let outside_pt = Point {
             x: card.x - 10.0,
             y: card.y - 10.0,
         };
-        assert_eq!(hit_test_cards(&cards, 1.0, true, outside_pt), CardHit::None);
+        assert_eq!(hit_test_cards(&cards, 1.0, outside_pt), CardHit::None);
     }
 
     #[test]

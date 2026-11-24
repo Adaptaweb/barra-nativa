@@ -52,6 +52,9 @@ pub struct Config {
     #[serde(alias = "auto_hide")]
     pub auto_hide: bool,
     /// Hide only when the foreground app overlaps the dock; leave desktop visible.
+    /// Missing in an existing file means the legacy always-visible mode. New
+    /// installations and Reset use Config::default(), which enables this mode.
+    #[serde(default)]
     pub smart_hide: bool,
     /// Icon side at rest, in logical pixels.
     pub icon_size: u32,
@@ -119,12 +122,10 @@ pub struct Config {
     /// menu, with a submenu for each folder inside, like a Windows 10 taskbar
     /// toolbar. Only one: the user arranges the folder as they like.
     pub shortcuts_folder: Option<String>,
-    /// Show a close button ("X") on hover in window preview cards.
-    pub show_preview_close_button: bool,
-    /// Indicator on app icons when Windows requests attention.
+    /// Indicator on app icons when Windows requests attention. Their icon
+    /// always bounces too, and window previews always have a close button:
+    /// those two switches were retired, and their saved values are ignored.
     pub notification_badges: bool,
-    /// Icon bounce in dock when app requests attention.
-    pub notification_bounce: bool,
 }
 
 /// Pinned apps the user gathered in one dock icon by dropping one on
@@ -308,7 +309,7 @@ impl Default for Config {
             recent: Vec::new(),
             taskbar_pins: None,
             auto_hide: false,
-            smart_hide: false,
+            smart_hide: true,
             icon_size: 48,
             magnification: true,
             dock_position: DockPosition::Bottom,
@@ -339,9 +340,7 @@ impl Default for Config {
             language: Language::Auto,
             appearance: Appearance::Auto,
             shortcuts_folder: None,
-            show_preview_close_button: true,
             notification_badges: true,
-            notification_bounce: true,
         }
     }
 }
@@ -504,17 +503,46 @@ mod tests {
     }
 
     #[test]
-    fn intelligent_hiding_defaults_off_and_retired_banner_preferences_are_ignored()
+    fn new_installs_use_intelligent_hiding_and_existing_modes_are_preserved()
+    -> Result<(), serde_json::Error> {
+        let fresh = Config::default();
+        assert!(!fresh.auto_hide && fresh.smart_hide);
+        let round_trip: Config = serde_json::from_str(&serde_json::to_string(&fresh)?)?;
+        assert_eq!(round_trip, fresh);
+        for (json, auto, smart) in [
+            (r#"{}"#, false, false),
+            (r#"{"autoHide":false}"#, false, false),
+            (r#"{"autoHide":true}"#, true, false),
+            (r#"{"auto_hide":true}"#, true, false),
+            (r#"{"autoHide":false,"smartHide":false}"#, false, false),
+            (r#"{"autoHide":false,"smartHide":true}"#, false, true),
+            (r#"{"autoHide":true,"smartHide":true}"#, true, true),
+        ] {
+            let existing: Config = serde_json::from_str(json)?;
+            assert_eq!(
+                (existing.auto_hide, existing.smart_hide),
+                (auto, smart),
+                "{json}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_visible_mode_and_retired_banner_preferences_are_preserved()
     -> Result<(), serde_json::Error> {
         let old: Config = serde_json::from_value(serde_json::json!({
             "notifications": true, "notificationPosition": "top-right",
             "notificationDuration": 5, "notificationDnd": true,
-            "notificationBadges": false, "autoHide": false
+            "notificationBadges": false, "autoHide": false,
+            "notificationBounce": false, "showPreviewCloseButton": false
         }))?;
         assert!(!old.smart_hide && !old.hides_automatically());
         assert!(!old.notification_badges);
         let saved = serde_json::to_value(&old)?;
         assert!(saved.get("notifications").is_none());
+        assert!(saved.get("notificationBounce").is_none());
+        assert!(saved.get("showPreviewCloseButton").is_none());
         assert_eq!(saved.get("smartHide"), Some(&serde_json::json!(false)));
         Ok(())
     }
@@ -707,11 +735,17 @@ mod tests {
     }
 
     #[test]
-    fn load_should_fill_missing_fields_with_defaults() {
+    fn load_fills_missing_fields_and_preserves_legacy_visibility() {
         let path = scratch("partial");
         save(&path, &Config::default()).ok();
         fs::write(&path, "{}").ok();
-        assert_eq!(load(&path).ok(), Some(Some(Config::default())));
+        assert_eq!(
+            load(&path).ok(),
+            Some(Some(Config {
+                smart_hide: false,
+                ..Config::default()
+            }))
+        );
     }
 
     #[test]

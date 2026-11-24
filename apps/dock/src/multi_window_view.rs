@@ -202,21 +202,18 @@ fn contains(rect: RECT, point: POINT) -> bool {
     point.x >= rect.left && point.x < rect.right && point.y >= rect.top && point.y < rect.bottom
 }
 
-fn thumbnail_top_inset(scale: f32, show_close: bool) -> f32 {
-    if show_close {
-        let close = muelle_core::preview::close_button_bounds(
-            muelle_core::layout::Rect {
-                x: 0.0,
-                y: 0.0,
-                width: CARD_WIDTH,
-                height: CARD_HEIGHT,
-            },
-            scale,
-        );
-        close.visual.y + close.visual.height + CLOSE_BUTTON_GAP * scale.max(0.5)
-    } else {
-        PREVIEW_INSET * scale
-    }
+/// The thumbnail starts under the close button.
+fn thumbnail_top_inset(scale: f32) -> f32 {
+    let close = muelle_core::preview::close_button_bounds(
+        muelle_core::layout::Rect {
+            x: 0.0,
+            y: 0.0,
+            width: CARD_WIDTH,
+            height: CARD_HEIGHT,
+        },
+        scale,
+    );
+    close.visual.y + close.visual.height + CLOSE_BUTTON_GAP * scale.max(0.5)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,9 +225,9 @@ pub enum MultiWindowAction {
 struct Card {
     root: ContainerVisual,
     highlight: SpriteVisual,
-    close_btn: Option<SpriteVisual>,
-    close_normal_brush: Option<CompositionSurfaceBrush>,
-    close_hover_brush: Option<CompositionSurfaceBrush>,
+    close_btn: SpriteVisual,
+    close_normal_brush: CompositionSurfaceBrush,
+    close_hover_brush: CompositionSurfaceBrush,
 }
 
 pub struct MultiWindowView {
@@ -249,7 +246,6 @@ pub struct MultiWindowView {
     animated: bool,
     left_at: Option<Instant>,
     pressed: Option<usize>,
-    show_close: bool,
     close_hovered: Option<usize>,
     close_pressed: Option<usize>,
     mouse_was_down: bool,
@@ -277,7 +273,6 @@ impl MultiWindowView {
         at: &Anchor,
         scale: f32,
         theme: Theme,
-        show_close: bool,
     ) -> Result<Self> {
         // SAFETY: Class and window belong to this UI thread. Once created,
         // `view` owns the HWND even if subsequent graphics setup fails.
@@ -323,7 +318,6 @@ impl MultiWindowView {
             animated: animations_enabled(),
             left_at: None,
             pressed: None,
-            show_close,
             close_hovered: None,
             close_pressed: None,
             mouse_was_down: false,
@@ -492,7 +486,7 @@ impl MultiWindowView {
             })?;
             card.Children()?.InsertAtTop(&caption)?;
 
-            let (close_btn, close_normal_brush, close_hover_brush) = if self.show_close {
+            let (close_btn, close_normal_brush, close_hover_brush) = {
                 let card_rect = muelle_core::layout::Rect {
                     x: 0.0,
                     y: 0.0,
@@ -518,9 +512,7 @@ impl MultiWindowView {
                 btn_visual.SetOpacity(0.0)?;
                 card.Children()?.InsertAtTop(&btn_visual)?;
 
-                (Some(btn_visual), Some(normal_brush), Some(hover_brush))
-            } else {
-                (None, None, None)
+                (btn_visual, normal_brush, hover_brush)
             };
 
             layers.InsertAtTop(&card)?;
@@ -550,11 +542,7 @@ impl MultiWindowView {
         let eased = 1.0 - (1.0 - progress).powi(3);
         let cursor = self.local_cursor()?;
         let hovered = self.layout.hit(cursor);
-        let close_hovered = if self.show_close {
-            self.layout.hit_close(cursor, self.scale)
-        } else {
-            None
-        };
+        let close_hovered = self.layout.hit_close(cursor, self.scale);
         if progress >= 1.0 && self.drawn == Some(hovered) && self.close_hovered == close_hovered {
             return Ok(());
         }
@@ -581,26 +569,19 @@ impl MultiWindowView {
             card.root.SetOpacity(eased)?;
             card.highlight
                 .SetOpacity(if hovered == Some(index) { 1.0 } else { 0.0 })?;
-            if let Some(btn) = &card.close_btn {
-                let is_close_hovered = close_hovered == Some(index);
-                let is_card_hovered = hovered == Some(index);
-                if let (Some(hover_brush), Some(normal_brush)) =
-                    (&card.close_hover_brush, &card.close_normal_brush)
-                {
-                    btn.SetBrush(if is_close_hovered {
-                        hover_brush
-                    } else {
-                        normal_brush
-                    })?;
-                }
-                btn.SetOpacity(if is_card_hovered { 1.0 } else { 0.0 })?;
-            }
+            card.close_btn.SetBrush(if close_hovered == Some(index) {
+                &card.close_hover_brush
+            } else {
+                &card.close_normal_brush
+            })?;
+            card.close_btn
+                .SetOpacity(if hovered == Some(index) { 1.0 } else { 0.0 })?;
             if let Some(&hwnd) = self.windows.get(self.page + index) {
                 self.thumbnails.place_preview(
                     hwnd,
                     RECT {
                         left: (x + PREVIEW_INSET * self.scale).round() as i32,
-                        top: (y + thumbnail_top_inset(self.scale, self.show_close)).round() as i32,
+                        top: (y + thumbnail_top_inset(self.scale)).round() as i32,
                         right: (x + width - PREVIEW_INSET * self.scale).round() as i32,
                         bottom: (y + (CARD_HEIGHT - 31.0) * self.scale).round() as i32,
                     },
@@ -670,9 +651,7 @@ impl MultiWindowView {
     fn press_at(&mut self, point: POINT) {
         // Do not select a card while it is still moving past another card.
         if !self.animated || self.opened.elapsed().as_secs_f32() >= OPEN_SECONDS {
-            if self.show_close
-                && let Some(index) = self.layout.hit_close(point, self.scale)
-            {
+            if let Some(index) = self.layout.hit_close(point, self.scale) {
                 self.close_pressed = Some(index);
                 self.pressed = None;
                 return;
@@ -823,15 +802,10 @@ mod tests {
                 scale,
             );
             assert!(
-                thumbnail_top_inset(scale, true)
+                thumbnail_top_inset(scale)
                     >= close.visual.y + close.visual.height + CLOSE_BUTTON_GAP * scale
             );
         }
-    }
-
-    #[test]
-    fn thumbnail_keeps_original_top_inset_when_close_button_is_disabled() {
-        assert_eq!(thumbnail_top_inset(1.0, false), PREVIEW_INSET);
     }
 
     #[test]
@@ -927,7 +901,6 @@ mod tests {
                 },
                 1.0,
                 theme,
-                true,
             )?;
             view.animated = false;
             view.update()?;
@@ -974,9 +947,7 @@ mod tests {
                     "each preview must align with its card's caption baseline"
                 );
                 assert!(
-                    image.top
-                        >= (rect.top as f32 + thumbnail_top_inset(view.scale, view.show_close))
-                            .round() as i32,
+                    image.top >= (rect.top as f32 + thumbnail_top_inset(view.scale)).round() as i32,
                     "the DWM thumbnail must leave room for the close button"
                 );
             }

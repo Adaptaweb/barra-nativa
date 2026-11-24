@@ -6,6 +6,10 @@ export type GenieSpeed = "normal" | "fast" | "faster";
 export type DockPosition = "left" | "bottom" | "right";
 export type DockDensity = "compact" | "normal" | "spacious";
 export type DockAutoHideSpeed = "smooth" | "normal" | "fast";
+/** View of the existing two settings; saved atomically as a mutually exclusive pair. */
+export type DockHidingMode = "visible" | "automatic" | "intelligent";
+/** `auto` follows Windows' light or dark mode. */
+export type Appearance = "auto" | "light" | "dark" | "frosted" | "clear" | "aurora";
 
 /** Mirrors `muelle_config::Config`. */
 export interface Config {
@@ -28,7 +32,6 @@ export interface Config {
   genieSpeed: GenieSpeed;
   showMinimized: boolean;
   showOtherWorkspaces: boolean;
-  showPreviewCloseButton: boolean;
   jumpLists: boolean;
   menuBar: boolean;
   menuBarAutoHide: boolean;
@@ -40,11 +43,11 @@ export interface Config {
   showRecents: boolean;
   bounceOnOpen: boolean;
   notificationBadges: boolean;
-  notificationBounce: boolean;
   mascot: boolean;
   checkUpdates: boolean;
   autoUpdate: boolean;
   language: Language;
+  appearance: Appearance;
   /** The folder shown at the right of the dock, whose contents open as a menu. */
   shortcutsFolder: string | null;
 }

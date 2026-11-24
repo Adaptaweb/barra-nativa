@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import type { DockDensity, DockPosition, GenieSpeed, IslandStyle } from "./config";
+import type { Appearance, DockDensity, DockPosition, GenieSpeed, IslandStyle } from "./config";
 
 const PATHS = {
   size: <><rect x="3" y="9" width="6" height="6" rx="1.5" /><rect x="13" y="5" width="9" height="14" rx="2" /></>,
@@ -39,6 +39,28 @@ export function DockPreview({ position, iconSize, wallpaper, density = "normal" 
     <span className="preview-window"><i /><i /><i /></span>
     <span className="preview-dock" data-position={position} data-density={density}
       style={{ "--mini-icon": `${6 + (iconSize - 32) / 16}px` } as CSSProperties}>{MINI_ICONS}</span>
+  </span>;
+}
+
+type Theme = Exclude<Appearance, "auto">;
+
+/** One theme's bar and dock over the wallpaper. Each layer carries its own
+ * wallpaper: a clipped layer cannot blur what lies outside it. */
+function ThemeLayer({ theme, wallpaper, half }: { theme: Theme; wallpaper: string | null; half?: boolean }) {
+  return <span className="theme-layer" data-theme={theme} data-half={half ? "" : undefined}>
+    {wallpaper ? <img className="preview-wallpaper" src={wallpaper} alt="" /> : null}
+    <span className="theme-bar"><i /><i /><i /><b /></span>
+    <span className="theme-dock">{MINI_ICONS}</span>
+  </span>;
+}
+
+/** The materials in CSS, as the dock draws them: `auto` shows light and
+ * dark split, as macOS shows its automatic appearance. */
+export function ThemePreview({ appearance, wallpaper }: { appearance: Appearance; wallpaper: string | null }) {
+  return <span className="preview-screen preview-theme">
+    {appearance === "auto"
+      ? <><ThemeLayer theme="light" wallpaper={wallpaper} /><ThemeLayer theme="dark" wallpaper={wallpaper} half /></>
+      : <ThemeLayer theme={appearance} wallpaper={wallpaper} />}
   </span>;
 }
 

@@ -133,7 +133,6 @@ impl App {
             },
             stage.scale,
             Theme::new(stage.key.look),
-            self.config.show_preview_close_button,
         )?);
         // The view owns its animation and dismissal timer while it is open.
         self.render()?;

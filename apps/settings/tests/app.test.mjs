@@ -25,14 +25,14 @@ const texts = Object.fromEntries(["en", "es", "fr"].map((language) => [
   language, JSON.parse(readFileSync(path.join(source, "i18n", `${language}.json`), "utf8")),
 ]));
 const base = {
-  language: "en", menuBar: true, smartHide: false, notificationBadges: true, notificationBounce: true,
+  language: "en", menuBar: true, smartHide: false, notificationBadges: true,
   iconSize: 48, magnifiedSize: 77,
   magnification: true, dockPosition: "bottom", genie: true, genieSpeed: "normal",
   dockDensity: "normal", dockAutoHideSpeed: "normal", showStart: true,
   showTrash: true, pinExplorer: true,
   showDownloads: true,
   showOtherWorkspaces: false,
-  menuBarIslandStyle: "notch", checkUpdates: false,
+  menuBarIslandStyle: "notch", checkUpdates: false, appearance: "auto",
   pinned: [], recent: [], shortcutsFolder: null,
 };
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
@@ -63,7 +63,11 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
     useCallback(callback) { return callback; },
     useEffect(callback) { effects.push(callback); },
   };
-  const nativeWindow = { onCloseRequested(callback) { close = callback; return Promise.resolve(() => {}); } };
+  const nativeWindow = {
+    themes: [],
+    onCloseRequested(callback) { close = callback; return Promise.resolve(() => {}); },
+    setTheme(theme) { this.themes.push(theme); return Promise.resolve(); },
+  };
   const mocks = {
     "@tauri-apps/api/app": { getVersion: async () => "0.1.21" },
     "@tauri-apps/api/event": { listen: async () => () => {} },
@@ -74,7 +78,7 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
         case "get_autostart": return false;
         case "windows_preferences": return { animations: true };
         case "wallpaper_preview": return null;
-        case "default_config": return base;
+        case "default_config": return { ...base, autoHide: false, smartHide: true };
         case "set_config": calls.push({ ...args.patch }); return save(args.patch);
         default: throw new Error(`Unexpected native call: ${command}`);
       }
@@ -99,7 +103,7 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
   function render() { stateIndex = refIndex = 0; effects.length = 0; return App(); }
   function find(predicate) { const node = [...elements(render())].find(predicate); assert.ok(node); return node; }
   return {
-    calls, timers, render,
+    calls, timers, render, themes: nativeWindow.themes,
     external(patch) { Object.assign(loaded, patch); },
     async focus() { listeners.get("focus")?.(); await settle(); },
     async mount() { render(); const cleanup = effects.map((effect) => effect()); await settle(); return () => cleanup.forEach((fn) => fn?.()); },
@@ -112,7 +116,7 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
 }
 
 test("each section renders only its own controls, in every language and visibility state", () => {
-  const markers = { dock: "size", windows: "genie", menubar: "menuBarShow", system: "autostart" };
+  const markers = { appearance: "themeHint", dock: "size", windows: "genie", menubar: "menuBarShow", system: "autostart" };
   for (const language of Object.keys(texts)) for (const menuBar of [true, false]) {
     for (const section of Object.keys(markers)) {
       const view = fixture(section, { language, menuBar });
@@ -173,34 +177,51 @@ test("other workspaces are opt-in and save without changing other window prefere
   } finally { unmount(); }
 });
 
-test("automatic hiding pauses intelligent hiding without discarding its saved choice", async () => {
-  for (const language of Object.keys(texts)) for (const smartHide of [false, true]) {
-    const view = fixture("dock", { language, autoHide: true, smartHide });
+test("one native dropdown preserves legacy modes and saves exclusive choices atomically", async () => {
+  const modes = [
+    [false, false, "visible"], [true, false, "automatic"],
+    [false, true, "intelligent"], [true, true, "automatic"],
+  ];
+  for (const language of Object.keys(texts)) for (const [autoHide, smartHide, selected] of modes) {
+    const view = fixture("dock", { language, autoHide, smartHide });
     const unmount = await view.mount();
-    const smartToggle = () => [...elements(view.body())].find((node) =>
-      node.props.label === texts[language].smartHide && "checked" in node.props);
+    const selector = () => [...elements(view.body())].find((node) =>
+      node.props.label === texts[language].dockHidingMode && "value" in node.props);
     try {
-      let toggle = smartToggle();
-      assert.equal(toggle.props.disabled, true);
-      assert.equal(toggle.props.checked, smartHide);
-      const button = toggle.type(toggle.props);
-      assert.equal(button.props.disabled, true);
-      assert.equal(button.props["aria-busy"], undefined);
-      button.props.onClick(); // Disabled is not a loading state or a writable control.
-      view.fire(60);
-      await settle();
-      assert.deepEqual(view.calls, []);
-      const paused = renderToStaticMarkup(React.createElement("span", null, texts[language].smartHidePausedHint)).slice(6, -7);
-      assert.ok(renderToStaticMarkup(view.body()).includes(paused));
-      view.change(texts[language].autoHide, false);
-      view.fire(60);
-      await settle();
-      toggle = smartToggle();
-      assert.equal(toggle.props.disabled, false);
-      assert.equal(toggle.props.checked, smartHide);
-      assert.deepEqual(view.calls, [{ autoHide: false }]);
+      assert.equal(selector().props.value, selected);
+      assert.deepEqual(selector().props.options.map((option) => option.value), ["visible", "automatic", "intelligent"]);
+      assert.deepEqual(view.calls, [], "opening Settings must not normalize saved preferences");
+      const controls = [...elements(view.body())];
+      assert.ok(!controls.some((node) => node.props.label === texts[language].dockHidingMode && "checked" in node.props));
+      for (const mode of ["intelligent", "automatic", "visible"]) {
+        view.change(texts[language].dockHidingMode, mode);
+        view.fire(60);
+        await settle();
+        assert.equal(selector().props.value, mode);
+        assert.deepEqual(view.calls.at(-1), { autoHide: mode === "automatic", smartHide: mode === "intelligent" });
+        const html = renderToStaticMarkup(view.body());
+        assert.ok(html.includes('<select class="select-control"'));
+        const selectedOption = html.match(new RegExp(`<option[^>]*value="${mode}"[^>]*>`));
+        assert.ok(selectedOption?.[0].includes('selected=""'));
+        assert.ok(!html.includes('preview-hiding'));
+      }
     } finally { unmount(); }
   }
+});
+
+test("reset selects the new intelligent default without changing pinned apps", async () => {
+  const view = fixture("system", { autoHide: true, smartHide: false });
+  const unmount = await view.mount();
+  try {
+    view.button(texts.en.resetButton);
+    view.button(texts.en.resetConfirm);
+    await settle();
+    view.fire(60);
+    await settle();
+    assert.equal(view.calls.at(-1).autoHide, false);
+    assert.equal(view.calls.at(-1).smartHide, true);
+    assert.ok(!("pinned" in view.calls.at(-1)));
+  } finally { unmount(); }
 });
 
 test("failed writes remain retryable and prevent closing until saved", async () => {
@@ -300,4 +321,35 @@ test("returning to Settings reflects dock removals without overwriting local edi
     assert.equal(checked(texts.en.showTrash), false);
     assert.deepEqual(view.calls, [{ showDownloads: true }]);
   } finally { unmount(); }
+});
+
+test("the theme picker offers every theme with a preview, saves only the choice and themes Settings", async () => {
+  const themes = ["auto", "light", "dark", "frosted", "clear", "aurora"];
+  for (const language of Object.keys(texts)) {
+    const view = fixture("appearance", { language });
+    const picker = [...elements(view.body())].find((node) => node.props.label === texts[language].theme);
+    assert.deepEqual(picker.props.options.map((option) => option.value), themes);
+    assert.ok(picker.props.options.every((option) => option.preview && option.label));
+    assert.equal(picker.props.value, "auto");
+  }
+  const view = fixture("appearance");
+  const unmount = await view.mount();
+  try {
+    assert.deepEqual(view.themes, [null], "automatic follows Windows");
+    view.change(texts.en.theme, "frosted");
+    view.fire(60);
+    await settle();
+    assert.deepEqual(view.calls, [{ appearance: "frosted" }]);
+    // An old file without the setting reads as automatic.
+    const old = fixture("appearance", { appearance: undefined });
+    const picker = [...elements(old.body())].find((node) => node.props.label === texts.en.theme);
+    assert.equal(picker.props.value, "auto");
+  } finally { unmount(); }
+});
+
+test("the alert bounce and the preview close button are always on, with no switch left", () => {
+  for (const section of ["dock", "windows"]) for (const old of [false, true]) {
+    const html = renderToStaticMarkup(fixture(section, { notificationBounce: old, showPreviewCloseButton: old }).body());
+    assert.doesNotMatch(html, /Bounce icon on alert|close button on previews/i);
+  }
 });

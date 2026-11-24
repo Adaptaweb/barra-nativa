@@ -313,10 +313,7 @@ impl App {
             .map(|window| window.app_id.clone());
         if let Some(app_id) = app_id {
             let changed = self.attention_enabled && self.attention.request(hwnd, foreground);
-            if (changed || !self.attention_enabled)
-                && self.config.notification_bounce
-                && animations_enabled()
-            {
+            if (changed || !self.attention_enabled) && animations_enabled() {
                 self.start_bounce(app_id.clone(), Some(ATTENTION_HOPS * bounce::HOP_SECONDS));
             }
             if changed {

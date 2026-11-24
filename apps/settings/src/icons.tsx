@@ -6,9 +6,10 @@
 
 import type { ReactNode } from "react";
 
-export type SectionId = "dock" | "windows" | "menubar" | "system";
+export type SectionId = "appearance" | "dock" | "windows" | "menubar" | "system";
 
 const TILES: Record<SectionId, [string, string]> = {
+  appearance: ["#5c5c62", "#1c1c1e"],
   dock: ["#4aa3ff", "#0a6cf0"],
   windows: ["#b57bff", "#7d3ff0"],
   menubar: ["#ff9f45", "#f0640a"],
@@ -16,6 +17,13 @@ const TILES: Record<SectionId, [string, string]> = {
 };
 
 const GLYPHS: Record<SectionId, ReactNode> = {
+  // A circle half light, half dark, as macOS draws Appearance.
+  appearance: (
+    <>
+      <circle cx="12" cy="12" r="6.6" fill="none" stroke="#fff" strokeWidth="1.6" />
+      <path d="M12 5.4a6.6 6.6 0 0 1 0 13.2z" fill="#fff" />
+    </>
+  ),
   // A dock: three icons on a shelf.
   dock: (
     <>

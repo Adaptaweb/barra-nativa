@@ -21,8 +21,8 @@ use windows::{
             Shell::{SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW},
             WindowsAndMessaging::{
                 ASFW_ANY, AllowSetForegroundWindow, FindWindowW, GWL_EXSTYLE, GetForegroundWindow,
-                GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow,
-                IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE,
+                GetShellWindow, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic,
+                IsWindow, IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE,
                 SW_SHOWNORMAL, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER,
                 SWP_NOSIZE, SWP_NOZORDER, SendMessageTimeoutW, SetForegroundWindow, SetWindowPos,
                 ShowWindowAsync, SwitchToThisWindow, WM_CLOSE, WM_NULL, WS_EX_TOPMOST,
@@ -277,6 +277,9 @@ pub fn toggle_hidden_icons(anchor: (i32, i32)) {
         // The press itself already dismissed it.
         return;
     }
+    // Win+B gives the hidden taskbar the focus on purpose: the dock must
+    // leave it there until Enter has opened the flyout.
+    OPENING_HIDDEN_ICONS.store(true, Ordering::Relaxed);
     tap(&[VK_LWIN, VK_B]);
     // The rest waits on its own short-lived thread so the dock never sleeps.
     std::thread::spawn(move || {
@@ -289,7 +292,39 @@ pub fn toggle_hidden_icons(anchor: (i32, i32)) {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+        OPENING_HIDDEN_ICONS.store(false, Ordering::Relaxed);
     });
+}
+
+/// From Win+B until the hidden-icons flyout has had time to open.
+static OPENING_HIDDEN_ICONS: AtomicBool = AtomicBool::new(false);
+
+/// Whether the taskbar has the focus because Muelle is opening its
+/// hidden-icons flyout (see `toggle_hidden_icons`).
+#[must_use]
+pub fn opening_hidden_icons() -> bool {
+    OPENING_HIDDEN_ICONS.load(Ordering::Relaxed)
+}
+
+/// Gives the focus to the first of `windows` (front to back) that is on
+/// screen, or to the desktop when none is, as a click on it would.
+pub fn focus_front_or_desktop(windows: &[isize]) {
+    // SAFETY: Read-only checks and one focus request; they have no effect on
+    // a window that is gone, or when Windows refuses the request.
+    unsafe {
+        let front = windows
+            .iter()
+            .map(|&raw| HWND(raw as *mut _))
+            .find(|&hwnd| {
+                IsWindowVisible(hwnd).as_bool()
+                    && !IsIconic(hwnd).as_bool()
+                    && !crate::tracker::is_cloaked(hwnd)
+            })
+            .unwrap_or_else(|| GetShellWindow());
+        if !front.is_invalid() {
+            bring_to_front(front);
+        }
+    }
 }
 
 /// Whether the hidden-icons flyout was open when the mouse button went down

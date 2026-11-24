@@ -291,7 +291,7 @@ impl App {
                     },
                     gap,
                 );
-                let hiding = if self.config.auto_hide {
+                let hiding = if self.config.hides_automatically() {
                     text().turn_hiding_off
                 } else {
                     text().turn_hiding_on

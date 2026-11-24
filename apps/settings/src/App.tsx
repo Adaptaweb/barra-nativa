@@ -3,10 +3,12 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  type Appearance,
   type Config,
   type DockPosition,
   type DockDensity,
   type DockAutoHideSpeed,
+  type DockHidingMode,
   type GenieSpeed,
   type IslandStyle,
   type Language,
@@ -28,8 +30,8 @@ import {
   saveConfig,
   setAutostart,
 } from "./config";
-import { Card, Row, Segmented, Slider, SubRow, Toggle, VisualChoices } from "./controls";
-import { DockPreview, IslandPreview, SettingIcon, SpeedPreview } from "./visuals";
+import { Card, Row, Segmented, Select, Slider, SubRow, Toggle, VisualChoices } from "./controls";
+import { DockPreview, IslandPreview, SettingIcon, SpeedPreview, ThemePreview } from "./visuals";
 import { type SectionId, SectionIcon } from "./icons";
 import { UpdateBanner } from "./UpdateBanner";
 import en from "./i18n/en.json";
@@ -257,6 +259,11 @@ export function App() {
       .catch(() => setFailed(true));
   }, [confirmingReset, update]);
 
+  const appearance = config?.appearance ?? "auto";
+  useEffect(() => {
+    getCurrentWindow().setTheme(windowTheme(appearance)).catch(() => {});
+  }, [appearance]);
+
   if (!config) return <div className="window" />;
   const t = textsFor(config.language);
   const durationFormat = new Intl.NumberFormat(config.language === "auto" ? navigator.language : config.language);
@@ -360,7 +367,25 @@ export function App() {
           />
         ) : null}
         <div className="content-body" key={section}>
-          {section === "dock" ? (
+          {section === "appearance" ? (
+            <>
+              <Card>
+                <VisualChoices<Appearance>
+                  label={t.theme}
+                  columns={3}
+                  value={config.appearance ?? "auto"}
+                  options={THEMES.map((theme) => ({
+                    value: theme,
+                    label: themeName(t, theme),
+                    detail: theme === "auto" ? t.themeAutoDetail : undefined,
+                    preview: <ThemePreview appearance={theme} wallpaper={wallpaper} />,
+                  }))}
+                  onChange={(appearance) => update({ appearance })}
+                />
+                <p className="card-note row-hint">{t.themeHint}</p>
+              </Card>
+            </>
+          ) : section === "dock" ? (
             <>
               <Card title={t.groupAppearance}>
                 <VisualChoices<DockPosition>
@@ -424,15 +449,17 @@ export function App() {
                 </Row>
               </Card>
               <Card title={t.groupBehavior}>
-                <Row icon={<SettingIcon name="hide" />} label={t.autoHide} hint={t.autoHideHint}>
-                  <Toggle
-                    label={t.autoHide}
-                    checked={config.autoHide}
-                    onChange={(autoHide) => update({ autoHide })}
+                <Row label={t.dockHidingMode} hint={config.autoHide ? t.dockHidingAutomaticHint : config.smartHide ? t.dockHidingIntelligentHint : t.dockHidingVisibleHint}>
+                  <Select<DockHidingMode>
+                    label={t.dockHidingMode}
+                    value={config.autoHide ? "automatic" : config.smartHide ? "intelligent" : "visible"}
+                    options={[
+                      { value: "visible", label: t.dockHidingVisible },
+                      { value: "automatic", label: t.dockHidingAutomatic },
+                      { value: "intelligent", label: t.dockHidingIntelligent },
+                    ]}
+                    onChange={(mode) => update({ autoHide: mode === "automatic", smartHide: mode === "intelligent" })}
                   />
-                </Row>
-                <Row label={t.smartHide} hint={config.autoHide ? t.smartHidePausedHint : t.smartHideHint}>
-                  <Toggle label={t.smartHide} checked={config.smartHide ?? false} disabled={config.autoHide} onChange={(smartHide) => update({ smartHide })} />
                 </Row>
                 <SubRow label={t.dockAutoHideSpeed} open={config.autoHide || (config.smartHide ?? false)}>
                   <Segmented<DockAutoHideSpeed>
@@ -448,9 +475,6 @@ export function App() {
                 </SubRow>
                 <Row label={t.notificationBadges} hint={t.notificationBadgesHint}>
                   <Toggle label={t.notificationBadges} checked={config.notificationBadges} onChange={(notificationBadges) => update({ notificationBadges })} />
-                </Row>
-                <Row label={t.notificationBounce} hint={t.notificationBounceHint}>
-                  <Toggle label={t.notificationBounce} checked={config.notificationBounce} onChange={(notificationBounce) => update({ notificationBounce })} />
                 </Row>
                 <Row icon={<SettingIcon name="bounce" />} label={t.bounceOnOpen}>
                   <Toggle
@@ -536,13 +560,6 @@ export function App() {
                     label={t.showMinimized}
                     checked={config.showMinimized}
                     onChange={(showMinimized) => update({ showMinimized })}
-                  />
-                </Row>
-                <Row label={t.showPreviewCloseButton} hint={t.showPreviewCloseButtonHint}>
-                  <Toggle
-                    label={t.showPreviewCloseButton}
-                    checked={config.showPreviewCloseButton}
-                    onChange={(showPreviewCloseButton) => update({ showPreviewCloseButton })}
                   />
                 </Row>
               </Card>
@@ -707,10 +724,35 @@ function updateHint(t: Texts, state: UpdateState, version: string): string {
   }
 }
 
-const SECTIONS: readonly SectionId[] = ["dock", "windows", "menubar", "system"];
+const SECTIONS: readonly SectionId[] = ["appearance", "dock", "windows", "menubar", "system"];
+
+const THEMES: readonly Appearance[] = ["auto", "light", "dark", "frosted", "clear", "aurora"];
+
+function themeName(t: Texts, theme: Appearance): string {
+  switch (theme) {
+    case "auto":
+      return t.themeAuto;
+    case "light":
+      return t.themeLight;
+    case "dark":
+      return t.themeDark;
+    case "frosted":
+      return t.themeFrosted;
+    case "clear":
+      return t.themeClear;
+    case "aurora":
+      return t.themeAurora;
+  }
+}
+
+/** Settings takes the theme's light or dark too, as macOS apps take its appearance. */
+const windowTheme = (theme: Appearance) =>
+  theme === "auto" ? null : theme === "light" || theme === "frosted" ? "light" : "dark";
 
 function sectionTitle(t: Texts, section: SectionId): string {
   switch (section) {
+    case "appearance":
+      return t.appearance;
     case "dock":
       return t.dock;
     case "windows":

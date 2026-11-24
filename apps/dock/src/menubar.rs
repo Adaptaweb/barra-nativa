@@ -4967,10 +4967,11 @@ mod island_tests {
         bar.accessories = None;
         let mut look = bar.look.clone().context("missing initial menu bar")?;
         look.track = None;
-        for scale in [1.0, 1.25, 1.5, 2.0] {
+        for (scale, material) in [1.0, 1.25, 1.5, 2.0].into_iter().zip(Material::ALL) {
             for light in [true, false] {
                 for glass in [true, false] {
                     look.scale = scale;
+                    look.material = material;
                     look.light = light;
                     look.glass = glass;
                     look.accessories = [None, None];
