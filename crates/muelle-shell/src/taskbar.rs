@@ -40,12 +40,21 @@ fn state_file() -> PathBuf {
 /// Idempotent; can be called again after Explorer restarts or Windows redraws
 /// the taskbar.
 pub fn take_over() -> bool {
+    if keep_taskbar() {
+        return true;
+    }
     take_over_taskbars(&taskbars(), &state_file())
+}
+
+/// Development switch: debug builds leave the Windows taskbar alone unless
+/// `BARRA_HIDE_TASKBAR=1` is set, so the developer keeps using it.
+pub fn keep_taskbar() -> bool {
+    cfg!(debug_assertions) && env::var_os("BARRA_HIDE_TASKBAR").is_none_or(|v| v != "1")
 }
 
 /// Whether Explorer has restored the visibility of a taskbar window.
 pub fn needs_visibility_repair() -> bool {
-    taskbars().into_iter().any(|hwnd| !is_ghosted(hwnd))
+    !keep_taskbar() && taskbars().into_iter().any(|hwnd| !is_ghosted(hwnd))
 }
 
 fn take_over_taskbars(bars: &[HWND], file: &std::path::Path) -> bool {
