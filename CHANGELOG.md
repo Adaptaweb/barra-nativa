@@ -10,6 +10,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Bluetooth now follows Windows automatically: its menu-bar icon appears only
+  while a Bluetooth radio is on. Removed the duplicate Settings toggle and
+  retired saved overrides. State/hotplug events update the icon without polling.
 - Fixed window previews disappearing while moving diagonally from the Dock icon
   towards an outer card. The handoff area follows the picker width on every Dock
   edge and delayed mouse-leave messages no longer cancel a newer hover.
@@ -25,6 +28,10 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Bluetooth sigue automáticamente a Windows: su icono aparece solo cuando hay
+  una radio Bluetooth encendida. Retirados el interruptor duplicado de Ajustes
+  y las preferencias antiguas. Los eventos de estado/hardware actualizan el
+  indicador sin sondeo periódico.
 - Corregido el cierre de previsualizaciones al ir en diagonal desde el icono
   hacia una miniatura lateral. La zona de paso se adapta al selector en cada
   borde del Dock; las salidas tardías del ratón no cancelan un hover más reciente.

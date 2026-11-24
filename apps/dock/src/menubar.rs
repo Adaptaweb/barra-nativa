@@ -70,7 +70,7 @@ use windows::{
 use windows_numerics::{Vector2, Vector3};
 
 use crate::{
-    accessories, app, edge_watch,
+    accessories, app, bluetooth, edge_watch,
     gfx::{Gfx, Ink, LabelBrush},
     mascot,
     media::{self, Control as MediaControl, Track},
@@ -92,6 +92,7 @@ const MEDIA_CHANGED: u32 = WM_APP + 28;
 const VOLUME_CAPTURE_LOST: u32 = WM_APP + 31;
 const AUDIO_CHANGED: u32 = WM_APP + 32;
 const AUDIO_TICK: u32 = WM_APP + 33;
+const BLUETOOTH_CHANGED: u32 = WM_APP + 34;
 const VOLUME_TIMER: usize = 4;
 const PROGRESS_TIMER: usize = 5;
 const ACCESSORIES_CHANGED: u32 = WM_APP + 30;
@@ -181,7 +182,6 @@ pub struct MenuBarWidgets {
     pub search: Option<bool>,
     pub task_view: Option<bool>,
     pub widgets: Option<bool>,
-    pub bluetooth: bool,
     pub battery_percent: Option<bool>,
     pub island_style: IslandStyle,
 }
@@ -192,7 +192,6 @@ impl Default for MenuBarWidgets {
             search: None,
             task_view: None,
             widgets: None,
-            bluetooth: true,
             battery_percent: None,
             island_style: IslandStyle::Notch,
         }
@@ -202,6 +201,7 @@ impl Default for MenuBarWidgets {
 /// Network, volume and taskbar buttons, read only when Windows reports a change.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Status {
+    bluetooth_on: bool,
     network: Network,
     volume: Option<Volume>,
     buttons: TaskbarButtons,
@@ -462,6 +462,7 @@ impl Drop for ExitAnimation {
 }
 
 pub struct MenuBar {
+    bluetooth: Option<bluetooth::Monitor>,
     accessories: Option<accessories::Monitor>,
     accessories_enabled: bool,
     accessory_retry_at: Instant,
@@ -575,6 +576,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         REGISTRY_CHANGED => app::menu_bar_registry_changed(),
         ACCESSORIES_CHANGED => app::menu_bar_accessories_changed(),
         MEDIA_CHANGED => app::menu_bar_media_changed(),
+        BLUETOOTH_CHANGED => app::menu_bar_bluetooth_changed(),
         AUDIO_CHANGED => {
             if !AUDIO_TICK_PENDING.swap(true, Ordering::Relaxed) {
                 unsafe {
@@ -1150,6 +1152,7 @@ impl MenuBar {
             exit_animation: None,
             bounds: RECT::default(),
             status: Status {
+                bluetooth_on: false,
                 network: Network::Offline,
                 volume: None,
                 buttons: TaskbarButtons::default(),
@@ -1181,6 +1184,7 @@ impl MenuBar {
             panel_span: Span::default(),
             island_hits: Vec::new(),
             outside_click_hook: None,
+            bluetooth: bluetooth::Monitor::new(hwnd.0 as isize, BLUETOOTH_CHANGED).ok(),
             _network: NetworkWatch::new(hwnd.0 as isize, STATUS_CHANGED),
             privacy_watch: status::watch_privacy(hwnd.0 as isize, REGISTRY_CHANGED),
             settings_watch: status::watch_taskbar_settings(hwnd.0 as isize, REGISTRY_CHANGED),
@@ -1717,8 +1721,28 @@ impl MenuBar {
         self.apply_look(gfx, look)
     }
 
+    pub fn bluetooth_changed(&mut self, gfx: &Gfx) -> Result<()> {
+        let on = self
+            .bluetooth
+            .as_ref()
+            .is_some_and(bluetooth::Monitor::is_on);
+        self.status.bluetooth_on = on;
+        let Some(mut look) = self.look.clone() else {
+            return self.refresh(gfx);
+        };
+        if look.status.bluetooth_on == on {
+            return Ok(());
+        }
+        look.status.bluetooth_on = on;
+        self.apply_look(gfx, look)
+    }
+
     fn update_status(&mut self) {
         self.status = Status {
+            bluetooth_on: self
+                .bluetooth
+                .as_ref()
+                .is_some_and(bluetooth::Monitor::is_on),
             network: status::network(),
             volume: self.audio.as_mut().and_then(AudioWatch::volume),
             buttons: status::taskbar_buttons(),
@@ -2094,12 +2118,11 @@ impl MenuBar {
             .widgets
             .battery_percent
             .unwrap_or(status.battery_percentage);
-        let show_bluetooth = look.widgets.bluetooth;
 
         if show_search {
             items.push((symbol(&[(glyph::SEARCH, 1.0)])?, Action::Search));
         }
-        if show_bluetooth {
+        if status.bluetooth_on {
             items.push((symbol(&[(glyph::BLUETOOTH, 1.0)])?, Action::Bluetooth));
         }
         match status.network {
@@ -4026,6 +4049,7 @@ fn draw_bubble_player(
 
 impl Drop for MenuBar {
     fn drop(&mut self) {
+        self.bluetooth = None;
         self.accessories = None;
         self.exit_animation = None;
         self.media = None;
@@ -4049,6 +4073,57 @@ impl Drop for MenuBar {
 #[cfg(test)]
 mod island_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "Hidden compositor fixture; synthetic Bluetooth states, no hardware changes"]
+    fn native_bluetooth_indicator_appears_only_for_an_enabled_system_radio() -> Result<()> {
+        use anyhow::Context;
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let mut bar = MenuBar::create(&gfx, false, false, true, MenuBarWidgets::default())?;
+        bar.set_visible(false)?;
+        bar.bluetooth = None;
+        let mut look = bar.look.clone().context("initial look")?;
+        look.screen = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        for on in [false, true, false] {
+            look.status.bluetooth_on = on;
+            bar.status.bluetooth_on = on;
+            bar.apply_look(&gfx, look.clone())?;
+            assert_eq!(
+                bar.zones
+                    .iter()
+                    .filter(|(_, _, action)| *action == Action::Bluetooth)
+                    .count(),
+                usize::from(on)
+            );
+        }
+        // The native event handler updates the cached Look instead of running
+        // provider/process scans or re-reading unrelated Windows preferences.
+        look.status.bluetooth_on = true;
+        bar.apply_look(&gfx, look)?;
+        bar.bluetooth_changed(&gfx)?;
+        assert!(
+            !bar.zones
+                .iter()
+                .any(|(_, _, action)| *action == Action::Bluetooth)
+        );
+        Ok(())
+    }
 
     #[test]
     #[ignore = "Native popup layout/input regression; hidden window, no audio writes"]

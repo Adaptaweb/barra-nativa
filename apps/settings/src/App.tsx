@@ -613,13 +613,6 @@ export function App() {
               </Card>
               {config.menuBar && (
                 <Card title={t.menuBarItems}>
-                  <Row icon={<SettingIcon name="bluetooth" />} label={t.menuBarBluetooth} hint={t.menuBarBluetoothHint}>
-                    <Toggle
-                      label={t.menuBarBluetooth}
-                      checked={config.menuBarBluetooth}
-                      onChange={(menuBarBluetooth) => update({ menuBarBluetooth })}
-                    />
-                  </Row>
                   <Row icon={<SettingIcon name="battery" />} label={t.menuBarBatteryPercent} hint={t.menuBarBatteryPercentHint}>
                     <Toggle
                       label={t.menuBarBatteryPercent}

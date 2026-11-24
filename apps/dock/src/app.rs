@@ -4487,7 +4487,6 @@ impl App {
             search: self.config.menu_bar_search,
             task_view: self.config.menu_bar_task_view,
             widgets: self.config.menu_bar_widgets,
-            bluetooth: self.config.menu_bar_bluetooth,
             battery_percent: self.config.menu_bar_battery_percent,
             island_style: self.config.menu_bar_island_style,
         };
@@ -5050,6 +5049,13 @@ pub fn menu_bar_media_changed() {
 pub fn menu_bar_audio_changed() {
     with_app("audio", |app| match &mut app.menubar {
         Some(bar) => bar.audio_changed(&app.gfx),
+        None => Ok(()),
+    });
+}
+
+pub fn menu_bar_bluetooth_changed() {
+    with_app("Bluetooth", |app| match &mut app.menubar {
+        Some(bar) => bar.bluetooth_changed(&app.gfx),
         None => Ok(()),
     });
 }

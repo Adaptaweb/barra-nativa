@@ -56,8 +56,6 @@
   "accessoryBatteryHint": "Souris et casques compatibles. Aucune interrogation si désactivé.",
   "aiUsageHint": "Utilise vos sessions existantes ; vérifie toutes les 5 min. Aucun identifiant enregistré.",
   "menuBarItems": "Éléments d'état",
-  "menuBarBluetooth": "Bluetooth",
-  "menuBarBluetoothHint": "Affiche le statut Bluetooth et ouvre ses paramètres à côté du Wi-Fi.",
   "menuBarBatteryPercent": "Afficher le pourcentage de batterie",
   "menuBarBatteryPercentHint": "Affiche le pourcentage à côté de l'icône de batterie.",
   "menuBarSearch": "Bouton de recherche",

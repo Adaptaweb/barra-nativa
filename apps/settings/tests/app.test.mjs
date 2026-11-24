@@ -129,6 +129,14 @@ test("each section renders only its own controls, in every language and visibili
   }
 });
 
+test("Bluetooth has no duplicate setting even with an old saved visibility override", () => {
+  for (const language of Object.keys(texts)) for (const menuBarBluetooth of [false, true]) {
+    const view = fixture("menubar", { language, menuBar: true, menuBarBluetooth });
+    assert.doesNotMatch(renderToStaticMarkup(view.body()), /Bluetooth/i);
+    assert.ok([...elements(view.body())].some((node) => node.props.title === texts[language].menuBarItems));
+  }
+});
+
 test("other workspaces are opt-in and save without changing other window preferences", async () => {
   const view = fixture("windows", { showOtherWorkspaces: undefined });
   const checked = () => [...elements(view.body())].find((node) =>

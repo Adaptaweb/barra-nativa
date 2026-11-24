@@ -56,8 +56,6 @@
   "accessoryBatteryHint": "Ratones y auriculares compatibles. Apagado, no los consulta.",
   "aiUsageHint": "Usa tus sesiones abiertas; consulta cada 5 min. No guarda credenciales.",
   "menuBarItems": "Elementos de estado",
-  "menuBarBluetooth": "Bluetooth",
-  "menuBarBluetoothHint": "Muestra el estado de Bluetooth y abre sus ajustes junto al Wi-Fi.",
   "menuBarBatteryPercent": "Mostrar porcentaje de batería",
   "menuBarBatteryPercentHint": "Muestra el nivel de carga junto al icono de la batería.",
   "menuBarSearch": "Botón de búsqueda",

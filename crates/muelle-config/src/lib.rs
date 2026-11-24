@@ -102,8 +102,6 @@ pub struct Config {
     pub menu_bar_task_view: Option<bool>,
     /// Show Widgets button in the menu bar (`None` follows Windows taskbar setting).
     pub menu_bar_widgets: Option<bool>,
-    /// Show Bluetooth button in the menu bar.
-    pub menu_bar_bluetooth: bool,
     /// Show battery percentage in the menu bar (`None` follows Windows setting).
     pub menu_bar_battery_percent: Option<bool>,
     /// The dot under apps that have windows open.
@@ -320,7 +318,6 @@ impl Default for Config {
             menu_bar_search: None,
             menu_bar_task_view: None,
             menu_bar_widgets: Some(false),
-            menu_bar_bluetooth: false,
             menu_bar_battery_percent: None,
             show_indicators: true,
             show_recents: true,
@@ -466,6 +463,23 @@ fn write_config(path: &Path, config: &Config) -> Result<(), ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_bluetooth_visibility_does_not_override_system_status()
+    -> Result<(), serde_json::Error> {
+        for old in [false, true] {
+            let config: Config = serde_json::from_value(
+                serde_json::json!({"menuBarBluetooth": old, "showStart": false}),
+            )?;
+            assert!(!config.show_start);
+            assert!(
+                serde_json::to_value(config)?
+                    .get("menuBarBluetooth")
+                    .is_none()
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn other_workspaces_are_opt_in_and_preserved_when_saving() -> Result<(), serde_json::Error> {

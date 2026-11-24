@@ -39,7 +39,6 @@ export interface Config {
   menuBarSearch: boolean | null;
   menuBarTaskView: boolean | null;
   menuBarWidgets: boolean | null;
-  menuBarBluetooth: boolean;
   menuBarBatteryPercent: boolean | null;
   showIndicators: boolean;
   showRecents: boolean;

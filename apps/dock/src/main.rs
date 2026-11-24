@@ -14,6 +14,7 @@
 mod accessories;
 mod app;
 mod assets;
+mod bluetooth;
 mod drop;
 mod edge_watch;
 mod flight;
