@@ -395,7 +395,7 @@ pub fn alt_tab_lists_more_than_windows(edge_open: bool) -> bool {
     (tabs && edge_open) || all_desktops
 }
 
-/// Read when the bar redraws: three registry values, no watch needed. A value
+/// Read at startup and when Windows reports a preference change. A value
 /// Windows has never written means the button is at its default, shown.
 #[must_use]
 pub fn taskbar_buttons() -> TaskbarButtons {
@@ -428,6 +428,13 @@ pub fn battery_percentage_enabled() -> bool {
 #[must_use]
 pub fn watch_taskbar_settings(hwnd: isize, message: u32) -> Option<crate::watch::RegistryWatch> {
     crate::watch::RegistryWatch::new(ADVANCED, false, hwnd, message)
+}
+
+/// Search visibility lives outside Explorer's Advanced key. Listen separately
+/// so changes are reflected without waiting for a clock tick or a broadcast.
+#[must_use]
+pub fn watch_search_settings(hwnd: isize, message: u32) -> Option<crate::watch::RegistryWatch> {
+    crate::watch::RegistryWatch::new(SEARCH, false, hwnd, message)
 }
 
 /* ---------------------------------------------------------------- Privacy */

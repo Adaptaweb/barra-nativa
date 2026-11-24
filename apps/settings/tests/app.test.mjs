@@ -32,8 +32,7 @@ const base = {
   showTrash: true, pinExplorer: true,
   showDownloads: true,
   showOtherWorkspaces: false,
-  menuBarIslandStyle: "notch", menuBarSearch: null, menuBarTaskView: null,
-  menuBarWidgets: null, menuBarBatteryPercent: null, checkUpdates: false,
+  menuBarIslandStyle: "notch", checkUpdates: false,
   pinned: [], recent: [], shortcutsFolder: null,
 };
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
@@ -73,7 +72,7 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
       switch (command) {
         case "get_config": return { ...loaded };
         case "get_autostart": return false;
-        case "windows_preferences": return { animations: true, menuBarSearch: false };
+        case "windows_preferences": return { animations: true };
         case "wallpaper_preview": return null;
         case "default_config": return base;
         case "set_config": calls.push({ ...args.patch }); return save(args.patch);
@@ -133,7 +132,24 @@ test("Bluetooth has no duplicate setting even with an old saved visibility overr
   for (const language of Object.keys(texts)) for (const menuBarBluetooth of [false, true]) {
     const view = fixture("menubar", { language, menuBar: true, menuBarBluetooth });
     assert.doesNotMatch(renderToStaticMarkup(view.body()), /Bluetooth/i);
-    assert.ok([...elements(view.body())].some((node) => node.props.title === texts[language].menuBarItems));
+  }
+});
+
+test("retired Windows status-item overrides expose no controls and create no save", async () => {
+  for (const language of Object.keys(texts)) for (const old of [null, false, true]) {
+    const view = fixture("menubar", { language, menuBarSearch: old, menuBarTaskView: old,
+      menuBarWidgets: old, menuBarBatteryPercent: old });
+    const unmount = await view.mount();
+    try {
+      const controls = [...elements(view.body())].filter((node) => "checked" in node.props);
+      assert.deepEqual(controls.map((node) => node.props.label), [texts[language].menuBarShow,
+        texts[language].menuBarAutoHide, texts[language].menuBarMusic, texts[language].aiUsage,
+        texts[language].accessoryBattery]);
+      view.fire(60);
+      await settle();
+      assert.deepEqual(view.calls, []);
+      assert.equal(await view.close(), false);
+    } finally { unmount(); }
   }
 });
 
@@ -162,7 +178,7 @@ test("failed writes remain retryable and prevent closing until saved", async () 
   const view = fixture("menubar", {}, async () => { if (fail) throw new Error("disk busy"); });
   const unmount = await view.mount();
   try {
-    view.change(texts.en.menuBarSearch, false);
+    view.change(texts.en.menuBarAutoHide, false);
     view.fire(60);
     await settle();
     assert.equal(await view.close(), true);
@@ -170,7 +186,7 @@ test("failed writes remain retryable and prevent closing until saved", async () 
     assert.ok(renderToStaticMarkup(view.body()).includes(texts.en.saveError));
     fail = false;
     assert.equal(await view.close(), false);
-    assert.deepEqual(view.calls, Array(3).fill({ menuBarSearch: false }));
+    assert.deepEqual(view.calls, Array(3).fill({ menuBarAutoHide: false }));
     assert.ok(!renderToStaticMarkup(view.body()).includes(texts.en.saveError));
   } finally { unmount(); }
 });
@@ -181,15 +197,15 @@ test("a queued newer choice wins over an earlier failed write", async () => {
     ? new Promise((_, reject) => { rejectFirst = reject; }) : Promise.resolve());
   const unmount = await view.mount();
   try {
-    view.change(texts.en.menuBarSearch, false);
+    view.change(texts.en.menuBarAutoHide, false);
     view.fire(60);
     await settle();
-    view.change(texts.en.menuBarSearch, true);
-    view.change(texts.en.menuBarWidgets, false);
+    view.change(texts.en.menuBarAutoHide, true);
+    view.change(texts.en.menuBarMusic, false);
     view.fire(60);
     rejectFirst(new Error("disk busy"));
     await settle();
-    assert.deepEqual(view.calls, [{ menuBarSearch: false }, { menuBarSearch: true, menuBarWidgets: false }]);
+    assert.deepEqual(view.calls, [{ menuBarAutoHide: false }, { menuBarAutoHide: true, menuBarMusic: false }]);
     assert.equal(await view.close(), false);
     assert.equal(view.calls.length, 2, "the obsolete value must not be replayed on close");
   } finally { unmount(); }

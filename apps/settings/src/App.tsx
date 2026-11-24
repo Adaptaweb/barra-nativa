@@ -611,38 +611,6 @@ export function App() {
                   />
                 </SubRow>
               </Card>
-              {config.menuBar && (
-                <Card title={t.menuBarItems}>
-                  <Row icon={<SettingIcon name="battery" />} label={t.menuBarBatteryPercent} hint={t.menuBarBatteryPercentHint}>
-                    <Toggle
-                      label={t.menuBarBatteryPercent}
-                      checked={config.menuBarBatteryPercent ?? windowsPreferences?.menuBarBatteryPercent}
-                      onChange={(menuBarBatteryPercent) => update({ menuBarBatteryPercent })}
-                    />
-                  </Row>
-                  <Row icon={<SettingIcon name="search" />} label={t.menuBarSearch} hint={t.menuBarSearchHint}>
-                    <Toggle
-                      label={t.menuBarSearch}
-                      checked={config.menuBarSearch ?? windowsPreferences?.menuBarSearch}
-                      onChange={(menuBarSearch) => update({ menuBarSearch })}
-                    />
-                  </Row>
-                  <Row icon={<SettingIcon name="windows" />} label={t.menuBarTaskView} hint={t.menuBarTaskViewHint}>
-                    <Toggle
-                      label={t.menuBarTaskView}
-                      checked={config.menuBarTaskView ?? windowsPreferences?.menuBarTaskView}
-                      onChange={(menuBarTaskView) => update({ menuBarTaskView })}
-                    />
-                  </Row>
-                  <Row icon={<SettingIcon name="widgets" />} label={t.menuBarWidgets} hint={t.menuBarWidgetsHint}>
-                    <Toggle
-                      label={t.menuBarWidgets}
-                      checked={config.menuBarWidgets ?? windowsPreferences?.menuBarWidgets}
-                      onChange={(menuBarWidgets) => update({ menuBarWidgets })}
-                    />
-                  </Row>
-                </Card>
-              )}
             </>
           ) : (
             <>

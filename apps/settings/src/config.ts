@@ -36,10 +36,6 @@ export interface Config {
   menuBarMusic: boolean;
   menuBarIslandStyle: IslandStyle;
   accessoryBattery: boolean;
-  menuBarSearch: boolean | null;
-  menuBarTaskView: boolean | null;
-  menuBarWidgets: boolean | null;
-  menuBarBatteryPercent: boolean | null;
   showIndicators: boolean;
   showRecents: boolean;
   bounceOnOpen: boolean;
@@ -63,10 +59,6 @@ export const getAutostart = () => invoke<boolean>("get_autostart");
 /** Current Windows values for display only; never merge these into Config. */
 export interface WindowsPreferences {
   animations: boolean;
-  menuBarSearch: boolean;
-  menuBarTaskView: boolean;
-  menuBarWidgets: boolean;
-  menuBarBatteryPercent: boolean;
 }
 
 let windowsPreferencesRequest: Promise<WindowsPreferences> | undefined;

@@ -179,20 +179,12 @@ enum Action {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MenuBarWidgets {
-    pub search: Option<bool>,
-    pub task_view: Option<bool>,
-    pub widgets: Option<bool>,
-    pub battery_percent: Option<bool>,
     pub island_style: IslandStyle,
 }
 
 impl Default for MenuBarWidgets {
     fn default() -> Self {
         Self {
-            search: None,
-            task_view: None,
-            widgets: None,
-            battery_percent: None,
             island_style: IslandStyle::Notch,
         }
     }
@@ -520,6 +512,8 @@ pub struct MenuBar {
     privacy_watch: Option<RegistryWatch>,
     /// Windows' taskbar preferences, including the battery percentage.
     settings_watch: Option<RegistryWatch>,
+    /// Search uses its own Windows preference key.
+    search_watch: Option<RegistryWatch>,
     /// Energy saver on or off arrives as `WM_POWERBROADCAST`; glass follows.
     _saver_watch: muelle_shell::power::SaverWatch,
     audio: Option<AudioWatch>,
@@ -1188,6 +1182,7 @@ impl MenuBar {
             _network: NetworkWatch::new(hwnd.0 as isize, STATUS_CHANGED),
             privacy_watch: status::watch_privacy(hwnd.0 as isize, REGISTRY_CHANGED),
             settings_watch: status::watch_taskbar_settings(hwnd.0 as isize, REGISTRY_CHANGED),
+            search_watch: status::watch_search_settings(hwnd.0 as isize, REGISTRY_CHANGED),
             _saver_watch: muelle_shell::power::SaverWatch::new(hwnd.0 as isize),
             audio: AudioWatch::new(hwnd.0 as isize, AUDIO_CHANGED),
         };
@@ -1652,7 +1647,6 @@ impl MenuBar {
         Ok(())
     }
 
-    /// The minute changed, or something the bar shows did: redraw what differs.
     /// Privacy activity or the user's taskbar preferences changed.
     pub fn registry_changed(&mut self, gfx: &Gfx) -> Result<()> {
         if let Some(watch) = &mut self.privacy_watch {
@@ -1661,7 +1655,19 @@ impl MenuBar {
         if let Some(watch) = &mut self.settings_watch {
             watch.arm();
         }
-        self.tick(gfx)
+        if let Some(watch) = &mut self.search_watch {
+            watch.arm();
+        }
+        // Only reread registry-backed indicators. This event must not trigger
+        // network/audio queries, provider scans or accessory discovery.
+        self.status.buttons = status::taskbar_buttons();
+        self.status.battery_percentage = status::battery_percentage_enabled();
+        self.status.privacy = status::privacy();
+        let Some(mut look) = self.look.clone() else {
+            return self.refresh(gfx);
+        };
+        look.status = self.status;
+        self.apply_look(gfx, look)
     }
 
     pub fn tick(&mut self, gfx: &Gfx) -> Result<()> {
@@ -2111,15 +2117,7 @@ impl MenuBar {
                 items.push((symbol(&[(glyph, 1.0)])?, action));
             }
         }
-        let show_search = look.widgets.search.unwrap_or(status.buttons.search);
-        let show_task_view = look.widgets.task_view.unwrap_or(status.buttons.task_view);
-        let show_widgets = look.widgets.widgets.unwrap_or(status.buttons.widgets);
-        let show_battery_percentage = look
-            .widgets
-            .battery_percent
-            .unwrap_or(status.battery_percentage);
-
-        if show_search {
+        if status.buttons.search {
             items.push((symbol(&[(glyph::SEARCH, 1.0)])?, Action::Search));
         }
         if status.bluetooth_on {
@@ -2149,7 +2147,7 @@ impl MenuBar {
         }
         let mut battery_label = None;
         if let Some(battery) = look.battery {
-            if show_battery_percentage {
+            if status.battery_percentage {
                 battery_label = Some((
                     items.len(),
                     gfx.text_brush(&format!("{}%", battery.percent), scale, false, ink)?,
@@ -2181,10 +2179,10 @@ impl MenuBar {
         // The notification area (antivirus, OneDrive, apps in the background)
         // lives only in the hidden taskbar; this arrow opens its flyout.
         items.push((symbol(&[(glyph::HIDDEN_ICONS, 1.0)])?, Action::HiddenIcons));
-        if show_task_view {
+        if status.buttons.task_view {
             items.push((symbol(&[(glyph::TASK_VIEW, 1.0)])?, Action::TaskView));
         }
-        if show_widgets {
+        if status.buttons.widgets {
             items.push((symbol(&[(glyph::WIDGETS, 1.0)])?, Action::Widgets));
         }
         for (index, (item, action)) in items.iter().enumerate() {
@@ -4049,6 +4047,9 @@ fn draw_bubble_player(
 
 impl Drop for MenuBar {
     fn drop(&mut self) {
+        self.search_watch = None;
+        self.settings_watch = None;
+        self.privacy_watch = None;
         self.bluetooth = None;
         self.accessories = None;
         self.exit_animation = None;
@@ -4073,6 +4074,91 @@ impl Drop for MenuBar {
 #[cfg(test)]
 mod island_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "Hidden compositor fixture; synthetic preferences, no Windows settings writes"]
+    fn native_status_items_follow_windows_preferences_without_overrides() -> Result<()> {
+        use anyhow::Context;
+        use windows::Win32::System::WinRT::{
+            CreateDispatcherQueueController, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+            DispatcherQueueOptions,
+        };
+        let _queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_STA,
+            })?
+        };
+        let gfx = Gfx::new()?;
+        let mut bar = MenuBar::create(&gfx, false, false, true, MenuBarWidgets::default())?;
+        bar.set_visible(false)?;
+        let mut look = bar.look.clone().context("initial look")?;
+        look.screen = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        look.battery = Some(Battery {
+            percent: 75,
+            charging: false,
+            saver: false,
+        });
+        look.accessories = [None, None];
+        look.status.bluetooth_on = false;
+        let mut battery_width = [0.0; 2];
+        for mask in 0..16 {
+            look.status.buttons = TaskbarButtons {
+                search: mask & 1 != 0,
+                task_view: mask & 2 != 0,
+                widgets: mask & 4 != 0,
+            };
+            look.status.battery_percentage = mask & 8 != 0;
+            bar.apply_look(&gfx, look.clone())?;
+            for (action, on) in [
+                (Action::Search, look.status.buttons.search),
+                (Action::TaskView, look.status.buttons.task_view),
+                (Action::Widgets, look.status.buttons.widgets),
+            ] {
+                assert_eq!(
+                    bar.zones.iter().filter(|(_, _, a)| *a == action).count(),
+                    usize::from(on)
+                );
+            }
+            // The battery is the last QuickSettings zone. Its percentage must
+            // add label width, without introducing another clickable control.
+            let battery = bar
+                .zones
+                .iter()
+                .rev()
+                .find(|(_, _, a)| *a == Action::QuickSettings)
+                .context("battery zone")?;
+            battery_width[usize::from(look.status.battery_percentage)] = battery.1 - battery.0;
+        }
+        assert!(battery_width[1] > battery_width[0]);
+        // No phantom battery or percentage on a desktop without a battery.
+        look.battery = None;
+        bar.apply_look(&gfx, look)?;
+        assert_eq!(
+            bar.zones
+                .iter()
+                .filter(|(_, _, a)| *a == Action::QuickSettings)
+                .count(),
+            2
+        );
+
+        // The native registry handler reads the real Windows values without
+        // replacing the media/provider snapshot or resetting the clock timer.
+        bar.registry_changed(&gfx)?;
+        let current = bar.look.as_ref().context("updated look")?;
+        assert!(current.status.buttons == status::taskbar_buttons());
+        assert_eq!(
+            current.status.battery_percentage,
+            status::battery_percentage_enabled()
+        );
+        Ok(())
+    }
 
     #[test]
     #[ignore = "Hidden compositor fixture; synthetic Bluetooth states, no hardware changes"]

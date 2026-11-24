@@ -10,6 +10,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Battery percentage, Search, Task View and Widgets now follow Windows settings
+  directly. Removed their duplicate Settings switches and retired saved overrides.
+  Search changes also update through registry notifications; no new polling.
 - Bluetooth now follows Windows automatically: its menu-bar icon appears only
   while a Bluetooth radio is on. Removed the duplicate Settings toggle and
   retired saved overrides. State/hotplug events update the icon without polling.
@@ -28,6 +31,9 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Porcentaje de batería, Búsqueda, Vista de tareas y Widgets siguen directamente
+  los ajustes de Windows. Retirados sus interruptores duplicados y preferencias
+  antiguas. Búsqueda también se actualiza por eventos del registro, sin sondeo.
 - Bluetooth sigue automáticamente a Windows: su icono aparece solo cuando hay
   una radio Bluetooth encendida. Retirados el interruptor duplicado de Ajustes
   y las preferencias antiguas. Los eventos de estado/hardware actualizan el

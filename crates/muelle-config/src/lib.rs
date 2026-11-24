@@ -96,14 +96,6 @@ pub struct Config {
     pub menu_bar_island_style: IslandStyle,
     /// Opt-in peripheral monitoring. Off means no accessory reader or queries.
     pub accessory_battery: bool,
-    /// Show search button in the menu bar (`None` follows Windows taskbar setting).
-    pub menu_bar_search: Option<bool>,
-    /// Show Task View button in the menu bar (`None` follows Windows taskbar setting).
-    pub menu_bar_task_view: Option<bool>,
-    /// Show Widgets button in the menu bar (`None` follows Windows taskbar setting).
-    pub menu_bar_widgets: Option<bool>,
-    /// Show battery percentage in the menu bar (`None` follows Windows setting).
-    pub menu_bar_battery_percent: Option<bool>,
     /// The dot under apps that have windows open.
     pub show_indicators: bool,
     /// The section of recently used apps that are not pinned.
@@ -315,10 +307,6 @@ impl Default for Config {
             menu_bar_music: true,
             menu_bar_island_style: IslandStyle::Notch,
             accessory_battery: false,
-            menu_bar_search: None,
-            menu_bar_task_view: None,
-            menu_bar_widgets: Some(false),
-            menu_bar_battery_percent: None,
             show_indicators: true,
             show_recents: true,
             bounce_on_open: true,
@@ -618,16 +606,40 @@ mod tests {
     }
 
     #[test]
-    fn widgets_button_is_off_by_default_and_can_be_enabled() -> Result<(), ConfigError> {
-        let path = scratch("widgets-button");
-        assert_eq!(Config::default().menu_bar_widgets, Some(false));
-
-        let saved = update_preferences(
-            &path,
-            serde_json::Map::from_iter([("menuBarWidgets".into(), true.into())]),
-        )?;
-        assert_eq!(saved.menu_bar_widgets, Some(true));
-
+    fn retired_status_overrides_are_ignored_without_changing_other_preferences()
+    -> Result<(), ConfigError> {
+        let path = scratch("retired-status-overrides");
+        save(&path, &Config::default())?;
+        for old in [serde_json::Value::Null, false.into(), true.into()] {
+            let mut patch = serde_json::Map::from_iter([
+                ("menuBarSearch".into(), old.clone()),
+                ("menuBarTaskView".into(), old.clone()),
+                ("menuBarWidgets".into(), old.clone()),
+                ("menuBarBatteryPercent".into(), old),
+                ("showStart".into(), false.into()),
+                ("accessoryBattery".into(), true.into()),
+            ]);
+            // Exercise loading an existing file, then saving a Settings patch.
+            fs::write(&path, serde_json::to_vec(&patch)?).map_err(|source| ConfigError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            let loaded = load(&path)?.unwrap_or_default();
+            assert!(!loaded.show_start && loaded.accessory_battery);
+            patch.insert("iconSize".into(), 64.into());
+            let saved = update_preferences(&path, patch)?;
+            assert!(!saved.show_start && saved.accessory_battery);
+            assert_eq!(saved.icon_size, 64);
+            let json = serde_json::to_value(load(&path)?.unwrap_or_default())?;
+            for key in [
+                "menuBarSearch",
+                "menuBarTaskView",
+                "menuBarWidgets",
+                "menuBarBatteryPercent",
+            ] {
+                assert!(json.get(key).is_none(), "retired override {key}");
+            }
+        }
         Ok(())
     }
 

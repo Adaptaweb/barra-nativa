@@ -46,27 +46,18 @@ async fn set_config(patch: serde_json::Map<String, serde_json::Value>) -> Result
     .map_err(|error| error.to_string())?
 }
 
-/// Read-only system defaults for the Settings view, separate from saved
-/// overrides. Reuse the menu bar's readers so both agree on absent values.
+/// Read-only animation preference for the Settings view. Windows remains
+/// the source of truth; the dock owns status-item preference notifications.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WindowsPreferences {
     animations: bool,
-    menu_bar_search: bool,
-    menu_bar_task_view: bool,
-    menu_bar_widgets: bool,
-    menu_bar_battery_percent: bool,
 }
 
 #[tauri::command]
 fn windows_preferences() -> WindowsPreferences {
-    let buttons = muelle_shell::status::taskbar_buttons();
     WindowsPreferences {
         animations: muelle_shell::system::animations_enabled(),
-        menu_bar_search: buttons.search,
-        menu_bar_task_view: buttons.task_view,
-        menu_bar_widgets: buttons.widgets,
-        menu_bar_battery_percent: muelle_shell::status::battery_percentage_enabled(),
     }
 }
 
