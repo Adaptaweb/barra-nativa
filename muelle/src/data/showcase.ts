@@ -10,6 +10,7 @@ import windowsMediaPlayer from "@/assets/icons/windows-media-player.webp";
 import windowsTerminal from "@/assets/icons/windows-terminal.webp";
 import { figures } from "@/data/stats";
 import { site } from "@/data/site";
+export { settingsText, settingsLanguages, type SettingsKey } from "@/data/settings-languages";
 
 /* ---------------------------------------------------------------- Anatomy */
 
@@ -89,7 +90,7 @@ export const anatomy: AnatomyGroup[] = [
 export const customizeIntro = {
   eyebrow: "Settings",
   title: "Make it yours.",
-  lead: "Adjust icon size, spacing and animation speed. Choose which shortcuts stay in your Dock, and try the changes in the preview.",
+  lead: "Adjust your Dock’s size, spacing and animation speed. Available in 8 languages; try them in the preview.",
 } as const;
 
 /** The preview dock in the Customize scene. */
@@ -134,134 +135,6 @@ export const settingsDefaults = {
   mascot: true,
   autoUpdate: true,
 } as const;
-
-/** The Settings app's own strings (`apps/settings/src/i18n`), in both languages. */
-export const settingsText = {
-  en: {
-    title: "Muelle Settings",
-    dock: "Dock",
-    windows: "Windows",
-    menubar: "Menu bar",
-    system: "System",
-    size: "Size",
-    dockDensity: "Spacing",
-    compact: "Compact",
-    normal: "Normal",
-    spacious: "Spacious",
-    dockAutoHideSpeed: "Animation speed",
-    smooth: "Smooth",
-    fast: "Fast",
-    fixedItems: "Dock shortcuts",
-    fixedItemsHint:
-      "You can also right-click Start, Downloads or Recycle Bin in Muelle and choose Remove from Dock.",
-    showStart: "Show Start",
-    showDownloads: "Show Downloads",
-    showTrash: "Show Recycle Bin",
-    pinExplorer: "Keep File Explorer in the Dock",
-    pinExplorerHint: "When off, it still appears while its windows are open.",
-    small: "Small",
-    large: "Large",
-    magnification: "Magnification",
-    magnificationHint: "Icons grow as the pointer passes over them.",
-    magnifiedSize: "Magnified size",
-    autoHide: "Automatically hide and show the Dock",
-    autoHideHint: "It reappears when you touch the bottom edge of the screen.",
-    menuBar: "Show the menu bar",
-    menuBarHint: "Time, battery, and access to the Windows quick settings and notifications.",
-    menuBarAutoHide: "Automatically hide and show the menu bar",
-    menuBarAutoHideHint: "It reappears when you touch the top edge of the screen.",
-    aiUsage: "Show AI provider usage",
-    aiUsageHint:
-      "While a supported AI client is open, an island in the menu bar shows its available plan limits.",
-    accessoryBattery: "Show accessory battery",
-    accessoryBatteryHint:
-      "Battery levels for supported mice and headsets. While off, no accessories are monitored or queried.",
-    accessoryPreviewHint:
-      "Turn this on to preview a connected mouse and headset. The values are examples; device support varies.",
-    genie: "Genie effect",
-    genieHint:
-      "While it is on, windows do not use the Windows animations for maximizing or closing.",
-    showMinimized: "Show minimized windows",
-    showMinimizedHint:
-      "As thumbnails on the right side of the Dock, instead of inside their app's icon.",
-    autostart: "Open Muelle at login",
-    mascot: "Crab on special moments",
-    mascotHint:
-      "A pixel crab comes out when an AI plan resets or runs out, when you plug in the charger, or when energy saver starts. Hover over it.",
-    autoUpdate: "Install updates automatically",
-    autoUpdateHint:
-      "Once a day, a couple of minutes after you turn on the computer (or every 24 hours if it stays on), Muelle installs new versions by itself.",
-    language: "Language",
-    languageAuto: "Automatic",
-    updates: "Updates",
-    updatesCurrent: `Muelle ${site.version} is up to date.`,
-    updatesChecking: "Checking for updates…",
-    updatesCheck: "Check",
-  },
-  es: {
-    title: "Ajustes de Muelle",
-    dock: "Dock",
-    windows: "Ventanas",
-    menubar: "Barra superior",
-    system: "Sistema",
-    size: "Tamaño",
-    dockDensity: "Espaciado",
-    compact: "Compacto",
-    normal: "Normal",
-    spacious: "Amplio",
-    dockAutoHideSpeed: "Velocidad de la animación",
-    smooth: "Suave",
-    fast: "Rápida",
-    fixedItems: "Accesos del Dock",
-    fixedItemsHint:
-      "También puedes hacer clic derecho en Inicio, Descargas o Papelera en Muelle y elegir Quitar del Dock.",
-    showStart: "Mostrar Inicio",
-    showDownloads: "Mostrar Descargas",
-    showTrash: "Mostrar Papelera",
-    pinExplorer: "Mantener Explorador en el Dock",
-    pinExplorerHint: "Desactivado, sigue apareciendo mientras tenga ventanas abiertas.",
-    small: "Pequeño",
-    large: "Grande",
-    magnification: "Ampliación",
-    magnificationHint: "Los iconos crecen al pasar el puntero sobre ellos.",
-    magnifiedSize: "Tamaño ampliado",
-    autoHide: "Ocultar y mostrar el Dock automáticamente",
-    autoHideHint: "Reaparece al tocar el borde inferior de la pantalla.",
-    menuBar: "Mostrar la barra superior",
-    menuBarHint: "Hora, batería y acceso a los ajustes rápidos y las notificaciones de Windows.",
-    menuBarAutoHide: "Ocultar y mostrar la barra superior automáticamente",
-    menuBarAutoHideHint: "Reaparece al tocar el borde superior de la pantalla.",
-    aiUsage: "Mostrar uso de proveedores de IA",
-    aiUsageHint:
-      "Mientras un cliente de IA compatible está abierto, una isla en la barra superior muestra sus límites disponibles.",
-    accessoryBattery: "Mostrar batería de accesorios",
-    accessoryBatteryHint:
-      "Batería de ratones y auriculares compatibles. Desactivado, no detecta ni consulta accesorios.",
-    accessoryPreviewHint:
-      "Actívalo para ver un ratón y unos auriculares conectados. Los valores son ejemplos; la compatibilidad depende del dispositivo.",
-    genie: "Efecto genio",
-    genieHint:
-      "Mientras está activo, las ventanas no usan las animaciones de Windows al maximizar ni al cerrar.",
-    showMinimized: "Mostrar ventanas minimizadas",
-    showMinimizedHint:
-      "Como miniaturas a la derecha del Dock, en lugar de dentro del icono de su app.",
-    autostart: "Abrir Muelle al iniciar sesión",
-    mascot: "Cangrejo en momentos especiales",
-    mascotHint:
-      "Un cangrejo pixelado aparece cuando un plan de IA se reinicia o se agota, al enchufar el cargador o al activarse el ahorro de energía. Pasa el puntero por encima.",
-    autoUpdate: "Instalar actualizaciones automáticamente",
-    autoUpdateHint:
-      "Una vez al día, un par de minutos después de encender el ordenador (o cada 24 horas si sigue encendido), Muelle instala las versiones nuevas por sí solo.",
-    language: "Idioma",
-    languageAuto: "Automático",
-    updates: "Actualizaciones",
-    updatesCurrent: `Muelle ${site.version} está al día.`,
-    updatesChecking: "Buscando actualizaciones…",
-    updatesCheck: "Buscar",
-  },
-} as const;
-
-export type SettingsKey = keyof (typeof settingsText)["en"];
 
 /* ----------------------------------------------------------------- Safety */
 

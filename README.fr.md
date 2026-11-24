@@ -63,9 +63,9 @@ Agrandissement fluide, aperçus des fenêtres en direct et effet génie facultat
   Claude Code, Codex, OpenCode Go, Z.ai GLM Coding Plan, Gemini CLI et
   Antigravity. Z.ai affiche ses quotas sur 5 heures et sur une semaine ; les
   quotas Gemini Pro et Flash s'affichent séparément quand ils sont disponibles.
-- Une app Réglages séparée, aux changements appliqués en direct, en espagnol,
-  anglais et français, avec une animation de réduction façon génie
-  configurable.
+- Une app Réglages avec changements en direct et effet génie configurable.
+  Huit langues : anglais, espagnol, français, chinois simplifié, hindi, arabe,
+  bengali et portugais. Choisissez une langue ou suivez automatiquement Windows.
 - Un processus de surveillance rétablit la barre des tâches de Windows si le
   dock se ferme de façon inattendue.
 

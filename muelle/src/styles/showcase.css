@@ -319,12 +319,12 @@
   grid-template-columns: 170px minmax(0, 1fr);
   min-height: 470px;
   font-size: 13px;
-  text-align: left;
+  text-align: start;
 }
 
 .settings-side {
   padding: 16px 10px;
-  border-right: 1px solid var(--mac-hairline);
+  border-inline-end: 1px solid var(--mac-hairline);
   background: var(--mac-sidebar);
 }
 
@@ -340,7 +340,7 @@
   gap: 8px;
   padding: 6px 8px;
   border-radius: 7px;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -360,7 +360,7 @@
 
 /* Options that depend on the menu bar: indented under it, as in the app. */
 .settings-row-sub {
-  padding-left: 28px;
+  padding-inline-start: 28px;
 }
 
 /* The AI usage island of the preview desk, a miniature of the real one. */
@@ -1090,7 +1090,7 @@
     display: flex;
     align-items: center;
     gap: 16px;
-    border-right: 0;
+    border-inline-end: 0;
     border-bottom: 1px solid var(--mac-hairline);
   }
 
@@ -1143,3 +1143,7 @@
   z-index: 1;
   translate: -50% 0;
 }
+
+/* Keep sliders and window controls physical when the Settings demo is in Arabic. */
+.settings .mac-range-wrap, .settings .mac-lights { direction: ltr; }
+.settings[dir="rtl"] .settings-hint { line-height: 1.6; }

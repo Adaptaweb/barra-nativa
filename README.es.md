@@ -45,7 +45,9 @@ en desarrollo activo.
   OpenCode Go, Z.ai GLM Coding Plan, Gemini CLI y Antigravity. Z.ai muestra
   sus límites de 5 horas y de la semana; las cuotas de Gemini Pro y Flash
   aparecen por separado cuando están disponibles.
-- App de Ajustes aparte, con cambios en vivo, en español, inglés y francés, y efecto genio configurable.
+- App de Ajustes con cambios en vivo y efecto genio configurable. Ocho idiomas:
+  español, inglés, francés, chino simplificado, hindi, árabe, bengalí y portugués.
+  Elige uno en el desplegable o sigue automáticamente el idioma de Windows.
 - Un proceso guardián devuelve la barra de tareas de Windows si el dock se cierra de forma inesperada.
 
 El efecto genio está **activado por defecto** y se puede desactivar en Ajustes →

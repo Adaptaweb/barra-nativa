@@ -12,6 +12,7 @@ import {
   previewDockItems,
   settingsDefaults as d,
   settingsText,
+  settingsLanguages,
   type SettingsKey,
 } from "@/data/showcase";
 import "@/styles/showcase.css";
@@ -29,7 +30,7 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
   <SectionIntro {...customizeIntro} />
 
   <div class="custom" data-customize data-r>
-    <div class="mac-window settings" role="group" aria-label="Muelle Settings, interactive replica">
+    <div class="mac-window settings" role="group" aria-label={t.title} data-label="title">
       <aside class="settings-side">
         <div class="mac-lights" aria-hidden="true">
           <i></i>
@@ -220,23 +221,12 @@ const textJson = JSON.stringify(settingsText).replace(/</g, "\\u003c");
               <span class="settings-label" {...tx("language")}>
                 {t.language}
               </span>
-              <span class="mac-seg" role="radiogroup" aria-label={t.language} data-label="language">
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked="false"
-                  data-lang="auto"
-                  {...tx("languageAuto")}
-                >
-                  {t.languageAuto}
-                </button>
-                <button type="button" role="radio" aria-checked="false" data-lang="es">
-                  Español
-                </button>
-                <button type="button" role="radio" aria-checked="true" data-lang="en">
-                  English
-                </button>
-              </span>
+              <select class="mac-select" aria-label={t.language} data-label="language" data-language>
+                <option value="auto" {...tx("languageAuto")}>{t.languageAuto}</option>
+                {settingsLanguages.map(({ value, label }) => (
+                  <option value={value} selected={value === "en"} dir="auto">{label}</option>
+                ))}
+              </select>
             </div>
           </div>
           <div class="settings-card">

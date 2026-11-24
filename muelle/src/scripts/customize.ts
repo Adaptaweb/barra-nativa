@@ -35,7 +35,7 @@ export function initCustomize(root: HTMLElement) {
   const textNode = root.querySelector<HTMLScriptElement>("[data-settings-text]");
   if (!scene || !preview || !dock || !bar || !textNode) return;
 
-  const texts = JSON.parse(textNode.textContent ?? "{}") as Record<"en" | "es", Strings>;
+  const texts = JSON.parse(textNode.textContent ?? "{}") as Record<string, Strings>;
   let strings = texts.en;
   const icons = [...dock.querySelectorAll<HTMLElement>("[data-preview-icon]")];
   const choices = new Map(
@@ -241,15 +241,15 @@ export function initCustomize(root: HTMLElement) {
   });
 
   const status = scene.querySelector<HTMLElement>("[data-update-status]");
+  const picker = scene.querySelector<HTMLSelectElement>("[data-language]");
   const setLanguage = (choice: string) => {
-    const resolved =
-      choice === "auto"
-        ? navigator.language.toLowerCase().startsWith("es")
-          ? "es"
-          : "en"
-        : choice;
-    strings = texts[resolved === "es" ? "es" : "en"];
-    scene.lang = resolved === "es" ? "es" : "en";
+    const requested = choice === "auto" ? navigator.language.toLowerCase().split("-")[0] : choice;
+    const resolved = Object.hasOwn(texts, requested) ? requested : "en";
+    strings = texts[resolved];
+    scene.lang = resolved;
+    // Mirror Settings, while the physical desktop preview keeps its coordinates.
+    const settings = scene.querySelector<HTMLElement>(".settings");
+    if (settings) settings.dir = resolved === "ar" ? "rtl" : "ltr";
     scene.querySelectorAll<HTMLElement>("[data-t]").forEach((node) => {
       const text = strings[node.dataset.t ?? ""];
       if (text) node.textContent = text;
@@ -259,14 +259,10 @@ export function initCustomize(root: HTMLElement) {
       if (strings[key]) node.setAttribute("aria-label", strings[key]);
     });
     if (status) status.textContent = strings.updatesCurrent;
-    scene.querySelectorAll<HTMLButtonElement>("[data-lang]").forEach((button) => {
-      button.setAttribute("aria-checked", String(button.dataset.lang === choice));
-    });
     showPane(pane);
+    ScrollTrigger.refresh();
   };
-  scene.querySelectorAll<HTMLButtonElement>("[data-lang]").forEach((button) => {
-    button.addEventListener("click", () => setLanguage(button.dataset.lang ?? "auto"));
-  });
+  picker?.addEventListener("change", () => setLanguage(picker.value));
 
   const check = scene.querySelector<HTMLButtonElement>("[data-update]");
   check?.addEventListener("click", () => {

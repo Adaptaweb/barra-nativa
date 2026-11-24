@@ -50,8 +50,9 @@
   OpenCode Go, Z.ai GLM Coding Plan, Gemini CLI, and Antigravity. Z.ai shows
   its 5-hour and weekly limits; Gemini Pro and Flash quotas appear separately
   when available.
-- Separate Settings app with live changes, Spanish, English and French, and a
-  configurable Genie-style minimize animation.
+- Separate Settings app with live changes and a configurable Genie animation.
+  Eight languages: English, Spanish, French, Simplified Chinese, Hindi, Arabic,
+  Bengali and Portuguese. Pick a language or follow Windows automatically.
 - A watchdog restores the Windows taskbar if the dock exits unexpectedly.
 
 The Genie effect is **on by default** and can be turned off in Settings → Windows.
