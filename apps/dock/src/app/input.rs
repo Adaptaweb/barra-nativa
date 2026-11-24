@@ -276,8 +276,19 @@ impl App {
             Role::Window => window_of(&id).and_then(|hwnd| self.activating(vec![hwnd])),
             Role::Shortcuts => self.folder_menu(id)?,
             Role::Folder | Role::Trash => Some(Outside::Open(id)),
-            Role::Widget => crate::widgets::WidgetId::from_entry(&id)
-                .map(|widget| Outside::Open(widget.target().to_owned())),
+            Role::Widget => crate::widgets::WidgetId::from_entry(&id).map(|widget| {
+                let mut anchor = POINT::default();
+                // SAFETY: Reads the cursor into a local.
+                unsafe {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut anchor);
+                }
+                anchor.y -= (40.0 * self.stage.as_ref().map_or(1.0, |stage| stage.scale)) as i32;
+                Outside::WidgetPanel {
+                    gfx: self.gfx.clone(),
+                    widget,
+                    anchor,
+                }
+            }),
         })
     }
 

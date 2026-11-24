@@ -12,11 +12,14 @@ mod clima;
 mod draw;
 mod ia;
 mod more;
+mod panel;
+mod panel_content;
 mod reloj;
 mod secrets;
 mod sistema;
 
 pub use draw::{render_bar, render_tile};
+pub use panel::{Placement, refresh as refresh_panel, toggle as toggle_panel};
 
 use crate::usage::{self, Provider};
 use muelle_config::{HomeItem, Widgets as Settings};
@@ -223,6 +226,8 @@ pub struct RelojData {
     pub weekday: String,
     pub calendar: Calendar,
     pub next: Option<Event>,
+    /// The next events, soonest first, for the panel.
+    pub upcoming: Vec<Event>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -234,10 +239,13 @@ pub enum Home {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HomeButton {
+    pub id: String,
     pub name: String,
     pub kind: String,
     pub on: bool,
     pub value: Option<String>,
+    /// Lights, plugs, covers... can be switched; sensors cannot.
+    pub switchable: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -395,9 +403,22 @@ fn publish(update: impl FnOnce(&mut Readings) -> bool) {
     }
 }
 
-/// What a click on a widget in the menu bar opens.
-pub fn open(id: WidgetId) {
-    if let Err(error) = muelle_shell::launcher::open(&id.target()) {
-        eprintln!("muelle: widget {id:?}: {error}");
+/// Development aid: `BARRA_PANEL=casa` (debug builds) opens that widget's
+/// panel once at start, to check panels without clicking.
+pub fn open_debug_panel(gfx: &crate::gfx::Gfx) {
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if !cfg!(debug_assertions) || DONE.swap(true, Ordering::AcqRel) {
+        return;
     }
+    let Some(id) = std::env::var("BARRA_PANEL").ok().and_then(|k| WidgetId::from_key(&k)) else {
+        return;
+    };
+    let Some(monitor) = muelle_shell::system::primary_monitor() else {
+        return;
+    };
+    let anchor = windows::Win32::Foundation::POINT {
+        x: monitor.screen.right - (260.0 * monitor.scale) as i32,
+        y: monitor.screen.top + (28.0 * monitor.scale) as i32,
+    };
+    toggle_panel(gfx, id, anchor, Placement::Below);
 }

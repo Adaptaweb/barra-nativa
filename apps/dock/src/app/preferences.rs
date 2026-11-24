@@ -311,6 +311,7 @@ impl App {
     /// Creates or removes the menu bar to match the settings.
     pub(super) fn apply_menu_bar_setting(&mut self) {
         crate::widgets::configure(&self.config.widgets);
+        crate::widgets::open_debug_panel(&self.gfx);
         let widgets = MenuBarWidgets {
             island_style: self.config.menu_bar_island_style,
         };

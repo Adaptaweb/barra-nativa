@@ -404,6 +404,12 @@ pub(crate) enum Outside {
         program: String,
     },
     ShowDesktop,
+    /// A Barra widget's panel, over the dock.
+    WidgetPanel {
+        gfx: Gfx,
+        widget: crate::widgets::WidgetId,
+        anchor: POINT,
+    },
 }
 
 pub(crate) struct MenuRequest {

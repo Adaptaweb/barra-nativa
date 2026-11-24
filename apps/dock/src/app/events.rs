@@ -166,6 +166,7 @@ pub fn menu_bar_widgets_changed() {
         }
         app.widgets_changed()
     });
+    crate::widgets::refresh_panel();
 }
 
 pub fn menu_bar_audio_changed() {

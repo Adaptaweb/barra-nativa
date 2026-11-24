@@ -74,7 +74,16 @@ fn button(item: &HomeItem, states: &HashMap<String, Value>) -> HomeButton {
         let unit = e["attributes"]["unit_of_measurement"].as_str().unwrap_or("");
         Some(format!("{state} {unit}").trim().to_owned())
     });
+    const SWITCHABLE: [&str; 8] = [
+        "light", "switch", "fan", "cover", "input_boolean", "media_player", "lock", "automation",
+    ];
+    let switchable = item
+        .entities
+        .iter()
+        .any(|id| SWITCHABLE.iter().any(|d| id.starts_with(&format!("{d}."))));
     HomeButton {
+        id: item.id.clone(),
+        switchable,
         name: item.name.clone(),
         kind: item.kind.clone(),
         on,
@@ -82,46 +91,82 @@ fn button(item: &HomeItem, states: &HashMap<String, Value>) -> HomeButton {
     }
 }
 
+/// Reads every button once.
+fn read(client: Option<&Client>) -> CasaData {
+    let (url, items) = home_settings();
+    let token = secrets::read("casa.token");
+    match (url.is_empty(), token, client) {
+        (false, Some(token), Some(client)) => match states(client, &url, &token) {
+            Ok(states) => {
+                let buttons: Vec<HomeButton> =
+                    items.iter().map(|item| button(item, &states)).collect();
+                CasaData {
+                    state: Home::Connected,
+                    on: buttons.iter().filter(|b| b.on).count() as u8,
+                    buttons,
+                }
+            }
+            Err(error) => CasaData {
+                state: Home::Failed(error),
+                on: 0,
+                buttons: Vec::new(),
+            },
+        },
+        _ => CasaData {
+            state: Home::NotConnected,
+            on: 0,
+            buttons: Vec::new(),
+        },
+    }
+}
+
+fn store(reading: CasaData) {
+    publish(|r| {
+        let changed = r.casa.as_ref() != Some(&reading);
+        r.casa = Some(reading);
+        changed
+    });
+}
+
+fn client() -> Option<Client> {
+    Client::builder()
+        .timeout(Duration::from_secs(6))
+        .no_proxy()
+        .build()
+        .ok()
+}
+
+/// Switches a button on or off (`homeassistant.toggle` on its entities),
+/// then reads the states again so the widget follows at once.
+pub(super) fn toggle(id: String) {
+    let _ = thread::Builder::new().name("barra-casa-toggle".into()).spawn(move || {
+        let (url, items) = home_settings();
+        let (Some(token), Some(client), Some(item)) = (
+            secrets::read("casa.token"),
+            client(),
+            items.into_iter().find(|i| i.id == id),
+        ) else {
+            return;
+        };
+        let body = serde_json::json!({ "entity_id": item.entities }).to_string();
+        let _ = client
+            .post(format!("{url}/api/services/homeassistant/toggle"))
+            .bearer_auth(token)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send();
+        thread::sleep(Duration::from_millis(400));
+        store(read(Some(&client)));
+    });
+}
+
 pub(super) fn start() {
     let spawned = thread::Builder::new()
         .name("barra-casa".into())
         .spawn(|| {
-            let client = Client::builder()
-                .timeout(Duration::from_secs(6))
-                .no_proxy()
-                .build()
-                .ok();
+            let client = client();
             while CASA_ON.load(Ordering::Acquire) {
-                let (url, items) = home_settings();
-                let token = secrets::read("casa.token");
-                let reading = match (url.is_empty(), token, client.as_ref()) {
-                    (false, Some(token), Some(client)) => match states(client, &url, &token) {
-                        Ok(states) => {
-                            let buttons: Vec<HomeButton> =
-                                items.iter().map(|item| button(item, &states)).collect();
-                            CasaData {
-                                state: Home::Connected,
-                                on: buttons.iter().filter(|b| b.on).count() as u8,
-                                buttons,
-                            }
-                        }
-                        Err(error) => CasaData {
-                            state: Home::Failed(error),
-                            on: 0,
-                            buttons: Vec::new(),
-                        },
-                    },
-                    _ => CasaData {
-                        state: Home::NotConnected,
-                        on: 0,
-                        buttons: Vec::new(),
-                    },
-                };
-                publish(|r| {
-                    let changed = r.casa.as_ref() != Some(&reading);
-                    r.casa = Some(reading);
-                    changed
-                });
+                store(read(client.as_ref()));
                 thread::sleep(EVERY);
             }
         });

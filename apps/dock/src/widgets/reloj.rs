@@ -173,7 +173,15 @@ fn fetch(client: &Client, links: &[String]) -> Option<Vec<Event>> {
     let mut any = false;
     for link in links {
         let url = link.trim().replacen("webcal://", "https://", 1);
-        let Some(text) = client.get(&url).send().ok().and_then(|r| r.text().ok()) else {
+        // A revoked or mistyped link answers 404: that link is not read.
+        let Some(text) = client
+            .get(&url)
+            .send()
+            .ok()
+            .filter(|r| r.status().is_success())
+            .and_then(|r| r.text().ok())
+            .filter(|t| t.contains("BEGIN:VCALENDAR"))
+        else {
             continue;
         };
         any = true;
@@ -284,6 +292,7 @@ pub(super) fn start() {
                     weekday: weekday(),
                     calendar,
                     next: events.first().cloned(),
+                    upcoming: events.iter().take(8).cloned().collect(),
                 };
                 publish(|r| {
                     let changed = r.reloj.as_ref() != Some(&reading);

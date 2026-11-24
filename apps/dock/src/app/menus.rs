@@ -71,6 +71,11 @@ pub(super) fn run_outside(outside: Outside) {
                 _ => eprintln!("muelle: no se encontró muelle-settings.exe junto al dock"),
             }
         }
+        Outside::WidgetPanel {
+            gfx,
+            widget,
+            anchor,
+        } => crate::widgets::toggle_panel(&gfx, widget, anchor, crate::widgets::Placement::Above),
         Outside::InputMenu { gfx, anchor, dark } => {
             use muelle_shell::keyboard;
             let context = keyboard::Context::current();

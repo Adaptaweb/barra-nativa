@@ -74,6 +74,33 @@ fn one_line(
     }
 }
 
+/// A wrapped paragraph `width` pixels wide: its layout and height.
+fn paragraph(
+    dwrite: &IDWriteFactory,
+    text: &str,
+    size: f32,
+    weight: Weight,
+    width: f32,
+) -> Result<(IDWriteTextLayout, f32)> {
+    let utf16: Vec<u16> = text.encode_utf16().collect();
+    // SAFETY: The strings and structures live for each call.
+    unsafe {
+        let format = dwrite.CreateTextFormat(
+            text_font(),
+            None,
+            weight.dwrite(),
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            size,
+            w!(""),
+        )?;
+        let layout = dwrite.CreateTextLayout(&utf16, &format, width.max(1.0), 4096.0)?;
+        let mut metrics = DWRITE_TEXT_METRICS::default();
+        layout.GetMetrics(&mut metrics)?;
+        Ok((layout, metrics.height))
+    }
+}
+
 /// Draws in physical pixels; text sizes are logical points, multiplied by `scale`.
 pub struct Pen<'a> {
     dc: &'a ID2D1DeviceContext,
@@ -100,6 +127,29 @@ impl Pen<'_> {
         color: Rgba,
     ) -> Result<f32> {
         self.run(text, text_font(), (x, y), size, weight, color, false)
+    }
+
+    /// Text wrapped to `width`, top left at (`x`, `y`). Returns its height.
+    pub fn paragraph(
+        &self,
+        text: &str,
+        (x, y): (f32, f32),
+        width: f32,
+        size: f32,
+        color: Rgba,
+    ) -> Result<f32> {
+        let (layout, height) = paragraph(self.dwrite, text, size * self.scale, Weight::Normal, width)?;
+        let ink = self.brush(color)?;
+        // SAFETY: The layout and brush live for the call.
+        unsafe {
+            self.dc.DrawTextLayout(
+                Vector2 { X: x, Y: y },
+                &layout,
+                &ink,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+            );
+        }
+        Ok(height)
     }
 
     /// A color emoji (weather symbols) with its top left at (`x`, `y`).
@@ -263,6 +313,11 @@ impl Gfx {
     pub fn measure(&self, text: &str, size: f32, scale: f32, weight: Weight) -> Result<(f32, f32)> {
         let (_, width, height) = one_line(&self.dwrite, text, text_font(), size * scale, weight)?;
         Ok((width, height))
+    }
+
+    /// Height of text wrapped to `width` physical pixels.
+    pub fn measure_paragraph(&self, text: &str, size: f32, scale: f32, width: f32) -> Result<f32> {
+        Ok(paragraph(&self.dwrite, text, size * scale, Weight::Normal, width)?.1)
     }
 
     /// Width and height of a color emoji, in physical pixels.

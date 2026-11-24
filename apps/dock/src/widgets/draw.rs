@@ -110,7 +110,7 @@ fn sistema(gfx: &Gfx, d: SistemaData, scale: f32, height: f32, light: bool) -> R
 }
 
 /// Emoji for a WMO weather code.
-fn symbol(code: u8, day: bool) -> &'static str {
+pub(super) fn symbol(code: u8, day: bool) -> &'static str {
     match code {
         0 | 1 if day => "☀️",
         0 | 1 => "🌙",

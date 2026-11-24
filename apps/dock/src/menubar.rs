@@ -1876,7 +1876,15 @@ impl MenuBar {
             Some(Action::Camera) => {
                 let _ = launcher::open("ms-settings:privacy-webcam");
             }
-            Some(Action::Widget(id)) => widgets::open(id),
+            Some(Action::Widget(id)) => widgets::toggle_panel(
+                gfx,
+                id,
+                POINT {
+                    x: anchor.0,
+                    y: anchor.1,
+                },
+                widgets::Placement::Below,
+            ),
             None => {}
         }
         Ok(())
