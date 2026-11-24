@@ -3,7 +3,7 @@
 use std::sync::atomic::Ordering;
 
 use anyhow::Result;
-use muelle_shell::{power, system::uses_light_theme, tracker};
+use muelle_shell::{power, tracker};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
     System::Ole::DROPEFFECT,
@@ -104,7 +104,7 @@ pub fn menu_bar_clicked(x: f32, y: f32) {
                 return Ok(Some(Outside::InputMenu {
                     gfx: app.gfx.clone(),
                     anchor,
-                    dark: !uses_light_theme(),
+                    dark: !crate::appearance::light(),
                 }));
             }
             bar.click(&app.gfx, x, y)?;

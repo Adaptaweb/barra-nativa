@@ -112,6 +112,9 @@ pub struct Config {
     /// computer, new versions are downloaded and installed without asking.
     pub auto_update: bool,
     pub language: Language,
+    /// The look of the dock, the menu bar and their menus and panels.
+    /// `Auto` (the default) follows Windows' light or dark mode.
+    pub appearance: Appearance,
     /// A folder shown at the right of the dock whose contents open as a
     /// menu, with a submenu for each folder inside, like a Windows 10 taskbar
     /// toolbar. Only one: the user arranges the folder as they like.
@@ -242,6 +245,26 @@ pub enum Language {
     Auto,
 }
 
+/// The themes Settings offers, as macOS offers its appearances. Every glass
+/// theme falls back to a solid one while Windows has transparency off.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    Light,
+    Dark,
+    /// Milky glass with a fine grain (issue #50). Dark content.
+    Frosted,
+    /// Barely tinted glass with a bright rim. Light content.
+    Clear,
+    /// Glass tinted with the colours of the northern lights. Light content.
+    Aurora,
+    /// Follow Windows' light or dark mode. Also what a theme added by a newer
+    /// version reads as (serde needs this fallback last).
+    #[default]
+    #[serde(other)]
+    Auto,
+}
+
 pub const ICON_SIZE_RANGE: (u32, u32) = (32, 96);
 pub const MAX_MAGNIFIED_SIZE: u32 = 160;
 
@@ -314,6 +337,7 @@ impl Default for Config {
             check_updates: true,
             auto_update: true,
             language: Language::Auto,
+            appearance: Appearance::Auto,
             shortcuts_folder: None,
             show_preview_close_button: true,
             notification_badges: true,
@@ -847,6 +871,18 @@ mod tests {
         }
         let left: Config = serde_json::from_str(r#"{"dockPosition":"left"}"#).unwrap_or_default();
         assert_eq!(left.dock_position, DockPosition::Left);
+    }
+
+    #[test]
+    fn the_appearance_follows_windows_unless_chosen() {
+        // Files from before the setting, and themes from newer versions.
+        for json in [r#"{}"#, r#"{"appearance":"sepia"}"#] {
+            let config: Config = serde_json::from_str(json).unwrap_or_default();
+            assert_eq!(config.appearance, Appearance::Auto);
+        }
+        let frosted: Config =
+            serde_json::from_str(r#"{"appearance":"frosted"}"#).unwrap_or_default();
+        assert_eq!(frosted.appearance, Appearance::Frosted);
     }
 
     #[test]

@@ -13,6 +13,7 @@
 
 mod accessories;
 mod app;
+mod appearance;
 mod assets;
 mod bluetooth;
 mod drop;

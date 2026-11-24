@@ -132,7 +132,7 @@ impl App {
                 edge: stage.frame.edge,
             },
             stage.scale,
-            Theme::for_system(stage.key.light, stage.key.glass),
+            Theme::new(stage.key.look),
             self.config.show_preview_close_button,
         )?);
         // The view owns its animation and dismissal timer while it is open.

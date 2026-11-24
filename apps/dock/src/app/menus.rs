@@ -4,9 +4,7 @@ use std::{env, sync::atomic::Ordering, thread};
 
 use anyhow::Result;
 use muelle_core::{layout::Rect, magnify::magnify};
-use muelle_shell::{
-    end_task::PreparedEndTask, jumplist, launcher, pins, system::uses_light_theme, tracker,
-};
+use muelle_shell::{end_task::PreparedEndTask, jumplist, launcher, pins, tracker};
 use windows::Win32::Foundation::{HWND, POINT};
 
 use crate::{
@@ -194,7 +192,7 @@ impl App {
             folder,
             anchor,
             placement,
-            dark: !uses_light_theme(),
+            dark: !crate::appearance::light(),
         }))
     }
 
@@ -319,7 +317,7 @@ impl App {
             items,
             anchor,
             placement: stage_placement,
-            dark: !uses_light_theme(),
+            dark: !crate::appearance::light(),
         })))
     }
 

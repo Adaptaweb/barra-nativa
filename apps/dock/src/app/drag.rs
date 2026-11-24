@@ -523,6 +523,11 @@ impl App {
         // SAFETY: Our timer and the current thread's capture window.
         unsafe {
             let _ = KillTimer(Some(self.input), DRAG_TIMER);
+            // The hide delay may have expired while a press held the dock
+            // open. Resume it once capture/polling ends, including cancellation.
+            if self.config.hides_automatically() && !self.hovering {
+                SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None);
+            }
             if GetCapture() == self.input {
                 let _ = ReleaseCapture();
             }

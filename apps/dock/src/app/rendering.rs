@@ -12,7 +12,7 @@ use muelle_core::{
 use muelle_shell::{
     appbar::Edge,
     power, recycle_bin,
-    system::{animations_enabled, primary_monitor, transparency_enabled, uses_light_theme},
+    system::{animations_enabled, primary_monitor},
 };
 use windows::Win32::{Foundation::RECT, UI::WindowsAndMessaging::SetTimer};
 
@@ -125,10 +125,7 @@ impl App {
             edge,
             top_inset: self.menu_bar_inset(monitor.screen, edge),
             scale: monitor.scale,
-            light: uses_light_theme(),
-            // A backdrop brush made while Windows had transparency off stays
-            // black after it comes back, so this rebuilds the dock both ways.
-            glass: transparency_enabled(),
+            look: crate::appearance::current(),
             bin_full: self.bin_full,
             auto_hide: self.config.auto_hide,
             smart_hide: self.config.smart_hide,
@@ -162,7 +159,7 @@ impl App {
             ..Metrics::DEFAULT
         }
         .scaled(scale);
-        let theme = Theme::for_system(key.light, key.glass);
+        let theme = Theme::new(key.look);
         let px = |logical: f32| (logical * scale).round();
         let screen = monitor.screen;
         let screen_width = (screen.right - screen.left) as f32;

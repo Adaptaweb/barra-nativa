@@ -522,8 +522,10 @@ struct StageKey {
     /// centred in the height below it.
     top_inset: i32,
     scale: f32,
-    light: bool,
-    glass: bool,
+    /// The theme, which follows Windows unless Settings picked one. A
+    /// backdrop brush made while Windows had transparency off stays black
+    /// after it comes back, so its `glass` rebuilds the dock both ways.
+    look: crate::appearance::Look,
     bin_full: bool,
     auto_hide: bool,
     smart_hide: bool,

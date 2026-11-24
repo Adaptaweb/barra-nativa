@@ -1,6 +1,6 @@
 //! Persisted dock preferences, pinned apps and menu-bar coordination.
 
-use std::{env, time::Instant};
+use std::env;
 
 use anyhow::{Context, Result};
 use muelle_config::{Config, DockGroup};
@@ -178,6 +178,8 @@ impl App {
             // Labels are drawn text: redraw them in the new language.
             self.assets_for = (0.0, false, 0, DockEdge::Bottom);
         }
+        // The dock and the menu bar key their looks on it: `refresh` redraws both.
+        crate::appearance::set(config.appearance);
         if !config.genie {
             self.restore_transitions();
             self.snapshots.clear();
@@ -189,15 +191,6 @@ impl App {
         apply_explorer_pin(&mut self.roster, config.pin_explorer);
         self.slide.omega = config.dock_auto_hide_speed.omega();
         self.config = config;
-        self.smart_hidden &= self.config.smart_hide;
-        if hiding_changed {
-            if self.config.auto_hide || self.smart_hidden {
-                self.hide_if_unused()?;
-            } else {
-                self.slide.target = 0.0;
-                self.last_frame = Instant::now();
-            }
-        }
         if moved {
             // A hidden dock comes out of its new edge on every display.
             self.apply_edge_settings();
@@ -212,6 +205,10 @@ impl App {
         self.update_menu_bar_app()?;
         self.calm_windows();
         self.refresh()?;
+        if hiding_changed {
+            // refresh has recomputed overlap for the new policy and geometry.
+            self.hide_if_unused()?;
+        }
         self.sync_badge_visuals()?;
         self.render()
     }
@@ -294,14 +291,9 @@ impl App {
 
     pub(super) fn toggle_hiding(&mut self) -> Result<()> {
         self.config.auto_hide = save_dock_config(&self.roster, &self.config, true)?.auto_hide;
-        self.slide.target = if self.config.auto_hide || self.smart_hidden {
-            1.0
-        } else {
-            0.0
-        };
-        self.last_frame = Instant::now();
         self.apply_edge_settings();
         self.refresh()?;
+        self.hide_if_unused()?;
         self.update_fullscreen()
     }
 

@@ -187,9 +187,11 @@ impl App {
         };
         let draggable = self.is_draggable(entry);
         self.press = entry.id.clone().map(|id| Press { id, at, draggable });
-        if draggable {
+        if self.press.is_some() {
             // Capture is best effort: this non-activating window also polls
             // until release, including when the pointer leaves the dock.
+            // Fixed icons need the same release/cancel path: otherwise a
+            // button-up outside the dock can leave a press holding it open.
             // SAFETY: Both calls target our window on its owning thread.
             unsafe {
                 SetCapture(self.input);

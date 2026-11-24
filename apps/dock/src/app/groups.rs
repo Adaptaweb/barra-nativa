@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use muelle_core::magnify::magnify;
-use muelle_shell::system::uses_light_theme;
 use windows::Win32::{
     Foundation::POINT,
     UI::{Input::KeyboardAndMouse::SetCapture, WindowsAndMessaging::SetTimer},
@@ -46,7 +45,7 @@ impl App {
         };
         let anchor = stage.screen_rect(*rect);
         let (icon, scale) = (stage.icon.round(), stage.scale);
-        let theme = Theme::for_system(stage.key.light, stage.key.glass);
+        let theme = Theme::new(stage.key.look);
         // The dock's own display, which a hidden dock can move between.
         let (screen, edge) = (stage.key.screen, stage.frame.edge);
         let items = self.group_items(id, icon as u32);
@@ -217,7 +216,7 @@ impl App {
             items,
             anchor,
             placement: menu::Placement::Above,
-            dark: !uses_light_theme(),
+            dark: !crate::appearance::light(),
         })))
     }
 }

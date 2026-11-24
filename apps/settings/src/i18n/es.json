@@ -24,7 +24,7 @@
   "dockPositionBottom": "Abajo",
   "dockPositionRight": "Derecha",
   "autoHide": "Ocultar automáticamente",
-  "autoHideHint": "Deja el puntero en el borde del Dock para mostrarlo, en cualquier pantalla.",
+  "autoHideHint": "Oculta el Dock hasta que dejes el puntero en su borde, incluso en el escritorio.",
   "genie": "Efecto genio",
   "genieHint": "Mientras está activo, las ventanas no usan las animaciones de Windows al maximizar ni al cerrar.",
   "genieSpeed": "Velocidad del genio",
@@ -116,5 +116,6 @@
   "githubStar": "Apoya con una estrella",
   "githubError": "No se pudo abrir GitHub. Inténtalo otra vez.",
   "smartHide": "Ocultación inteligente",
-  "smartHideHint": "Mantiene el Dock visible en el escritorio y lo oculta si la ventana activa ocupa su espacio."
+  "smartHideHint": "Mantiene el Dock visible en el escritorio y lo oculta si la ventana activa ocupa su espacio.",
+  "smartHidePausedHint": "En pausa mientras la ocultación automática esté activa. Desactívala para mantener el Dock visible en el escritorio."
 }

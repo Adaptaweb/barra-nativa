@@ -199,6 +199,7 @@ pub fn run() -> Result<()> {
         muelle_config::migrate_legacy_folder();
         let config = load_config();
         strings::set_language(config.language);
+        crate::appearance::set(config.appearance);
         let roster = roster_from(&config);
         let auto_hide = config.auto_hide;
         let slide_omega = config.dock_auto_hide_speed.omega();

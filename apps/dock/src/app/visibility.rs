@@ -41,19 +41,34 @@ pub(super) fn rects_overlap(a: RECT, b: RECT) -> bool {
 
 impl App {
     pub(super) fn hide_if_unused(&mut self) -> Result<()> {
-        if !(self.config.auto_hide || self.smart_hidden)
-            || self.mascot.is_some()
-            || self.menu_open
-            || self.drag_over
-            || self.hovering
-            || self.drag.is_some()
-            || self.switching
-            || self.preview.is_some()
-            || self.group_view.is_some()
+        // One decision for timer, settings and overlap changes. Automatic
+        // hiding wins; intelligent hiding matters only in its absence.
+        let hidden = self.config.auto_hide || (self.config.smart_hide && self.smart_hidden);
+        if hidden
+            && (self.mascot.is_some()
+                || self.menu_open
+                || self.press.is_some()
+                || self.drag_over
+                || self.hovering
+                || self.drag.is_some()
+                || self.switching
+                || self.preview.is_some()
+                || self.group_view.is_some())
         {
             return Ok(());
         }
-        self.slide.target = 1.0;
+        if !hidden {
+            // A queued hide must not survive returning to the desktop or
+            // disabling a policy. Other interactions keep their own timers.
+            unsafe {
+                let _ = KillTimer(Some(self.input), HIDE_TIMER);
+            }
+        }
+        let target = if hidden { 1.0 } else { 0.0 };
+        if self.slide.target == target {
+            return Ok(());
+        }
+        self.slide.target = target;
         self.last_frame = Instant::now();
         self.place_windows()
     }
@@ -233,10 +248,15 @@ impl App {
     }
 
     pub(super) fn update_smart_hiding(&mut self) -> Result<()> {
-        let front = tracker::foreground_window();
-        let covered = self.config.smart_hide
-            && self.windows.iter().any(|window| window.hwnd == front)
+        // Paused under automatic hiding: no competing overlap controller and
+        // no native geometry query for a policy that cannot affect visibility.
+        let covered = !self.config.auto_hide
+            && self.config.smart_hide
             && self.stage.as_ref().is_some_and(|stage| {
+                let front = tracker::foreground_window();
+                if !self.windows.iter().any(|window| window.hwnd == front) {
+                    return false;
+                }
                 tracker::screen_rect(front).is_some_and(|(rect, _)| {
                     rects_overlap(
                         stage.screen_rect(Rect {
@@ -251,13 +271,7 @@ impl App {
             });
         if covered != self.smart_hidden {
             self.smart_hidden = covered;
-            if self.config.auto_hide || covered {
-                self.hide_if_unused()?;
-            } else {
-                self.slide.target = 0.0;
-                self.last_frame = Instant::now();
-                self.place_windows()?;
-            }
+            self.hide_if_unused()?;
             self.render()?;
         }
         Ok(())
@@ -350,3 +364,6 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -431,8 +431,8 @@ export function App() {
                     onChange={(autoHide) => update({ autoHide })}
                   />
                 </Row>
-                <Row label={t.smartHide} hint={t.smartHideHint}>
-                  <Toggle label={t.smartHide} checked={config.smartHide ?? false} onChange={(smartHide) => update({ smartHide })} />
+                <Row label={t.smartHide} hint={config.autoHide ? t.smartHidePausedHint : t.smartHideHint}>
+                  <Toggle label={t.smartHide} checked={config.smartHide ?? false} disabled={config.autoHide} onChange={(smartHide) => update({ smartHide })} />
                 </Row>
                 <SubRow label={t.dockAutoHideSpeed} open={config.autoHide || (config.smartHide ?? false)}>
                   <Segmented<DockAutoHideSpeed>

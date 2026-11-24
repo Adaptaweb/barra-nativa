@@ -892,12 +892,20 @@ mod tests {
         }
         let windows: Vec<_> = sources.iter().map(|source| source.0.0 as isize).collect();
         let gfx = Gfx::new()?;
-        for theme in [
-            Theme::for_system(false, false),
-            Theme::for_system(false, true),
-            Theme::for_system(true, false),
-            Theme::for_system(true, true),
-        ] {
+        let themes = crate::appearance::Material::ALL
+            .into_iter()
+            .flat_map(|material| {
+                [(false, false), (false, true), (true, false), (true, true)].map(
+                    |(light, glass)| {
+                        Theme::new(crate::appearance::Look {
+                            material,
+                            light,
+                            glass,
+                        })
+                    },
+                )
+            });
+        for theme in themes {
             let mut view = MultiWindowView::show(
                 &gfx,
                 "test".into(),

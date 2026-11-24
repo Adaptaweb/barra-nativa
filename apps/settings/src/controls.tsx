@@ -61,10 +61,11 @@ interface ToggleProps {
   /** Undefined while an inherited system value is still being read. */
   checked: boolean | undefined;
   label: string;
+  disabled?: boolean;
   onChange: (checked: boolean) => void;
 }
 
-export function Toggle({ checked, label, onChange }: ToggleProps) {
+export function Toggle({ checked, label, disabled = false, onChange }: ToggleProps) {
   const pending = checked === undefined;
   return (
     <button
@@ -73,9 +74,9 @@ export function Toggle({ checked, label, onChange }: ToggleProps) {
       aria-checked={checked}
       aria-label={label}
       aria-busy={pending || undefined}
-      disabled={pending}
+      disabled={pending || disabled}
       className="toggle"
-      onClick={() => { if (!pending) onChange(!checked); }}
+      onClick={() => { if (!pending && !disabled) onChange(!checked); }}
     >
       {pending ? <span className="toggle-pending" aria-hidden="true">…</span> : <span className="toggle-knob" />}
     </button>

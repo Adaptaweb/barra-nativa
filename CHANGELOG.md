@@ -10,6 +10,11 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Fixed Dock hiding-policy transitions and pending input: automatic hiding takes
+  precedence over intelligent hiding, which is visibly paused in Settings without
+  discarding its saved choice. Returning to a visible mode clears stale hiding;
+  menus and held clicks keep the Dock open, with the existing hide delay resumed
+  after release/cancellation. Overlap checks are skipped in automatic mode.
 - Internal: split the dock coordinator into private modules by responsibility,
   keeping its shared state, event entry points, timers and behavior unchanged.
 - Battery percentage, Search, Task View and Widgets now follow Windows settings
@@ -33,6 +38,11 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Corregidas las transiciones de ocultación y pulsaciones pendientes del Dock:
+  la automática tiene prioridad y la inteligente queda en pausa en Ajustes,
+  conservando su preferencia. Volver a un modo visible limpia ocultaciones
+  anteriores; menús y pulsaciones mantienen el Dock abierto y al terminar se
+  retoma el retraso existente. Sin consultas de solapamiento en modo automático.
 - Interno: separado el coordinador del dock en módulos privados por
   responsabilidad, conservando estado, eventos, temporizadores y comportamiento.
 - Porcentaje de batería, Búsqueda, Vista de tareas y Widgets siguen directamente

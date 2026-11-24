@@ -70,7 +70,9 @@ use windows::{
 use windows_numerics::{Vector2, Vector3};
 
 use crate::{
-    accessories, app, bluetooth, edge_watch,
+    accessories, app,
+    appearance::{self, Material},
+    bluetooth, edge_watch,
     gfx::{Gfx, Ink, LabelBrush},
     mascot,
     media::{self, Control as MediaControl, Track},
@@ -208,6 +210,9 @@ struct Look {
     language: Language,
     screen: RECT,
     scale: f32,
+    /// The theme's material; `light` and `glass` are its other two halves
+    /// (see `appearance::Look`).
+    material: Material,
     light: bool,
     /// See `system::transparency_enabled`.
     glass: bool,
@@ -1905,6 +1910,7 @@ impl MenuBar {
         {
             usage.refresh(false);
         }
+        let appearance = appearance::current();
         let look = Look {
             accessories: self.accessories.as_ref().map_or([None, None], |monitor| {
                 accessory_readings(&monitor.snapshot())
@@ -1912,8 +1918,9 @@ impl MenuBar {
             language: strings::language(),
             screen: monitor.screen,
             scale: monitor.scale,
-            light: system::uses_light_theme(),
-            glass: system::transparency_enabled(),
+            material: appearance.material,
+            light: appearance.light,
+            glass: appearance.glass,
             app_name: self.app_name.clone(),
             clock: system::clock_text(),
             input: system::input_language(),
@@ -2037,20 +2044,13 @@ impl MenuBar {
         let layers = root.Children()?;
         // Without transparency the bar is solid, as macOS draws it with
         // "Reduce transparency".
-        let tint = match (look.light, look.glass) {
-            (true, true) => rgba(255, 255, 255, 110),
-            (false, true) => rgba(24, 24, 26, 120),
-            (true, false) => rgba(236, 236, 238, 255),
-            (false, false) => rgba(36, 36, 38, 255),
-        };
-        let backdrop = if look.glass {
-            Some(c.CreateHostBackdropBrush()?.cast()?)
-        } else {
-            None
-        };
-        let fills: [windows::UI::Composition::CompositionBrush; 1] =
-            [c.CreateColorBrushWithColor(tint)?.cast()?];
-        for brush in backdrop.iter().chain(&fills) {
+        let fills = Theme::for_bar(appearance::Look {
+            material: look.material,
+            light: look.light,
+            glass: look.glass,
+        })
+        .fills(gfx)?;
+        for brush in &fills {
             let fill = c.CreateSpriteVisual()?;
             fill.SetSize(Vector2 {
                 X: width,

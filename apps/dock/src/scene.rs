@@ -21,7 +21,10 @@ use windows::{
 };
 use windows_numerics::{Vector2, Vector3};
 
-use crate::gfx::{Gfx, LabelBrush};
+use crate::{
+    appearance::{Look, Material},
+    gfx::{Gfx, LabelBrush},
+};
 
 #[derive(Clone, Copy)]
 pub struct Theme {
@@ -29,43 +32,117 @@ pub struct Theme {
     /// Blur what is behind the dock; without it the tint is drawn opaque.
     glass: bool,
     tint: Color,
+    /// Aurora's colours, drawn over the tint from one corner to the other.
+    glow: Option<[Color; 3]>,
+    /// Folders and window cards hold text: a clear dock still gets a
+    /// panel that keeps it readable.
+    panel_tint: Color,
+    /// Top of the light that falls on the glass, fading by the middle.
+    sheen: u8,
+    /// The rim's brightness at its corners and sides (see `GlassSurface`).
+    rim: [u8; 4],
     separator: Color,
     shadow: Color,
     indicator: Color,
 }
 
+/// Aurora: green, violet and pink lights over a night-blue tint.
+const AURORA: [Color; 3] = [
+    rgba(36, 214, 168, 120),
+    rgba(118, 92, 255, 110),
+    rgba(246, 96, 182, 105),
+];
+
 impl Theme {
-    /// `glass` is false while Windows has transparency off (or energy saver
-    /// on): the dock is then solid gray, as macOS draws it with "Reduce
-    /// transparency".
-    pub fn for_system(light: bool, glass: bool) -> Self {
-        if light {
-            Self {
-                light,
-                glass,
-                tint: if glass {
-                    rgba(255, 255, 255, 46)
-                } else {
-                    rgba(226, 226, 228, 255)
-                },
-                separator: rgba(0, 0, 0, 56),
-                shadow: rgba(0, 0, 0, 56),
-                indicator: rgba(0, 0, 0, 170),
-            }
-        } else {
-            Self {
-                light,
-                glass,
-                tint: if glass {
-                    rgba(28, 28, 30, 82)
-                } else {
-                    rgba(44, 44, 46, 255)
-                },
-                separator: rgba(255, 255, 255, 64),
-                shadow: rgba(0, 0, 0, 96),
-                indicator: rgba(255, 255, 255, 215),
-            }
+    /// Without `look.glass` (Windows transparency off, or energy saver on)
+    /// every material is solid, as macOS draws it with "Reduce transparency".
+    pub fn new(look: Look) -> Self {
+        let Look {
+            material,
+            light,
+            glass,
+        } = look;
+        let pick = |clear: Color, solid: Color| if glass { clear } else { solid };
+        let tint = match (material, light) {
+            (Material::Standard, true) => pick(rgba(255, 255, 255, 46), rgba(226, 226, 228, 255)),
+            (Material::Standard, false) => pick(rgba(28, 28, 30, 82), rgba(44, 44, 46, 255)),
+            (Material::Frosted, _) => pick(rgba(250, 251, 253, 158), rgba(236, 238, 242, 255)),
+            (Material::Clear, _) => pick(rgba(255, 255, 255, 14), rgba(38, 40, 46, 255)),
+            (Material::Aurora, _) => pick(rgba(12, 16, 42, 92), rgba(22, 22, 50, 255)),
+        };
+        let (sheen, rim) = match material {
+            Material::Standard | Material::Aurora => (38, [150, 40, 30, 105]),
+            Material::Frosted => (70, [210, 70, 55, 150]),
+            // All the light is on the edge, like a lens.
+            Material::Clear => (56, [235, 80, 60, 190]),
+        };
+        let panel_tint = match material {
+            Material::Clear => pick(rgba(24, 24, 28, 150), tint),
+            _ => tint,
+        };
+        Self {
+            light,
+            glass,
+            tint,
+            glow: (material == Material::Aurora).then_some(AURORA),
+            panel_tint,
+            sheen,
+            rim,
+            separator: if light {
+                rgba(0, 0, 0, 56)
+            } else {
+                rgba(255, 255, 255, 64)
+            },
+            shadow: if light {
+                rgba(0, 0, 0, 56)
+            } else {
+                rgba(0, 0, 0, 96)
+            },
+            indicator: if light {
+                rgba(0, 0, 0, 170)
+            } else {
+                rgba(255, 255, 255, 215)
+            },
         }
+    }
+
+    /// The menu bar: the same material, a little denser so that the clock
+    /// and the status items stay readable over any wallpaper.
+    pub(crate) fn for_bar(look: Look) -> Self {
+        let pick = |clear: Color, solid: Color| if look.glass { clear } else { solid };
+        let tint = match (look.material, look.light) {
+            (Material::Standard, true) => pick(rgba(255, 255, 255, 110), rgba(236, 236, 238, 255)),
+            (Material::Standard, false) => pick(rgba(24, 24, 26, 120), rgba(36, 36, 38, 255)),
+            (Material::Frosted, _) => pick(rgba(250, 251, 253, 178), rgba(238, 240, 244, 255)),
+            (Material::Clear, _) => pick(rgba(0, 0, 0, 38), rgba(30, 32, 38, 255)),
+            (Material::Aurora, _) => pick(rgba(10, 14, 38, 120), rgba(20, 20, 46, 255)),
+        };
+        Self {
+            tint,
+            ..Self::new(look)
+        }
+    }
+
+    /// Brushes that fill a surface of this theme, bottom first: what is
+    /// behind it (with glass), the tint, and Aurora's lights.
+    pub(crate) fn fills(&self, gfx: &Gfx) -> Result<Vec<CompositionBrush>> {
+        let c = &gfx.compositor;
+        let mut fills = Vec::with_capacity(4);
+        if self.glass {
+            fills.push(c.CreateHostBackdropBrush()?.cast()?);
+        }
+        fills.push(c.CreateColorBrushWithColor(self.tint)?.cast()?);
+        if let Some(colors) = self.glow {
+            let glow = c.CreateLinearGradientBrush()?;
+            glow.SetStartPoint(v2(0.0, 0.0))?;
+            glow.SetEndPoint(v2(1.0, 1.0))?;
+            let stops = glow.ColorStops()?;
+            for (at, color) in [0.0, 0.5, 1.0].into_iter().zip(colors) {
+                stops.Append(&c.CreateColorGradientStopWithOffsetAndColor(at, color)?)?;
+            }
+            fills.push(glow.cast()?);
+        }
+        Ok(fills)
     }
 
     /// Inside the frame around the icon a dragged app would join.
@@ -79,9 +156,15 @@ impl Theme {
 
     /// Uses the context menu tint with the same rim and sheen as the window picker.
     pub(crate) fn for_popup(light: bool, glass: bool) -> Self {
+        let tint = crate::menu::popup_tint(!light, glass);
         Self {
-            tint: crate::menu::popup_tint(!light, glass),
-            ..Self::for_system(light, glass)
+            tint,
+            panel_tint: tint,
+            ..Self::new(Look {
+                material: Material::Standard,
+                light,
+                glass,
+            })
         }
     }
 
@@ -94,7 +177,11 @@ impl Theme {
         scale: f32,
     ) -> Result<ContainerVisual> {
         let stroke = scale.max(1.0);
-        let material = GlassSurface::build(gfx, *self, radius, stroke)?;
+        let panel = Self {
+            tint: self.panel_tint,
+            ..*self
+        };
+        let material = GlassSurface::build(gfx, panel, radius, stroke)?;
         material.glass.SetSize(size)?;
         material.outline.SetSize(size)?;
         material.rim.SetSize(size)?;
@@ -130,21 +217,15 @@ impl GlassSurface {
         sheen.SetStartPoint(v2(0.0, 0.0))?;
         sheen.SetEndPoint(v2(0.0, 1.0))?;
         let stops = sheen.ColorStops()?;
-        stops
-            .Append(&c.CreateColorGradientStopWithOffsetAndColor(0.0, rgba(255, 255, 255, 38))?)?;
+        stops.Append(
+            &c.CreateColorGradientStopWithOffsetAndColor(0.0, rgba(255, 255, 255, theme.sheen))?,
+        )?;
         stops
             .Append(&c.CreateColorGradientStopWithOffsetAndColor(0.55, rgba(255, 255, 255, 0))?)?;
 
-        let backdrop: Option<CompositionBrush> = if theme.glass {
-            Some(c.CreateHostBackdropBrush()?.cast()?)
-        } else {
-            None
-        };
-        let fills = [
-            c.CreateColorBrushWithColor(theme.tint)?.cast()?,
-            sheen.cast()?,
-        ];
-        for brush in backdrop.iter().chain(&fills) {
+        let mut fills = theme.fills(gfx)?;
+        fills.push(sheen.cast()?);
+        for brush in &fills {
             let fill = c.CreateSpriteVisual()?;
             fill.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
             fill.SetBrush(brush)?;
@@ -156,7 +237,7 @@ impl GlassSurface {
         rim_brush.SetEndPoint(v2(1.0, 1.0))?;
         rim_brush.SetInterpolationSpace(CompositionColorSpace::RgbLinear)?;
         let stops = rim_brush.ColorStops()?;
-        for (at, alpha) in [(0.0, 150), (0.35, 40), (0.65, 30), (1.0, 105)] {
+        for (at, alpha) in [0.0, 0.35, 0.65, 1.0].into_iter().zip(theme.rim) {
             stops.Append(
                 &c.CreateColorGradientStopWithOffsetAndColor(at, rgba(255, 255, 255, alpha))?,
             )?;
@@ -338,7 +419,10 @@ mod attention_tests {
         };
         let gfx = Gfx::new()?;
         for scale in [1.0, 1.25, 1.5, 2.0] {
-            for light in [false, true] {
+            for (material, light) in crate::appearance::Material::ALL
+                .into_iter()
+                .flat_map(|material| [(material, false), (material, true)])
+            {
                 let layout = layout(
                     &[ItemKind::Icon, ItemKind::Icon],
                     &Metrics::DEFAULT.scaled(scale),
@@ -349,7 +433,11 @@ mod attention_tests {
                     &SceneInput {
                         layout: &layout,
                         contents: &contents,
-                        theme: Theme::for_system(light, true),
+                        theme: Theme::new(Look {
+                            material,
+                            light,
+                            glass: true,
+                        }),
                         scale,
                         frame: DockFrame::new(DockEdge::Bottom, (0.0, 0.0), layout.height),
                         remove_label: None,

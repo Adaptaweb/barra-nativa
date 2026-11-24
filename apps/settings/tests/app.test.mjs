@@ -173,6 +173,36 @@ test("other workspaces are opt-in and save without changing other window prefere
   } finally { unmount(); }
 });
 
+test("automatic hiding pauses intelligent hiding without discarding its saved choice", async () => {
+  for (const language of Object.keys(texts)) for (const smartHide of [false, true]) {
+    const view = fixture("dock", { language, autoHide: true, smartHide });
+    const unmount = await view.mount();
+    const smartToggle = () => [...elements(view.body())].find((node) =>
+      node.props.label === texts[language].smartHide && "checked" in node.props);
+    try {
+      let toggle = smartToggle();
+      assert.equal(toggle.props.disabled, true);
+      assert.equal(toggle.props.checked, smartHide);
+      const button = toggle.type(toggle.props);
+      assert.equal(button.props.disabled, true);
+      assert.equal(button.props["aria-busy"], undefined);
+      button.props.onClick(); // Disabled is not a loading state or a writable control.
+      view.fire(60);
+      await settle();
+      assert.deepEqual(view.calls, []);
+      const paused = renderToStaticMarkup(React.createElement("span", null, texts[language].smartHidePausedHint)).slice(6, -7);
+      assert.ok(renderToStaticMarkup(view.body()).includes(paused));
+      view.change(texts[language].autoHide, false);
+      view.fire(60);
+      await settle();
+      toggle = smartToggle();
+      assert.equal(toggle.props.disabled, false);
+      assert.equal(toggle.props.checked, smartHide);
+      assert.deepEqual(view.calls, [{ autoHide: false }]);
+    } finally { unmount(); }
+  }
+});
+
 test("failed writes remain retryable and prevent closing until saved", async () => {
   let fail = true;
   const view = fixture("menubar", {}, async () => { if (fail) throw new Error("disk busy"); });
