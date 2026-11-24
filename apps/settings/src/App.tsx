@@ -34,6 +34,7 @@ import { Card, Row, Segmented, Select, Slider, SubRow, Toggle, VisualChoices } f
 import { DockDensityPreview, DockPreview, IslandPreview, SettingIcon, SpeedPreview, ThemePreview } from "./visuals";
 import { type SectionId, SectionIcon } from "./icons";
 import { UpdateBanner } from "./UpdateBanner";
+import { WallpaperGallery } from "./WallpaperGallery";
 import en from "./i18n/en.json";
 import es from "./i18n/es.json";
 import fr from "./i18n/fr.json";
@@ -93,7 +94,7 @@ export function App() {
   const [wallpaper, setWallpaper] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    loadWallpaperPreview().then((image) => { if (alive) setWallpaper(image); });
+    loadWallpaperPreview().then((image) => { if (alive) setWallpaper((current) => current ?? image); });
     return () => { alive = false; };
   }, []);
   /** "Later" hides the banner until Settings is opened again. */
@@ -384,6 +385,7 @@ export function App() {
                 />
                 <p className="card-note row-hint">{t.themeHint}</p>
               </Card>
+              <WallpaperGallery texts={t} onApplied={setWallpaper} />
             </>
           ) : section === "dock" ? (
             <>

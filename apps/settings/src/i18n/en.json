@@ -125,5 +125,25 @@
   "dockHidingIntelligent": "Intelligent",
   "dockHidingVisibleHint": "Keep the Dock visible while you work.",
   "dockHidingAutomaticHint": "Hidden until you rest the pointer at its edge, even on the desktop.",
-  "dockHidingIntelligentHint": "Visible on the desktop. Hides when the active window overlaps it."
+  "dockHidingIntelligentHint": "Visible on the desktop. Hides when the active window overlaps it.",
+  "wallpaperGalleryTitle": "Wallpapers",
+  "wallpaperGalleryHint": "Choose an image to replace the Windows background on your displays.",
+  "wallpaperApplyLabel": "Use {name} as wallpaper",
+  "wallpaperApplying": "Applying wallpaper…",
+  "wallpaperApplied": "Wallpaper applied.",
+  "wallpaperApplyError": "Could not change the wallpaper. Try again.",
+  "wallpaperNames": [
+    "Purple peaks",
+    "Color waves",
+    "Green hills",
+    "Aurora",
+    "Golden dunes",
+    "Sunset dunes",
+    "Sunset sky",
+    "Spectrum",
+    "Cherry blossoms",
+    "Meadow at sunrise",
+    "Horizon",
+    "Blue sky"
+  ]
 }

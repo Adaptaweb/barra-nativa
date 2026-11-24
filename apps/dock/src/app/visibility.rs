@@ -257,7 +257,9 @@ impl App {
                 if !self.windows.iter().any(|window| window.hwnd == front) {
                     return false;
                 }
-                tracker::screen_rect(front).is_some_and(|(rect, _)| {
+                // What shows of it: its invisible resize borders reaching
+                // into the dock must not hide it.
+                tracker::visible_rect(front).is_some_and(|rect| {
                     rects_overlap(
                         stage.screen_rect(Rect {
                             x: 0.0,

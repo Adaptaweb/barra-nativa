@@ -89,4 +89,20 @@ let wallpaperRequest: Promise<string | null> | undefined;
 /** One bounded native read per Settings process, including React StrictMode. */
 export const loadWallpaperPreview = () =>
   wallpaperRequest ??= invoke<string | null>("wallpaper_preview").catch(() => null);
+let wallpaperSelectionRequest: Promise<number | null> | undefined;
+/** Share overlapping reads from StrictMode or quick section navigation. */
+export const loadWallpaperSelection = () => {
+  if (wallpaperSelectionRequest) return wallpaperSelectionRequest;
+  const request = invoke<number | null>("wallpaper_selection").finally(() => {
+    if (wallpaperSelectionRequest === request) wallpaperSelectionRequest = undefined;
+  });
+  wallpaperSelectionRequest = request;
+  return request;
+};
+export const applyWallpaper = async (id: number, preview: string) => {
+  await invoke<void>("apply_wallpaper", { id });
+  // Original images stay in native storage; Settings uses only the small preview.
+  wallpaperRequest = Promise.resolve(preview);
+  wallpaperSelectionRequest = undefined;
+};
 export const installUpdate = () => invoke<void>("install_update");

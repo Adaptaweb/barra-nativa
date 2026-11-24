@@ -7,6 +7,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod wallpapers;
+
 use std::{env, io, path::PathBuf, process::Command, sync::Mutex, time::Duration};
 
 use muelle_config::Config;
@@ -344,7 +346,9 @@ fn main() {
             install_update,
             open_release_notes,
             open_repository,
-            wallpaper_preview
+            wallpaper_preview,
+            wallpapers::wallpaper_selection,
+            wallpapers::apply_wallpaper
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {

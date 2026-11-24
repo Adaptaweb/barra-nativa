@@ -10,6 +10,12 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Added an offline wallpaper gallery to Appearance with 12 desktop backgrounds.
+  Selecting an image applies it through Windows; opening the gallery leaves the
+  current background untouched. Small lazy-loaded previews, serialized background
+  work and embedded originals keep the gallery independent of network access.
+- Intelligent hiding now measures only the visible part of the active window:
+  its invisible resize borders reaching into the Dock no longer hide it.
 - The Genie minimize animation now defaults to Fast (0.35 s). Saved speed
   choices remain unchanged.
 - Fixed the "Show hidden icons" tooltip appearing over the desktop after closing
@@ -52,6 +58,12 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Galería de 12 fondos de pantalla sin conexión en Apariencia. Elegir una imagen
+  la aplica mediante Windows; abrir la galería conserva el fondo actual.
+  Miniaturas ligeras bajo demanda, trabajo en segundo plano y originales
+  incluidos en Ajustes, sin dependencia de conexión ni consultas periódicas.
+- La ocultación inteligente mide solo la parte visible de la ventana activa:
+  sus bordes invisibles de redimensionado ya no ocultan el Dock al rozarlo.
 - El efecto genio al minimizar ahora viene en velocidad Rápida (0,35 s).
   Se conservan las velocidades guardadas.
 - Corregido el globo «Mostrar iconos ocultos» que aparecía sobre el escritorio

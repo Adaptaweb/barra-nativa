@@ -41,10 +41,12 @@ function* elements(node) {
   else if (React.isValidElement(node)) { yield node; yield* elements(node.props.children); }
 }
 
-function fixture(section = "menubar", config = {}, save = async () => {}) {
+function fixture(section = "menubar", config = {}, save = async () => {}, galleryNative = {}) {
   const states = [], refs = [], effects = [], timers = new Map(), calls = [], listeners = new Map();
   let stateIndex = 0, refIndex = 0, nextTimer = 0, close;
   const loaded = { ...base, ...config };
+  const gallery = section === "gallery";
+  const wallpaperCalls = [], wallpaperPreviews = [];
   const browser = {
     addEventListener(event, callback) { assert.ok(!listeners.has(event)); listeners.set(event, callback); },
     removeEventListener(event) { listeners.delete(event); },
@@ -56,7 +58,7 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
     ...React,
     useState(initial) {
       const index = stateIndex++;
-      if (!(index in states)) states[index] = index === 0 ? { ...loaded } : initial === "dock" ? section : initial;
+      if (!(index in states)) states[index] = !gallery && index === 0 ? { ...loaded } : !gallery && initial === "dock" ? section : initial;
       return [states[index], (value) => { states[index] = typeof value === "function" ? value(states[index]) : value; }];
     },
     useRef(initial) { const index = refIndex++; return refs[index] ??= { current: initial }; },
@@ -78,6 +80,8 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
         case "get_autostart": return false;
         case "windows_preferences": return { animations: true };
         case "wallpaper_preview": return null;
+        case "wallpaper_selection": return typeof galleryNative.selection === "function" ? galleryNative.selection() : galleryNative.selection ?? null;
+        case "apply_wallpaper": wallpaperCalls.push({ ...args }); return galleryNative.apply?.(args.id);
         case "default_config": return { ...base, autoHide: false, smartHide: true };
         case "set_config": calls.push({ ...args.patch }); return save(args.patch);
         default: throw new Error(`Unexpected native call: ${command}`);
@@ -88,10 +92,11 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
   function load(filename) {
     if (modules.has(filename)) return modules.get(filename).exports;
     if (filename.endsWith(".json")) return JSON.parse(readFileSync(filename, "utf8"));
+    if (filename.endsWith(".jpg")) return `file:///${filename.replaceAll("\\", "/")}`;
     const module = { exports: {} };
     modules.set(filename, module);
     compiled.get(filename)((id) => {
-      if (id === "react" && filename === path.join(source, "App.tsx")) return hooks;
+      if (id === "react" && (filename === path.join(source, "App.tsx") || gallery && filename === path.join(source, "WallpaperGallery.tsx"))) return hooks;
       if (id in mocks) return mocks[id];
       if (!id.startsWith(".")) return require(id);
       const resolved = path.resolve(path.dirname(filename), id);
@@ -100,16 +105,20 @@ function fixture(section = "menubar", config = {}, save = async () => {}) {
     return module.exports;
   }
   const { App } = load(path.join(source, "App.tsx"));
-  function render() { stateIndex = refIndex = 0; effects.length = 0; return App(); }
+  const { WallpaperGallery } = load(path.join(source, "WallpaperGallery.tsx"));
+  function render() {
+    stateIndex = refIndex = 0; effects.length = 0;
+    return gallery ? WallpaperGallery({ texts: texts[loaded.language], onApplied: (preview) => wallpaperPreviews.push(preview) }) : App();
+  }
   function find(predicate) { const node = [...elements(render())].find(predicate); assert.ok(node); return node; }
   return {
-    calls, timers, render, themes: nativeWindow.themes,
+    calls, timers, render, themes: nativeWindow.themes, wallpaperCalls, wallpaperPreviews,
     external(patch) { Object.assign(loaded, patch); },
     async focus() { listeners.get("focus")?.(); await settle(); },
     async mount() { render(); const cleanup = effects.map((effect) => effect()); await settle(); return () => cleanup.forEach((fn) => fn?.()); },
     change(label, value) { find((node) => node.props.label === label && typeof node.props.onChange === "function").props.onChange(value); },
     button(text) { find((node) => node.type === "button" && node.props.children === text).props.onClick(); },
-    body() { return find((node) => node.props.className === "content-body"); },
+    body() { return gallery ? render() : find((node) => node.props.className === "content-body"); },
     fire(delay) { for (const [id, timer] of [...timers]) if (timer.delay === delay) { timers.delete(id); timer.callback(); } },
     async close() { let prevented = false; await close({ preventDefault() { prevented = true; } }); return prevented; },
   };
@@ -130,6 +139,75 @@ test("each section renders only its own controls, in every language and visibili
       assert.equal(body.key, section, "navigation resets the scroll container");
     }
   }
+});
+
+const wallpaperButtons = (view) => [...elements(view.body())].filter((node) => node.type === "button" && "data-wallpaper-id" in node.props);
+
+test("the offline wallpaper gallery is optional and appears only inside Appearance", () => {
+  for (const language of Object.keys(texts)) {
+    assert.equal(texts[language].wallpaperNames.length, 12);
+    for (const section of ["appearance", "dock", "windows", "menubar", "system"]) {
+      const view = fixture(section, { language });
+      const html = renderToStaticMarkup(view.body());
+      assert.equal((html.match(/class="wallpaper-choice"/g) ?? []).length, section === "appearance" ? 12 : 0);
+      if (section === "appearance") {
+        assert.equal((html.match(/loading="lazy"/g) ?? []).length, 12);
+        assert.doesNotMatch(html, /https:\/\/openvid\.dev/);
+      }
+      assert.deepEqual(view.wallpaperCalls, [], "rendering must never change the desktop");
+    }
+  }
+});
+
+test("wallpapers follow the Windows selection and serialize rapid clicks until success", async () => {
+  let finish;
+  const view = fixture("gallery", {}, undefined, {
+    selection: 3, apply: () => new Promise((resolve) => { finish = resolve; }),
+  });
+  const unmount = await view.mount();
+  try {
+    assert.equal(wallpaperButtons(view).find((button) => button.props["aria-pressed"]).props["data-wallpaper-id"], 3);
+    const buttons = wallpaperButtons(view);
+    const operation = buttons[3].props.onClick();
+    await buttons[4].props.onClick(); // Simulate a second click before React repaints.
+    assert.deepEqual(view.wallpaperCalls, [{ id: 4 }]);
+    assert.ok(wallpaperButtons(view).every((button) => button.props.disabled));
+    assert.equal(view.wallpaperPreviews.length, 0);
+    finish(); await operation; await settle();
+    assert.equal(wallpaperButtons(view).find((button) => button.props["aria-pressed"]).props["data-wallpaper-id"], 4);
+    assert.equal(view.wallpaperPreviews.length, 1);
+    assert.ok(wallpaperButtons(view).every((button) => !button.props.disabled));
+  } finally { unmount(); }
+});
+
+test("a rejected wallpaper change preserves the previous selection and can be retried", async () => {
+  let reject = true;
+  const view = fixture("gallery", {}, undefined, {
+    selection: 2, apply: async () => { if (reject) throw new Error("Windows denied the change"); },
+  });
+  const unmount = await view.mount();
+  try {
+    await wallpaperButtons(view)[8].props.onClick();
+    assert.equal(wallpaperButtons(view).find((button) => button.props["aria-pressed"]).props["data-wallpaper-id"], 2);
+    assert.equal(view.wallpaperPreviews.length, 0);
+    assert.ok(renderToStaticMarkup(view.body()).includes(texts.en.wallpaperApplyError));
+    reject = false;
+    await wallpaperButtons(view)[8].props.onClick();
+    assert.equal(wallpaperButtons(view).find((button) => button.props["aria-pressed"]).props["data-wallpaper-id"], 9);
+    assert.deepEqual(view.wallpaperCalls, [{ id: 9 }, { id: 9 }]);
+  } finally { unmount(); }
+});
+
+test("a late initial wallpaper read cannot overwrite an explicit successful choice", async () => {
+  let read;
+  const view = fixture("gallery", {}, undefined, { selection: () => new Promise((resolve) => { read = resolve; }) });
+  const unmount = await view.mount();
+  try {
+    await wallpaperButtons(view)[11].props.onClick();
+    read(1); await settle();
+    assert.equal(wallpaperButtons(view).find((button) => button.props["aria-pressed"]).props["data-wallpaper-id"], 12);
+    assert.deepEqual(view.wallpaperCalls, [{ id: 12 }]);
+  } finally { unmount(); }
 });
 
 test("Bluetooth has no duplicate setting even with an old saved visibility override", () => {

@@ -125,5 +125,25 @@
   "dockHidingIntelligent": "Inteligente",
   "dockHidingVisibleHint": "Mantiene el Dock visible mientras trabajas.",
   "dockHidingAutomaticHint": "Se oculta hasta que dejes el puntero en su borde, incluso en el escritorio.",
-  "dockHidingIntelligentHint": "Visible en el escritorio. Se oculta si la ventana activa ocupa su espacio."
+  "dockHidingIntelligentHint": "Visible en el escritorio. Se oculta si la ventana activa ocupa su espacio.",
+  "wallpaperGalleryTitle": "Fondos de pantalla",
+  "wallpaperGalleryHint": "Elige una imagen para reemplazar el fondo de Windows en tus pantallas.",
+  "wallpaperApplyLabel": "Usar {name} como fondo",
+  "wallpaperApplying": "Aplicando fondo…",
+  "wallpaperApplied": "Fondo aplicado.",
+  "wallpaperApplyError": "No se pudo cambiar el fondo. Inténtalo de nuevo.",
+  "wallpaperNames": [
+    "Cumbres violetas",
+    "Ondas de color",
+    "Colinas verdes",
+    "Aurora",
+    "Dunas doradas",
+    "Dunas al atardecer",
+    "Cielo al atardecer",
+    "Espectro",
+    "Cerezos",
+    "Pradera al amanecer",
+    "Horizonte",
+    "Cielo azul"
+  ]
 }

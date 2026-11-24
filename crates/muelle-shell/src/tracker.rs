@@ -10,7 +10,10 @@ use windows::{
     Win32::{
         Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, WPARAM},
         Graphics::{
-            Dwm::{DWM_CLOAKED_SHELL, DWMWA_CLOAKED, DwmGetWindowAttribute},
+            Dwm::{
+                DWM_CLOAKED_SHELL, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+                DwmGetWindowAttribute,
+            },
             Gdi::ClientToScreen,
         },
         Storage::{
@@ -171,6 +174,27 @@ pub fn screen_rect(hwnd: isize) -> Option<(RECT, bool)> {
         GetWindowRect(window, &mut rect).ok()?;
         Some((rect, IsZoomed(window).as_bool()))
     }
+}
+
+/// The part of a window that shows on screen: its frame without the
+/// invisible resize borders Windows 10 and 11 put around it (some 7 px on
+/// each side but the top at 100 %), which `screen_rect` includes. `None`
+/// while it is minimized.
+#[must_use]
+pub fn visible_rect(hwnd: isize) -> Option<RECT> {
+    let window = HWND(hwnd as *mut _);
+    let (whole, _) = screen_rect(hwnd)?;
+    let mut rect = RECT::default();
+    // SAFETY: `rect` is a valid output of the attribute's size.
+    let framed = unsafe {
+        DwmGetWindowAttribute(
+            window,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            (&raw mut rect).cast(),
+            size_of::<RECT>() as u32,
+        )
+    };
+    Some(if framed.is_ok() { rect } else { whole })
 }
 
 /// Where a window that has just started minimizing was on screen, which by
