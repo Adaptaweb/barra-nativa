@@ -143,6 +143,23 @@ pub struct Widgets {
     pub dock: Vec<String>,
     /// City for the weather widget.
     pub weather_city: String,
+    /// Home Assistant address, e.g. `http://192.168.1.10:8123`. Its token
+    /// lives in the Windows Credential Manager as `Barra/casa.token`.
+    pub home_url: String,
+    /// Home Assistant buttons the widget shows.
+    pub home_items: Vec<HomeItem>,
+}
+
+/// A Home Assistant button: one or more entities toggled together.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeItem {
+    pub id: String,
+    pub name: String,
+    /// `luz`, `enchufe`, `sensor`... as the Panel de proyectos names them.
+    pub kind: String,
+    pub entities: Vec<String>,
 }
 
 impl Default for Widgets {
@@ -152,6 +169,8 @@ impl Default for Widgets {
             bar_right: vec!["clima".into(), "sistema".into()],
             dock: Vec::new(),
             weather_city: "Santiago".into(),
+            home_url: String::new(),
+            home_items: Vec::new(),
         }
     }
 }

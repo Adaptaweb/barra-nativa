@@ -2,7 +2,7 @@
 //! icons and masks to be drawn on compositor surfaces.
 
 mod pen;
-pub use pen::{Rgba, Weight};
+pub use pen::{Pen, Rgba, Weight};
 
 use anyhow::{Context, Result};
 use muelle_core::frame::DockEdge;

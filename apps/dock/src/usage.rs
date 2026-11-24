@@ -474,12 +474,31 @@ pub fn worker_main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Barra widgets: every provider, whether or not its app is running now.
+pub fn worker_all_main() -> anyhow::Result<()> {
+    serde_json::to_writer(
+        std::io::stdout().lock(),
+        &fetch_providers(ActiveProviders([true; Provider::COUNT])),
+    )?;
+    Ok(())
+}
+
+/// Reads every provider in a short-lived child process, so the network and
+/// TLS stack never stay in the dock's memory.
+pub fn fetch_all_in_child() -> Snapshot {
+    fetch_child(&["--usage-worker", "all"])
+}
+
 fn fetch_in_child() -> Snapshot {
+    fetch_child(&["--usage-worker"])
+}
+
+fn fetch_child(args: &[&str]) -> Snapshot {
     let Ok(executable) = env::current_exe() else {
         return unavailable_snapshot();
     };
     let Ok(output) = Command::new(executable)
-        .arg("--usage-worker")
+        .args(args)
         .creation_flags(0x0800_0000)
         .output()
     else {
@@ -506,10 +525,13 @@ fn merge(previous: &mut ProviderUsage, fetched: ProviderUsage) {
 }
 
 fn fetch_all() -> Snapshot {
+    fetch_providers(active_providers())
+}
+
+fn fetch_providers(active: ActiveProviders) -> Snapshot {
     let Ok(client) = Client::builder().timeout(Duration::from_secs(6)).build() else {
         return unavailable_snapshot();
     };
-    let active = active_providers();
     Snapshot {
         providers: std::array::from_fn(|index| {
             let provider = Provider::ALL[index];

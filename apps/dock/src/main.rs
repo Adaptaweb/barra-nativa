@@ -87,6 +87,7 @@ fn main() -> Result<()> {
         ["--autostart", "off"] => Ok(autostart::set(None)?),
         [guard::FLAG, pid] => guard::run(pid.parse().context("pid no válido")?),
         ["--usage-worker"] => usage::worker_main(),
+        ["--usage-worker", "all"] => usage::worker_all_main(),
         [accessories::FLAG] => accessories::worker_main(None),
         [accessories::FLAG, visibility] => accessories::worker_main(Some(visibility)),
         [accessories::USB_FLAG] => accessories::usb_worker_main(),

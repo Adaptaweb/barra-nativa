@@ -16,6 +16,8 @@ winresource = "0.1"
 [dependencies]
 anyhow.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+chrono-tz = "0.10"
+rrule = "0.14"
 muelle-config.workspace = true
 muelle-core.workspace = true
 muelle-shell.workspace = true
@@ -52,6 +54,7 @@ windows = { workspace = true, features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Security",
+    "Win32_Security_Credentials",
     "Win32_System_Com",
     "Win32_System_DataExchange",
     "Win32_System_Diagnostics_Debug",

@@ -1972,10 +1972,7 @@ impl MenuBar {
             .left
             .iter()
             .chain(&look.bar_widgets.right)
-            .filter(|id| match id {
-                WidgetId::Sistema => readings.sistema.is_some(),
-                WidgetId::Clima => readings.clima.is_some(),
-            })
+            .filter(|id| id.has_reading(&readings))
             .count();
         if wanted != shown.len() {
             return self.rebuild(gfx);
@@ -2174,13 +2171,15 @@ impl MenuBar {
         let mut right = width - px(SIDE_MARGIN);
         let status = look.status;
         let symbol = |layers: &[(char, f32)]| gfx.glyph_brush(layers, scale, ink);
-        let mut items: Vec<(LabelBrush, Action)> = vec![
-            (
+        let mut items: Vec<(LabelBrush, Action)> = Vec::new();
+        // The clock widget, when placed, shows the date and time itself.
+        if !look.bar_widgets.has(WidgetId::Reloj) {
+            items.push((
                 gfx.text_brush(&look.clock, scale, false, ink)?,
                 Action::Notifications,
-            ),
-            (gfx.control_center_brush(scale, ink)?, Action::QuickSettings),
-        ];
+            ));
+        }
+        items.push((gfx.control_center_brush(scale, ink)?, Action::QuickSettings));
         // Privacy indicators, as the Windows tray shows them: something is
         // using the microphone or camera right now.
         let privacy = status.privacy;

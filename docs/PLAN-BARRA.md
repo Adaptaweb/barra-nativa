@@ -41,10 +41,16 @@ uses far less RAM and CPU.
    `Role::Widget` between the apps and the folders.
    Measured idle cost in a debug build with both widgets in bar and dock: ~0.02 s CPU per 10 s.
 4. [ ] Port data sources from the Tauri Barra (`barra/src-tauri/src/fuentes/*.rs`, already Rust):
-   done: system (CPU/RAM via Win32, temperature via LHM/fan helper), weather (Open-Meteo).
-   Next: calendar (iCal) with the clock, Home Assistant, projects, AI limits (Muelle's
-   `usage.rs` already covers Claude/Codex/Gemini in its island).
-   Then: a panel (flyout) per widget on click, and drag to reorder.
+   done: system (CPU/RAM via Win32, temperature via LHM/fan helper), weather (Open-Meteo),
+   `reloj` (clock + next iCal event; replaces the bar clock when placed), `casa` (Home
+   Assistant states; settings from `widgets.homeUrl/homeItems`, else the Tauri Barra's),
+   `claude` / `chatgpt` / `gemini` (Muelle's usage reader run as `--usage-worker all` in a
+   child process every 5 min). Secrets are read from the Credential Manager entries the
+   Tauri Barra saved (`Barra/calendario.ics`, `Barra/casa.token`).
+   The projects widget is set aside for now (user's decision, 2026-11-24).
+   Next: a panel (flyout) per widget on click (Home Assistant toggles, calendar list and
+   "connect a calendar" steps, AI details), and drag to reorder.
+   Claude shows "Abre Claude Code" while the CLI's OAuth token in `~/.claude` is expired.
 5. [ ] Draw each widget natively (designs from the Tauri Barra and the user's references).
 6. [ ] Settings app: widget editor (zones, order, sizes) in `apps/settings`.
 7. [ ] One dock and top bar per monitor, with per-screen widgets and on/off.

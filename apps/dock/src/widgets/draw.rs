@@ -5,12 +5,12 @@ use crate::gfx::{Gfx, LabelBrush, Rgba, Weight};
 use windows::UI::Composition::CompositionSurfaceBrush;
 use anyhow::Result;
 
-const GREEN: Rgba = [0.204, 0.78, 0.349, 1.0];
-const ORANGE: Rgba = [1.0, 0.624, 0.039, 1.0];
-const RED: Rgba = [1.0, 0.271, 0.227, 1.0];
-const BLUE: Rgba = [0.039, 0.518, 1.0, 1.0];
+pub(super) const GREEN: Rgba = [0.204, 0.78, 0.349, 1.0];
+pub(super) const ORANGE: Rgba = [1.0, 0.624, 0.039, 1.0];
+pub(super) const RED: Rgba = [1.0, 0.271, 0.227, 1.0];
+pub(super) const BLUE: Rgba = [0.039, 0.518, 1.0, 1.0];
 
-fn ink(light: bool, alpha: f32) -> Rgba {
+pub(super) fn ink(light: bool, alpha: f32) -> Rgba {
     if light {
         [0.0, 0.0, 0.0, alpha * 0.86]
     } else {
@@ -46,6 +46,7 @@ pub fn render_bar(
             .as_ref()
             .map(|data| clima(gfx, data, scale, height, light))
             .transpose(),
+        other => super::more::bar(gfx, other, readings, scale, height, light),
     }
 }
 
@@ -226,6 +227,7 @@ pub fn render_tile(
                     [1.0, 1.0, 1.0, 1.0],
                 )?;
             }
+            other => super::more::tile(gfx, pen, other, readings, side, light)?,
         }
         Ok(())
     })?;

@@ -1,7 +1,8 @@
 //! Free-form drawing for widgets: text, color emoji, rounded rectangles and
 //! arcs on a surface of any size.
 
-use super::{Gfx, LabelBrush, rgb, text_font};
+use super::{Gfx, LabelBrush, draw_image_in, rgb, text_font};
+use muelle_shell::icons::IconImage;
 use anyhow::Result;
 use windows::{
     Win32::Graphics::{
@@ -9,6 +10,7 @@ use windows::{
             Common::{D2D_RECT_F, D2D_SIZE_F, D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_OPEN},
             D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_LARGE, D2D1_ARC_SIZE_SMALL, D2D1_CAP_STYLE_ROUND,
             D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, D2D1_DRAW_TEXT_OPTIONS_NONE,
+            D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
             D2D1_LINE_JOIN_ROUND, D2D1_ROUNDED_RECT, D2D1_STROKE_STYLE_PROPERTIES,
             D2D1_SWEEP_DIRECTION_CLOCKWISE, ID2D1DeviceContext, ID2D1SolidColorBrush,
         },
@@ -129,6 +131,21 @@ impl Pen<'_> {
                 .DrawTextLayout(Vector2 { X: x, Y: y }, &layout, &ink, options);
         }
         Ok(width)
+    }
+
+    /// An image (a logo) stretched over the given box.
+    pub fn image(&self, image: &IconImage, (x, y): (f32, f32), (width, height): (f32, f32)) -> Result<()> {
+        draw_image_in(
+            self.dc,
+            image,
+            D2D_RECT_F {
+                left: x,
+                top: y,
+                right: x + width,
+                bottom: y + height,
+            },
+            D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+        )
     }
 
     pub fn round_rect(

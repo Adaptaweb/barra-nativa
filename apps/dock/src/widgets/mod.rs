@@ -1,18 +1,25 @@
-//! Barra widgets: small live readings (system load, weather) drawn natively in
-//! the menu bar and, later, the dock.
+//! Barra widgets: small live readings drawn natively in the menu bar and the
+//! dock: system load, weather, the clock with the calendar, Home Assistant
+//! and AI plan limits.
 //!
 //! Each data source runs on its own thread only while a widget that needs it
 //! is placed somewhere. A source stores its reading here and posts one message
-//! to the menu bar when the reading changes, so the bar repaints just that
-//! widget. Nothing is polled on the UI thread.
+//! to the menu bar when the reading changes, so the bar and the dock repaint
+//! just that widget. Nothing is polled on the UI thread.
 
+mod casa;
 mod clima;
 mod draw;
+mod ia;
+mod more;
+mod reloj;
+mod secrets;
 mod sistema;
 
 pub use draw::{render_bar, render_tile};
 
-use muelle_config::Widgets as Settings;
+use crate::usage::{self, Provider};
+use muelle_config::{HomeItem, Widgets as Settings};
 use std::sync::{
     Mutex,
     atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering},
@@ -29,19 +36,145 @@ pub enum WidgetId {
     Sistema,
     /// Current weather for the configured city.
     Clima,
+    /// Date and time with the next calendar event. Replaces the bar's clock.
+    Reloj,
+    /// Home Assistant favourite buttons.
+    Casa,
+    /// Claude plan limits.
+    Claude,
+    /// ChatGPT plan limits, as Codex reports them.
+    ChatGpt,
+    /// Gemini quota.
+    Gemini,
 }
 
 impl WidgetId {
-    pub const ALL: [Self; 2] = [Self::Sistema, Self::Clima];
+    pub const ALL: [Self; 7] = [
+        Self::Sistema,
+        Self::Clima,
+        Self::Reloj,
+        Self::Casa,
+        Self::Claude,
+        Self::ChatGpt,
+        Self::Gemini,
+    ];
 
     pub fn from_key(key: &str) -> Option<Self> {
-        match key.trim().to_lowercase().as_str() {
-            "sistema" => Some(Self::Sistema),
-            "clima" => Some(Self::Clima),
+        let key = key.trim().to_lowercase();
+        Self::ALL.into_iter().find(|id| id.key() == key)
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Sistema => "sistema",
+            Self::Clima => "clima",
+            Self::Reloj => "reloj",
+            Self::Casa => "casa",
+            Self::Claude => "claude",
+            Self::ChatGpt => "chatgpt",
+            Self::Gemini => "gemini",
+        }
+    }
+
+    /// The name shown above its dock tile.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Sistema => "Sistema",
+            Self::Clima => "Clima",
+            Self::Reloj => "Calendario",
+            Self::Casa => "Casa",
+            Self::Claude => "Claude",
+            Self::ChatGpt => "ChatGPT",
+            Self::Gemini => "Gemini",
+        }
+    }
+
+    /// The AI provider whose limits it shows.
+    pub fn provider(self) -> Option<Provider> {
+        match self {
+            Self::Claude => Some(Provider::Claude),
+            Self::ChatGpt => Some(Provider::Codex),
+            Self::Gemini => Some(Provider::Gemini),
             _ => None,
         }
     }
+
+    /// What a click on the widget opens. Until widgets have their own panels,
+    /// a widget with nothing set up opens where to set it up.
+    pub fn target(self) -> String {
+        let readings = readings();
+        match self {
+            Self::Sistema => "taskmgr.exe".to_owned(),
+            Self::Clima => "msnweather:".to_owned(),
+            Self::Reloj => match readings.reloj.map(|r| r.calendar) {
+                Some(Calendar::NotConnected) => {
+                    "https://calendar.google.com/calendar/r/settings".to_owned()
+                }
+                _ => "ms-actioncenter:".to_owned(),
+            },
+            Self::Casa => {
+                let (url, _) = home_settings();
+                if url.is_empty() {
+                    "https://www.home-assistant.io/docs/authentication/#your-account-profile"
+                        .to_owned()
+                } else {
+                    url
+                }
+            }
+            Self::Claude => "https://claude.ai/settings/usage".to_owned(),
+            Self::ChatGpt => "https://chatgpt.com/codex/settings/usage".to_owned(),
+            Self::Gemini => "https://aistudio.google.com/".to_owned(),
+        }
+    }
+
+    pub fn entry_id(self) -> String {
+        format!("{ENTRY_PREFIX}{}", self.key())
+    }
+
+    pub fn from_entry(id: &str) -> Option<Self> {
+        Self::from_key(id.strip_prefix(ENTRY_PREFIX)?)
+    }
+
+    /// Changes when what the widget shows changes.
+    pub fn fingerprint(self, readings: &Readings) -> String {
+        match self {
+            Self::Sistema => format!("{:?}", readings.sistema),
+            Self::Clima => format!("{:?}", readings.clima),
+            Self::Reloj => format!("{:?}", readings.reloj),
+            Self::Casa => format!("{:?}", readings.casa),
+            Self::Claude | Self::ChatGpt | Self::Gemini => {
+                let provider = self.provider().unwrap_or(Provider::Claude);
+                readings.ia.as_ref().map_or_else(String::new, |snapshot| {
+                    serde_json::to_string(snapshot.get(provider)).unwrap_or_default()
+                })
+            }
+        }
+    }
+
+    /// Whether it has something to draw yet.
+    pub fn has_reading(self, readings: &Readings) -> bool {
+        match self {
+            Self::Sistema => readings.sistema.is_some(),
+            Self::Clima => readings.clima.is_some(),
+            Self::Reloj => readings.reloj.is_some(),
+            Self::Casa => readings.casa.is_some(),
+            Self::Claude | Self::ChatGpt | Self::Gemini => readings.ia.is_some(),
+        }
+    }
+
+    fn source(self) -> (&'static AtomicBool, fn()) {
+        match self {
+            Self::Sistema => (&SISTEMA_ON, sistema::start),
+            Self::Clima => (&CLIMA_ON, clima::start),
+            Self::Reloj => (&RELOJ_ON, reloj::start),
+            Self::Casa => (&CASA_ON, casa::start),
+            Self::Claude | Self::ChatGpt | Self::Gemini => (&IA_ON, ia::start),
+        }
+    }
 }
+
+/// Dock entry ids start with this, then the widget key.
+const ENTRY_PREFIX: &str = "widget:";
 
 /// Latest system reading.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -62,10 +195,66 @@ pub struct ClimaData {
     pub day: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Calendar {
+    Loading,
+    /// No calendar link saved.
+    NotConnected,
+    Connected,
+    /// Links saved but none could be read.
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Event {
+    pub title: String,
+    /// Unix seconds.
+    pub start: i64,
+    pub end: i64,
+    pub all_day: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelojData {
+    /// Date and time as the menu bar shows them ("mar 24 nov 19:39").
+    pub clock: String,
+    /// Day of the month and weekday, for the dock tile.
+    pub day: String,
+    pub weekday: String,
+    pub calendar: Calendar,
+    pub next: Option<Event>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Home {
+    NotConnected,
+    Connected,
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HomeButton {
+    pub name: String,
+    pub kind: String,
+    pub on: bool,
+    pub value: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CasaData {
+    pub state: Home,
+    /// How many buttons are on.
+    pub on: u8,
+    pub buttons: Vec<HomeButton>,
+}
+
+#[derive(Clone, Default, PartialEq)]
 pub struct Readings {
     pub sistema: Option<SistemaData>,
     pub clima: Option<ClimaData>,
+    pub reloj: Option<RelojData>,
+    pub casa: Option<CasaData>,
+    pub ia: Option<usage::Snapshot>,
 }
 
 /// Which widgets the menu bar shows, left and right.
@@ -75,15 +264,27 @@ pub struct BarLayout {
     pub right: Vec<WidgetId>,
 }
 
+impl BarLayout {
+    pub fn has(&self, id: WidgetId) -> bool {
+        self.left.contains(&id) || self.right.contains(&id)
+    }
+}
+
 static READINGS: Mutex<Readings> = Mutex::new(Readings {
     sistema: None,
     clima: None,
+    reloj: None,
+    casa: None,
+    ia: None,
 });
 static SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
 static TARGET: AtomicIsize = AtomicIsize::new(0);
 static TARGET_MESSAGE: AtomicU32 = AtomicU32::new(0);
 static SISTEMA_ON: AtomicBool = AtomicBool::new(false);
 static CLIMA_ON: AtomicBool = AtomicBool::new(false);
+static RELOJ_ON: AtomicBool = AtomicBool::new(false);
+static CASA_ON: AtomicBool = AtomicBool::new(false);
+static IA_ON: AtomicBool = AtomicBool::new(false);
 
 fn ids(keys: &[String]) -> Vec<WidgetId> {
     let mut out = Vec::new();
@@ -108,33 +309,38 @@ pub fn configure(settings: &Settings) {
         .map(|mut slot| slot.replace(settings.clone()))
         .ok()
         .flatten();
-    let city_changed = previous.is_some_and(|old| old.weather_city != settings.weather_city);
-    if city_changed {
+    if previous.is_some_and(|old| old.weather_city != settings.weather_city) {
         if let Ok(mut readings) = READINGS.lock() {
             readings.clima = None;
         }
         clima::wake();
     }
+    // Several widgets can share one source (the AI limits).
+    let mut wanted: Vec<*const AtomicBool> = Vec::new();
     for id in WidgetId::ALL {
-        let on = placed.contains(&id);
-        let (flag, start): (&AtomicBool, fn()) = match id {
-            WidgetId::Sistema => (&SISTEMA_ON, sistema::start),
-            WidgetId::Clima => (&CLIMA_ON, clima::start),
-        };
-        if on && !flag.swap(true, Ordering::AcqRel) {
-            start();
-        } else if !on {
+        let (flag, start) = id.source();
+        if placed.contains(&id) {
+            if !flag.swap(true, Ordering::AcqRel) {
+                start();
+            }
+            wanted.push(flag);
+        }
+    }
+    for id in WidgetId::ALL {
+        let (flag, _) = id.source();
+        if !wanted.contains(&std::ptr::from_ref(flag)) {
             flag.store(false, Ordering::Release);
         }
     }
 }
 
+fn settings() -> Option<Settings> {
+    SETTINGS.lock().ok().and_then(|slot| slot.clone())
+}
+
 /// The menu bar placement from the current settings.
 pub fn bar_layout() -> BarLayout {
-    SETTINGS
-        .lock()
-        .ok()
-        .and_then(|slot| slot.clone())
+    settings()
         .map(|settings| BarLayout {
             left: ids(&settings.bar_left),
             right: ids(&settings.bar_right),
@@ -142,12 +348,24 @@ pub fn bar_layout() -> BarLayout {
         .unwrap_or_default()
 }
 
+/// The widgets placed in the dock, in order.
+pub fn dock() -> Vec<WidgetId> {
+    settings().map(|s| ids(&s.dock)).unwrap_or_default()
+}
+
 fn city() -> String {
-    SETTINGS
-        .lock()
-        .ok()
-        .and_then(|slot| slot.as_ref().map(|s| s.weather_city.clone()))
-        .unwrap_or_default()
+    settings().map(|s| s.weather_city).unwrap_or_default()
+}
+
+/// Home Assistant address and buttons: this app's, else the Tauri Barra's.
+fn home_settings() -> (String, Vec<HomeItem>) {
+    let own = settings()
+        .map(|s| (s.home_url.trim_end_matches('/').to_owned(), s.home_items))
+        .unwrap_or_default();
+    if !own.0.is_empty() {
+        return own;
+    }
+    casa::from_tauri_barra().unwrap_or_default()
 }
 
 pub fn readings() -> Readings {
@@ -177,62 +395,9 @@ fn publish(update: impl FnOnce(&mut Readings) -> bool) {
     }
 }
 
-/// Dock entry ids start with this, then the widget key.
-const ENTRY_PREFIX: &str = "widget:";
-
-impl WidgetId {
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Sistema => "sistema",
-            Self::Clima => "clima",
-        }
-    }
-
-    /// The name shown above its dock tile.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Sistema => "Sistema",
-            Self::Clima => "Clima",
-        }
-    }
-
-    /// What a click on the widget opens.
-    pub fn target(self) -> &'static str {
-        match self {
-            Self::Sistema => "taskmgr.exe",
-            Self::Clima => "msnweather:",
-        }
-    }
-
-    pub fn entry_id(self) -> String {
-        format!("{ENTRY_PREFIX}{}", self.key())
-    }
-
-    pub fn from_entry(id: &str) -> Option<Self> {
-        Self::from_key(id.strip_prefix(ENTRY_PREFIX)?)
-    }
-
-    /// Changes when what the widget shows changes.
-    pub fn fingerprint(self, readings: &Readings) -> String {
-        match self {
-            Self::Sistema => format!("{:?}", readings.sistema),
-            Self::Clima => format!("{:?}", readings.clima),
-        }
-    }
-}
-
-/// The widgets placed in the dock, in order.
-pub fn dock() -> Vec<WidgetId> {
-    SETTINGS
-        .lock()
-        .ok()
-        .and_then(|slot| slot.as_ref().map(|s| ids(&s.dock)))
-        .unwrap_or_default()
-}
-
 /// What a click on a widget in the menu bar opens.
 pub fn open(id: WidgetId) {
-    if let Err(error) = muelle_shell::launcher::open(id.target()) {
+    if let Err(error) = muelle_shell::launcher::open(&id.target()) {
         eprintln!("muelle: widget {id:?}: {error}");
     }
 }
