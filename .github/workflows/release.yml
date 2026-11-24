@@ -207,6 +207,29 @@ jobs:
           If a signature remains invalid, send its status/message and the signing request IDs to SignPath support.
           '@ >> $env:GITHUB_STEP_SUMMARY
 
+      - name: Update Defender definitions for release analysis
+        if: env.SIGNING_MODE != 'Test'
+        timeout-minutes: 5
+        shell: pwsh
+        run: Update-MpSignature -ErrorAction Stop
+
+      - name: Analyze the final release files with Microsoft Defender
+        if: env.SIGNING_MODE != 'Test'
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          ./scripts/Assert-ReleaseAntivirus.ps1 -ReportDirectory antivirus-report -Path `
+            target/release/muelle-settings.exe,apps/settings/src-tauri/binaries/muelle-x86_64-pc-windows-msvc.exe,"target/release/bundle/nsis/Muelle_${env:VERSION}_x64-setup.exe"
+
+      - name: Keep antivirus verification evidence
+        if: always() && env.SIGNING_MODE != '' && env.SIGNING_MODE != 'Test'
+        uses: actions/upload-artifact@v7
+        with:
+          name: antivirus-${{ env.VERSION }}
+          path: antivirus-report/
+          if-no-files-found: warn
+          retention-days: 14
+
       # latest.json is what the in-app updater reads; Muelle-Setup.exe is a
       # stable name for the website's "latest" download link.
       - name: Prepare release files

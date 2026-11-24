@@ -12,6 +12,10 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### English
 
+- Release now scans the final Dock, Settings and installer bytes with Microsoft
+  Defender before creating updater metadata or a draft release, and retains
+  hashes, signature details and scan evidence. Detections and incomplete scans
+  stop publication; runtime app behavior is unchanged.
 - Added Simplified Chinese, Hindi, Arabic, Bengali and Portuguese to Settings,
   Dock menus and menu-bar panels. Language now uses a dropdown with native
   language names and an Automatic option that follows Windows. Arabic Settings
@@ -65,6 +69,10 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ### Español
 
+- Release analiza los binarios finales del Dock, Ajustes y el instalador con
+  Microsoft Defender antes de crear el manifiesto del actualizador o el borrador,
+  conservando hashes, firmas y el resultado. Las detecciones o análisis fallidos
+  detienen la publicación; no cambia el funcionamiento de la app.
 - Añadidos chino simplificado, hindi, árabe, bengalí y portugués en Ajustes,
   menús del Dock y paneles de la barra superior. El idioma se elige en un
   desplegable con nombres nativos y Automático para seguir Windows. Ajustes

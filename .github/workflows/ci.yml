@@ -29,6 +29,10 @@ jobs:
         shell: pwsh
         run: ./scripts/Test-CodeSigning.ps1
 
+      - name: Check release antivirus verification without malware or Defender changes
+        shell: pwsh
+        run: ./scripts/Test-ReleaseAntivirus.ps1
+
       # The settings app embeds its built front end at compile time.
       - name: Build settings UI
         working-directory: apps/settings
