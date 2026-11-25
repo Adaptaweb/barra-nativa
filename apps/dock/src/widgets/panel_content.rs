@@ -43,23 +43,6 @@ fn day_label(t: DateTime<Local>) -> String {
     }
 }
 
-fn weather_text(code: u8) -> &'static str {
-    match code {
-        0 => "Despejado",
-        1 => "Mayormente despejado",
-        2 => "Parcialmente nublado",
-        3 => "Nublado",
-        45 | 48 => "Niebla",
-        51..=57 => "Llovizna",
-        61..=67 => "Lluvia",
-        71..=77 => "Nieve",
-        80..=82 => "Chubascos",
-        85 | 86 => "Chubascos de nieve",
-        95..=99 => "Tormenta",
-        _ => "",
-    }
-}
-
 /// "se reinicia hoy 21:40", "se reinicia jue 27 09:00".
 fn reset_note(reset: Option<DateTime<Utc>>) -> String {
     let Some(t) = reset.map(|r| r.with_timezone(&Local)) else {
@@ -166,7 +149,20 @@ pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
                 Some(super::draw::symbol(d.code, d.day).to_owned()),
                 format!("{}°", d.temp),
             ));
-            b.push(Block::Text(weather_text(d.code).into(), false));
+            b.push(Block::Text(super::clima::describe(d.code).into(), false));
+            b.push(Block::Text(format!("Máx {}° · Mín {}°", d.max, d.min), false));
+            let rain = if d.rain % 10 == 0 {
+                format!("{}", d.rain / 10)
+            } else {
+                format!("{},{}", d.rain / 10, d.rain % 10)
+            };
+            b.push(Block::Text(format!("Viento {} km/h · Lluvia {rain} mm", d.wind), false));
+            for (name, code, high, low) in &d.days {
+                b.push(Block::Text(
+                    format!("{name}: {high}° / {low}°  {}", super::draw::symbol(*code, true)),
+                    false,
+                ));
+            }
             b.push(Block::Text(
                 "La ciudad se cambia en Configuración › Widgets.".into(),
                 true,

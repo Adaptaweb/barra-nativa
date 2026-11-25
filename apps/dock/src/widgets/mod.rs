@@ -260,8 +260,12 @@ pub struct ClimaData {
     /// Today's high and low.
     pub max: i16,
     pub min: i16,
-    /// The next hours: hour ("15"), WMO code and temperature.
-    pub hours: Vec<(String, u8, i16)>,
+    /// Wind speed in km/h.
+    pub wind: u16,
+    /// Today's precipitation, in tenths of a millimetre.
+    pub rain: u16,
+    /// The next three days: short weekday ("Vie"), WMO code, high and low.
+    pub days: Vec<(String, u8, i16, i16)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

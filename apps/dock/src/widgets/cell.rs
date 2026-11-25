@@ -5,7 +5,8 @@
 //! details, thin separators.
 
 use super::draw::{BLUE, GREEN, ORANGE, RED, ink, symbol};
-use super::{Calendar, Home, Readings, WidgetId};
+use super::clima::describe;
+use super::{Calendar, ClimaData, Home, Readings, WidgetId};
 use crate::gfx::{Gfx, Pen, Rgba, Weight};
 use crate::usage::{self, State};
 use anyhow::Result;
@@ -14,6 +15,7 @@ use chrono::{DateTime, Local, TimeZone, Utc};
 use windows::UI::Composition::CompositionSurfaceBrush;
 
 const ACCENT_RED: Rgba = [1.0, 0.271, 0.227, 1.0];
+const HL_ORANGE: Rgba = [1.0, 0.62, 0.2, 1.0];
 const HOME_YELLOW: Rgba = [1.0, 0.82, 0.4, 1.0];
 const CALENDAR_COLORS: [Rgba; 4] = [
     [0.039, 0.518, 1.0, 1.0],
@@ -28,6 +30,8 @@ pub enum Size {
     Compact,
     Medium,
     Wide,
+    /// A weather card on its own colour; only the weather widget has it.
+    Estado,
 }
 
 impl Size {
@@ -35,7 +39,17 @@ impl Size {
         match key {
             Some("compacto") => Self::Compact,
             Some("ancho") => Self::Wide,
+            Some("estado") => Self::Estado,
             _ => Self::Medium,
+        }
+    }
+
+    /// The size a widget really draws at: `Estado` is only for the weather.
+    fn for_widget(self, id: WidgetId) -> Self {
+        if self == Self::Estado && id != WidgetId::Clima {
+            Self::Medium
+        } else {
+            self
         }
     }
 }
@@ -43,6 +57,7 @@ impl Size {
 /// Width of the cell in hundredths of an icon. Fixed per widget and size so a
 /// changing reading never moves the dock.
 pub fn width(id: WidgetId, size: Size) -> u16 {
+    let size = size.for_widget(id);
     if let Some(known) = WIDTHS
         .lock()
         .ok()
@@ -56,15 +71,16 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
         (WidgetId::Control, Size::Compact) => 120,
         (WidgetId::Control, _) => 200,
         (WidgetId::Reloj, Size::Compact) => 150,
-        (WidgetId::Reloj, Size::Medium) => 330,
+        (WidgetId::Reloj, Size::Medium | Size::Estado) => 330,
         (WidgetId::Reloj, Size::Wide) => 640,
         (WidgetId::Clima, Size::Compact) => 160,
         (WidgetId::Clima, Size::Medium) => 300,
         (WidgetId::Clima, Size::Wide) => 480,
+        (WidgetId::Clima, Size::Estado) => 420,
         (WidgetId::Sistema, Size::Compact) => 100,
-        (WidgetId::Sistema, Size::Medium | Size::Wide) => 370,
+        (WidgetId::Sistema, Size::Medium | Size::Wide | Size::Estado) => 370,
         (WidgetId::Casa, Size::Compact) => 140,
-        (WidgetId::Casa, Size::Medium | Size::Wide) => 250,
+        (WidgetId::Casa, Size::Medium | Size::Wide | Size::Estado) => 250,
         (WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini, Size::Compact) => 170,
         (WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini, _) => 500,
     }
@@ -83,6 +99,7 @@ pub fn render(
     height: u32,
     light: bool,
 ) -> Result<(CompositionSurfaceBrush, bool)> {
+    let size = size.for_widget(id);
     let height = height.max(16) as f32;
     // Text sizes are relative to a 48 pixel tall cell, as in the Barra dock.
     let unit = height / 48.0;
@@ -93,6 +110,7 @@ pub fn render(
                 pen,
                 gfx,
                 unit,
+                width,
                 height,
                 light,
                 x: pad,
@@ -214,6 +232,7 @@ struct Cell<'a, 'b> {
     pen: &'a Pen<'b>,
     gfx: &'a Gfx,
     unit: f32,
+    width: f32,
     height: f32,
     light: bool,
     x: f32,
@@ -433,37 +452,125 @@ fn clima(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     let Some(d) = r.clima.as_ref() else {
         return c.text("Clima…", 11.0, Weight::Normal, c.faded());
     };
-    c.emoji(symbol(d.code, d.day), 17.0)?;
-    c.x += c.px(8.0);
     let temp = format!("{}°", d.temp);
-    if size == Size::Compact {
-        return c.text(&temp, 17.0, Weight::Bold, c.strong());
+    match size {
+        Size::Compact => {
+            c.emoji(symbol(d.code, d.day), 26.0)?;
+            c.x += c.px(6.0);
+            let range = format!("H {}° L {}°", d.max, d.min);
+            c.column(
+                (&temp, 22.0, Weight::Bold, c.strong()),
+                (&range, 11.0, Weight::Normal, c.faded()),
+                false,
+                20,
+            )
+        }
+        Size::Medium => {
+            c.emoji(symbol(d.code, d.day), 22.0)?;
+            c.x += c.px(6.0);
+            c.column(
+                (&temp, 20.0, Weight::Bold, c.strong()),
+                (describe(d.code), 11.0, Weight::Normal, c.faded()),
+                false,
+                20,
+            )?;
+            c.separator()?;
+            clima_details(c, d)
+        }
+        Size::Wide => {
+            c.emoji(symbol(d.code, d.day), 22.0)?;
+            c.x += c.px(6.0);
+            c.column(
+                (&temp, 20.0, Weight::Bold, c.strong()),
+                ("Hoy", 10.0, Weight::Normal, c.faded()),
+                false,
+                20,
+            )?;
+            c.separator()?;
+            for (name, code, high, low) in &d.days {
+                // Day name, icon, then the high and the low, stacked.
+                let (nw, nh) = c.gfx.measure(name, 10.0, c.unit, Weight::Normal)?;
+                let (ew, eh) = c.gfx.measure_emoji(symbol(*code, true), 13.0, c.unit)?;
+                let (hw, th) = c.gfx.measure(&format!("{high}°"), 11.0, c.unit, Weight::Bold)?;
+                let low = format!(" {low}°");
+                let (lw, _) = c.gfx.measure(&low, 11.0, c.unit, Weight::Normal)?;
+                let w = nw.max(ew).max(hw + lw);
+                let y = (c.height - nh - eh - th) / 2.0;
+                c.pen.text(name, (c.x + (w - nw) / 2.0, y), 10.0, Weight::Normal, c.faded())?;
+                c.pen.emoji(symbol(*code, true), (c.x + (w - ew) / 2.0, y + nh), 13.0)?;
+                let x = c.x + (w - hw - lw) / 2.0;
+                c.pen.text(&format!("{high}°"), (x, y + nh + eh), 11.0, Weight::Bold, c.strong())?;
+                c.pen.text(&low, (x + hw, y + nh + eh), 11.0, Weight::Normal, c.faded())?;
+                c.x += w + c.px(14.0);
+            }
+            // No gap after the last day.
+            c.x -= c.px(14.0);
+            Ok(())
+        }
+        Size::Estado => clima_status(c, d),
     }
-    let range = format!("Máx {}° · mín {}°", d.max, d.min);
-    c.column(
-        (&temp, 17.0, Weight::Bold, c.strong()),
-        (&range, 10.5, Weight::Normal, c.faded()),
-        false,
-        20,
-    )?;
-    if size != Size::Wide {
-        return Ok(());
+}
+
+/// Wind, rain and the high and low, one row each, for the medium weather.
+fn clima_details(c: &mut Cell<'_, '_>, d: &ClimaData) -> Result<()> {
+    let rain = if d.rain.is_multiple_of(10) {
+        format!("{} mm", d.rain / 10)
+    } else {
+        format!("{},{} mm", d.rain / 10, d.rain % 10)
+    };
+    let rows = [
+        ("💨", true, c.strong(), format!("{} km/h", d.wind)),
+        ("💧", true, c.strong(), rain),
+        ("H/L", false, HL_ORANGE, format!("{}° / {}°", d.max, d.min)),
+    ];
+    let size = 10.5;
+    let (mut lead, mut tail, mut row) = (0.0_f32, 0.0_f32, 0.0_f32);
+    for (label, emoji, _, text) in &rows {
+        let (lw, lh) = if *emoji {
+            c.gfx.measure_emoji(label, size, c.unit)?
+        } else {
+            c.gfx.measure(label, size, c.unit, Weight::Bold)?
+        };
+        let (tw, th) = c.gfx.measure(text, size, c.unit, Weight::Medium)?;
+        lead = lead.max(lw);
+        tail = tail.max(tw);
+        row = row.max(lh).max(th);
     }
-    c.separator()?;
-    for (hour, code, t) in d.hours.iter().take(3) {
-        // Hour, small icon, temperature, stacked.
-        let (hw, hh) = c.gfx.measure(hour, 10.0, c.unit, Weight::Normal)?;
-        let (ew, eh) = c.gfx.measure_emoji(symbol(*code, true), 10.5, c.unit)?;
-        let text = format!("{t}°");
-        let (tw, th) = c.gfx.measure(&text, 10.5, c.unit, Weight::Medium)?;
-        let w = hw.max(ew).max(tw);
-        let y = (c.height - hh - eh - th) / 2.0;
-        c.pen.text(hour, (c.x + (w - hw) / 2.0, y), 10.0, Weight::Normal, c.faded())?;
-        c.pen.emoji(symbol(*code, true), (c.x + (w - ew) / 2.0, y + hh), 10.5)?;
-        c.pen.text(&text, (c.x + (w - tw) / 2.0, y + hh + eh), 10.5, Weight::Medium, c.strong())?;
-        c.x += w + c.px(12.0);
+    let mut y = (c.height - row * rows.len() as f32) / 2.0;
+    for (label, emoji, color, text) in &rows {
+        if *emoji {
+            c.pen.emoji(label, (c.x, y), size)?;
+        } else {
+            c.pen.text(label, (c.x, y), size, Weight::Bold, *color)?;
+        }
+        c.pen.text(text, (c.x + lead + c.px(6.0), y), size, Weight::Medium, c.strong())?;
+        y += row;
     }
+    c.x += lead + c.px(6.0) + tail;
     Ok(())
+}
+
+/// The weather card: its own colour behind white text.
+fn clima_status(c: &mut Cell<'_, '_>, d: &ClimaData) -> Result<()> {
+    let fair = matches!(d.code, 0..=2);
+    let background = match (d.day, fair) {
+        (false, _) => [0.10, 0.14, 0.30, 1.0],
+        (true, true) => [0.20, 0.46, 0.90, 1.0],
+        (true, false) => [0.38, 0.45, 0.55, 1.0],
+    };
+    c.pen.round_rect((0.0, 0.0), (c.width, c.height), c.height * 0.3, background)?;
+    let white = [1.0, 1.0, 1.0, 1.0];
+    c.x += c.px(4.0);
+    c.column(
+        (describe(d.code), 14.0, Weight::Bold, white),
+        (&d.city, 11.0, Weight::Normal, [1.0, 1.0, 1.0, 0.85]),
+        false,
+        18,
+    )?;
+    c.x += c.px(18.0);
+    c.text(&format!("{}°", d.temp), 30.0, Weight::Normal, white)?;
+    c.x += c.px(4.0);
+    c.emoji(symbol(d.code, d.day), 24.0)
 }
 
 /// Ring colour of the CPU temperature: green, yellow from 65, red from 80.

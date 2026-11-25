@@ -2,6 +2,7 @@
 //! and its coordinates are sent. Every 15 minutes; a minute after a failure.
 
 use super::{CLIMA_ON, ClimaData, city, publish};
+use chrono::{Datelike, NaiveDate};
 use reqwest::blocking::Client;
 use serde_json::Value;
 use std::{
@@ -15,6 +16,26 @@ use std::{
 
 const EVERY: Duration = Duration::from_secs(15 * 60);
 const RETRY: Duration = Duration::from_secs(60);
+
+const WEEKDAYS: [&str; 7] = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+
+/// The weather in words for a WMO code.
+pub(super) fn describe(code: u8) -> &'static str {
+    match code {
+        0 => "Despejado",
+        1 => "Mayormente despejado",
+        2 => "Parcialmente nublado",
+        3 => "Nublado",
+        45 | 48 => "Niebla",
+        51..=57 => "Llovizna",
+        61..=67 => "Lluvia",
+        71..=77 => "Nieve",
+        80..=82 => "Chubascos",
+        85 | 86 => "Chubascos de nieve",
+        95..=99 => "Tormenta",
+        _ => "",
+    }
+}
 
 static WAKE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
@@ -66,7 +87,7 @@ fn fetch(client: &Client, city: &str) -> Option<ClimaData> {
     let name = place["name"].as_str().unwrap_or(city).to_owned();
     let forecast: Value = client
         .get(format!(
-            "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&forecast_days=2&timezone=auto"
+            "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code,is_day,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&forecast_days=4&timezone=auto"
         ))
         .send()
         .ok()?
@@ -74,29 +95,26 @@ fn fetch(client: &Client, city: &str) -> Option<ClimaData> {
         .ok()
         .and_then(|body| serde_json::from_str(&body).ok())?;
     let now = forecast.get("current")?;
-    // Hourly lists start at local midnight; take the hours after this one.
-    let this_hour = now["time"].as_str().and_then(|t| t.get(..13)).unwrap_or_default();
-    let hourly = &forecast["hourly"];
-    let times = hourly["time"].as_array().cloned().unwrap_or_default();
-    let start = times
-        .iter()
-        .position(|t| t.as_str().is_some_and(|t| t.starts_with(this_hour)))
-        .unwrap_or(0);
-    let hours = (start + 1..(start + 7).min(times.len()))
+    let daily = &forecast["daily"];
+    let temp_now = now["temperature_2m"].as_f64()?.round() as i16;
+    // The three days after today.
+    let days = (1..4)
         .filter_map(|i| {
+            let date = NaiveDate::parse_from_str(daily["time"][i].as_str()?, "%Y-%m-%d").ok()?;
             Some((
-                times[i].as_str()?.get(11..13)?.to_owned(),
-                hourly["weather_code"][i].as_u64().unwrap_or(0).min(255) as u8,
-                hourly["temperature_2m"][i].as_f64()?.round() as i16,
+                WEEKDAYS[date.weekday().num_days_from_monday() as usize].to_owned(),
+                daily["weather_code"][i].as_u64().unwrap_or(0).min(255) as u8,
+                daily["temperature_2m_max"][i].as_f64()?.round() as i16,
+                daily["temperature_2m_min"][i].as_f64()?.round() as i16,
             ))
         })
         .collect();
-    let daily = &forecast["daily"];
-    let temp_now = now["temperature_2m"].as_f64()?.round() as i16;
     Some(ClimaData {
         max: daily["temperature_2m_max"][0].as_f64().map_or(temp_now, |v| v.round() as i16),
         min: daily["temperature_2m_min"][0].as_f64().map_or(temp_now, |v| v.round() as i16),
-        hours,
+        wind: now["wind_speed_10m"].as_f64().unwrap_or(0.0).round().max(0.0) as u16,
+        rain: (daily["precipitation_sum"][0].as_f64().unwrap_or(0.0) * 10.0).round().max(0.0) as u16,
+        days,
         city: name,
         temp: now["temperature_2m"].as_f64()?.round() as i16,
         code: now["weather_code"].as_u64().unwrap_or(0).min(255) as u8,

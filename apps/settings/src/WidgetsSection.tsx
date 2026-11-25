@@ -216,9 +216,10 @@ function WidgetsPage({ config, update, part }: Props) {
                         value={layout.dockSizes?.[key] ?? "mediano"}
                         onChange={(e) => saveLayout({ dockSizes: { ...layout.dockSizes, [key]: e.target.value } })}
                       >
-                        <option value="compacto">Compacto</option>
-                        <option value="mediano">Mediano</option>
-                        <option value="ancho">Ancho</option>
+                        <option value="compacto">{key === "clima" ? "Compacto · temperatura" : "Compacto"}</option>
+                        <option value="mediano">{key === "clima" ? "Mediano · detalles" : "Mediano"}</option>
+                        <option value="ancho">{key === "clima" ? "Ancho · pronóstico" : "Ancho"}</option>
+                        {key === "clima" ? <option value="estado">Estado · tarjeta</option> : null}
                       </select>
                     </span>
                   ) : null}
