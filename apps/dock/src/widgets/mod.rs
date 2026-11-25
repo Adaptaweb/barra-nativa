@@ -342,6 +342,7 @@ fn ids(keys: &[String]) -> Vec<WidgetId> {
 /// Applies the settings: which widgets are placed, and starts or stops the
 /// sources they need.
 pub fn configure(settings: &Settings) {
+    let settings = &for_this_display(settings);
     let placed: Vec<WidgetId> = ids(&settings.bar_left)
         .into_iter()
         .chain(ids(&settings.bar_right))
@@ -375,6 +376,23 @@ pub fn configure(settings: &Settings) {
         if !wanted.contains(&std::ptr::from_ref(flag)) {
             flag.store(false, Ordering::Release);
         }
+    }
+}
+
+/// The widgets of this dock's display: a secondary display has its own
+/// placement in `screens`; everything else (city, Home Assistant) is shared.
+fn for_this_display(settings: &Settings) -> Settings {
+    let Some(device) = muelle_shell::displays::home_device() else {
+        return settings.clone();
+    };
+    let own = settings.screens.get(device).cloned().unwrap_or_default();
+    Settings {
+        bar_left: own.bar_left,
+        bar_right: own.bar_right,
+        dock_left: own.dock_left,
+        dock: own.dock,
+        dock_sizes: own.dock_sizes,
+        ..settings.clone()
     }
 }
 
@@ -526,6 +544,10 @@ pub fn nudge() {
 
 /// Starts this process's tray window (once) and keeps `readings.tray` current.
 fn start_tray() {
+    // Apps hand tray icons to one window: the primary display's dock has it.
+    if muelle_shell::displays::is_secondary_process() {
+        return;
+    }
     fn changed() {
         let icons = muelle_shell::tray::icons();
         let previous = READINGS.lock().map(|r| r.tray.clone()).unwrap_or_default();

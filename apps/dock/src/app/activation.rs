@@ -527,7 +527,7 @@ impl App {
         let recent_before = self.roster.recent().to_vec();
         let changed = self
             .roster
-            .sync(self.windows.iter().map(|window| window.app_id.as_str()));
+            .sync(self.windows.iter().filter(|window| crate::screens::on_this_display(window.hwnd)).map(|window| window.app_id.as_str()));
         if !self.config.pin_explorer {
             self.roster.forget_recent(&explorer_id());
         }

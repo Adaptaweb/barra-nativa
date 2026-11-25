@@ -77,5 +77,12 @@ uses far less RAM and CPU.
    The dock does not magnify while the pointer is over a widget cell. Debug builds:
    `BARRA_MONITOR=x,y` puts the dock on the display at that point (screenshots while the
    primary screen is busy with a full-screen app).
-7. [ ] One dock and top bar per monitor, with per-screen widgets and on/off.
+7. [x] One dock and top bar per display (`apps/dock/src/screens.rs`): the primary dock starts
+   `muelle --screen \.\DISPLAYn <parent pid>` for each other display turned on in
+   `widgets.screens[device].enabled`; that process docks there (`displays::home_monitor`),
+   shows only the apps with windows on its display, uses `widgets.screens[device]` for its
+   widgets, never hides the taskbar, has no tray, and exits with its parent, its display or
+   when turned off. Displays are named by EDID maker and model ("Pantalla 2 · Samsung
+   LC24RG50", `muelle_shell::displays`). Settings › Widgets › Pantallas: on/off per display
+   and which display's widgets to edit. Muelle's own update check is off by default.
 8. [ ] Rebrand (name, icon, AppUserModelID, installer) before distributing to other PCs.

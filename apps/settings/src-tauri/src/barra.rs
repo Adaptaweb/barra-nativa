@@ -151,3 +151,24 @@ pub fn import_home() -> Result<HomeImport, String> {
         source: "Panel de proyectos".into(),
     })
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayInfo {
+    device: String,
+    label: String,
+    primary: bool,
+}
+
+/// The connected displays, named by model: "Pantalla 2 · SAMSUNG".
+#[tauri::command]
+pub fn list_displays() -> Vec<DisplayInfo> {
+    muelle_shell::displays::list()
+        .into_iter()
+        .map(|d| DisplayInfo {
+            label: d.label(),
+            device: d.device,
+            primary: d.primary,
+        })
+        .collect()
+}

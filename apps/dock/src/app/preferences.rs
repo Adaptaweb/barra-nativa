@@ -10,7 +10,6 @@ use muelle_core::{
 };
 use muelle_shell::{
     pins::{app_exists, taskbar_pins, taskbar_pins_if_readable},
-    system::primary_monitor,
     tracker::{self, normalize_id},
 };
 
@@ -204,7 +203,11 @@ impl App {
             self.sync()?;
         }
         self.sync_thumbnails();
-        if taskbar_changed {
+        crate::screens::sync(&self.config.widgets);
+        if crate::screens::turned_off(&self.config.widgets) {
+            crate::app::quit_this();
+        }
+        if taskbar_changed && !muelle_shell::displays::is_secondary_process() {
             muelle_shell::taskbar::set_keep_taskbar(!self.config.hide_windows_taskbar);
             if self.config.hide_windows_taskbar {
                 self.request_taskbar(true)?;
@@ -344,7 +347,7 @@ impl App {
                 .and_then(|()| bar.set_media_enabled(&self.gfx, self.config.menu_bar_music))
                 .and_then(|()| bar.set_widgets(&self.gfx, widgets))
                 .and_then(|()| {
-                    let covered = primary_monitor()
+                    let covered = muelle_shell::displays::home_monitor()
                         .is_some_and(|monitor| tracker::foreground_is_fullscreen(monitor.screen));
                     bar.set_visible(!covered)
                 })

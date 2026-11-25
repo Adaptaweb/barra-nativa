@@ -155,6 +155,37 @@ pub struct Widgets {
     pub home_items: Vec<HomeItem>,
     /// Size of each widget in the dock: `compacto`, `mediano` (default) or `ancho`.
     pub dock_sizes: std::collections::BTreeMap<String, String>,
+    /// The other displays, by device name (`\\.\DISPLAY2`): whether they get
+    /// a dock and menu bar, and their own widgets. The primary display uses
+    /// the fields above.
+    pub screens: std::collections::BTreeMap<String, ScreenWidgets>,
+}
+
+/// A display other than the primary one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenWidgets {
+    /// A dock and a menu bar on this display.
+    pub enabled: bool,
+    pub bar_left: Vec<String>,
+    pub bar_right: Vec<String>,
+    pub dock_left: Vec<String>,
+    pub dock: Vec<String>,
+    pub dock_sizes: std::collections::BTreeMap<String, String>,
+}
+
+impl Default for ScreenWidgets {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            bar_left: Vec::new(),
+            bar_right: vec!["reloj".into()],
+            dock_left: Vec::new(),
+            dock: Vec::new(),
+            dock_sizes: std::collections::BTreeMap::new(),
+        }
+    }
 }
 
 /// A Home Assistant button: one or more entities toggled together.
@@ -180,6 +211,7 @@ impl Default for Widgets {
             home_url: String::new(),
             home_items: Vec::new(),
             dock_sizes: std::collections::BTreeMap::new(),
+            screens: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -396,8 +428,9 @@ impl Default for Config {
             show_recents: true,
             bounce_on_open: true,
             mascot: true,
-            check_updates: true,
-            auto_update: true,
+            // Barra is a fork: Muelle's updates would replace it with Muelle.
+            check_updates: false,
+            auto_update: false,
             language: Language::Auto,
             appearance: Appearance::Auto,
             shortcuts_folder: None,
@@ -819,9 +852,9 @@ mod tests {
         let config = load(&path).ok().flatten().unwrap_or_default();
         assert_eq!(config.icon_size, 56);
         assert!(config.show_indicators && config.show_recents && config.bounce_on_open);
-        assert!(config.check_updates);
-        // Files from before automatic updates get them, like new installs.
-        assert!(config.auto_update);
+        // Barra turns Muelle's updates off: they would install Muelle itself.
+        assert!(!config.check_updates);
+        assert!(!config.auto_update);
         assert!(config.ai_usage);
         assert!(config.menu_bar_music);
         assert!(!config.accessory_battery);

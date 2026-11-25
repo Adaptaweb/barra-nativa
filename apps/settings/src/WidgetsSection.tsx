@@ -8,13 +8,16 @@
 import { useEffect, useState } from "react";
 import {
   type Config,
+  type DisplayInfo,
   type HomeItem,
+  type ScreenWidgets,
   type WidgetSettings,
   importHome,
+  listDisplays,
   secretSaved,
   setSecret,
 } from "./config";
-import { Card, Row } from "./controls";
+import { Card, Row, Toggle } from "./controls";
 
 type Zone = "barLeft" | "barRight" | "dockLeft" | "dock";
 
@@ -36,6 +39,15 @@ const ZONES: { zone: Zone; title: string; hint: string }[] = [
   { zone: "dock", title: "Dock · derecha", hint: "Al final del dock, después de las carpetas." },
 ];
 
+const DEFAULT_SCREEN: ScreenWidgets = {
+  enabled: true,
+  barLeft: [],
+  barRight: ["reloj"],
+  dockLeft: [],
+  dock: [],
+  dockSizes: {},
+};
+
 const nameOf = (key: string) => WIDGETS.find((w) => w.key === key)?.name ?? key;
 
 interface Props {
@@ -46,29 +58,80 @@ interface Props {
 export function WidgetsSection({ config, update }: Props) {
   const widgets = config.widgets;
   const save = (patch: Partial<WidgetSettings>) => update({ widgets: { ...widgets, ...patch } });
+  const [displays, setDisplays] = useState<DisplayInfo[]>([]);
+  const [screen, setScreen] = useState<string>("");
+  useEffect(() => {
+    listDisplays().then(setDisplays).catch(() => setDisplays([]));
+  }, []);
+  const editing = displays.find((d) => d.device === screen && !d.primary);
+  // The primary display uses the top-level fields; the others their own entry.
+  const layout: ScreenWidgets = editing
+    ? { ...DEFAULT_SCREEN, ...(widgets.screens?.[editing.device] ?? {}) }
+    : { enabled: true, barLeft: widgets.barLeft, barRight: widgets.barRight, dockLeft: widgets.dockLeft, dock: widgets.dock, dockSizes: widgets.dockSizes };
+  const saveScreen = (device: string, patch: Partial<ScreenWidgets>) =>
+    save({
+      screens: {
+        ...(widgets.screens ?? {}),
+        [device]: { ...DEFAULT_SCREEN, ...(widgets.screens?.[device] ?? {}), ...patch },
+      },
+    });
+  const saveLayout = (patch: Partial<ScreenWidgets>) =>
+    editing ? saveScreen(editing.device, patch) : save(patch as Partial<WidgetSettings>);
 
   const move = (zone: Zone, index: number, by: number) => {
-    const list = [...(widgets[zone] ?? [])];
+    const list = [...(layout[zone] ?? [])];
     const target = index + by;
     if (target < 0 || target >= list.length) return;
     [list[index], list[target]] = [list[target], list[index]];
-    save({ [zone]: list });
+    saveLayout({ [zone]: list });
   };
   const remove = (zone: Zone, index: number) =>
-    save({ [zone]: (widgets[zone] ?? []).filter((_, i) => i !== index) });
+    saveLayout({ [zone]: (layout[zone] ?? []).filter((_, i) => i !== index) });
   const add = (zone: Zone, key: string) => {
-    if (!key || (widgets[zone] ?? []).includes(key)) return;
-    save({ [zone]: [...(widgets[zone] ?? []), key] });
+    if (!key || (layout[zone] ?? []).includes(key)) return;
+    saveLayout({ [zone]: [...(layout[zone] ?? []), key] });
   };
 
   return (
     <>
+      {displays.length > 1 ? (
+        <Card title="Pantallas">
+          {displays.map((d) => (
+            <Row
+              key={d.device}
+              label={d.label}
+              hint={d.primary ? "Siempre tiene dock y barra superior." : "Dock y barra superior propios, con sus widgets y solo las apps de esta pantalla."}
+            >
+              <Toggle
+                label={`Dock en ${d.label}`}
+                checked={d.primary || (widgets.screens?.[d.device]?.enabled ?? true)}
+                disabled={d.primary}
+                onChange={(enabled) => saveScreen(d.device, { enabled })}
+              />
+            </Row>
+          ))}
+          <Row label="Editar widgets de" hint="Cada pantalla tiene sus propios widgets.">
+            <span className="select-wrap">
+              <select
+                className="select-control"
+                aria-label="Pantalla a editar"
+                value={editing ? editing.device : ""}
+                onChange={(e) => setScreen(e.target.value)}
+              >
+                {displays.map((d) => (
+                  <option key={d.device} value={d.primary ? "" : d.device}>{d.label}</option>
+                ))}
+              </select>
+            </span>
+          </Row>
+        </Card>
+      ) : null}
       {ZONES.map(({ zone, title, hint }) => (
         <Card key={zone} title={title}>
-          {(widgets[zone] ?? []).length === 0 ? (
+          {(layout[zone] ?? []).length === 0 ? (
             <div className="row"><div className="row-text"><span className="row-hint">{hint} Sin widgets.</span></div></div>
           ) : (
-            (widgets[zone] ?? []).map((key, index) => (
+            (layout[zone] ?? []).map((key, index) => (
               <div className="row" key={key}>
                 <div className="row-text">
                   <span className="row-label">{nameOf(key)}</span>
@@ -80,8 +143,8 @@ export function WidgetsSection({ config, update }: Props) {
                       <select
                         className="select-control size-control"
                         aria-label={`Tamaño de ${nameOf(key)}`}
-                        value={widgets.dockSizes?.[key] ?? "mediano"}
-                        onChange={(e) => save({ dockSizes: { ...widgets.dockSizes, [key]: e.target.value } })}
+                        value={layout.dockSizes?.[key] ?? "mediano"}
+                        onChange={(e) => saveLayout({ dockSizes: { ...layout.dockSizes, [key]: e.target.value } })}
                       >
                         <option value="compacto">Compacto</option>
                         <option value="mediano">Mediano</option>
@@ -90,13 +153,13 @@ export function WidgetsSection({ config, update }: Props) {
                     </span>
                   ) : null}
                   <button type="button" className="push" aria-label="Subir" disabled={index === 0} onClick={() => move(zone, index, -1)}>↑</button>
-                  <button type="button" className="push" aria-label="Bajar" disabled={index === (widgets[zone] ?? []).length - 1} onClick={() => move(zone, index, 1)}>↓</button>
+                  <button type="button" className="push" aria-label="Bajar" disabled={index === (layout[zone] ?? []).length - 1} onClick={() => move(zone, index, 1)}>↓</button>
                   <button type="button" className="push" aria-label={`Quitar ${nameOf(key)}`} onClick={() => remove(zone, index)}>Quitar</button>
                 </div>
               </div>
             ))
           )}
-          <AddRow zone={zone} placed={widgets[zone] ?? []} onAdd={(key) => add(zone, key)} />
+          <AddRow zone={zone} placed={layout[zone] ?? []} onAdd={(key) => add(zone, key)} />
         </Card>
       ))}
 

@@ -29,7 +29,7 @@ use windows::{
             WindowsAndMessaging::{
                 CreateWindowExW, DispatchMessageW, EVENT_OBJECT_CLOAKED,
                 EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND,
-                EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, FindWindowW, GetMessageW,
+                EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, GetMessageW,
                 IDC_ARROW, KillTimer, LoadCursorW, MSG, PM_REMOVE, PeekMessageW, PostMessageW,
                 RegisterClassW, RegisterShellHookWindow, RegisterWindowMessageW, SetTimer,
                 WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_CLOSE, WM_QUIT,
@@ -58,10 +58,23 @@ use super::{
 };
 
 pub fn request_quit() {
-    // SAFETY: Searches for the window and posts a message with no associated data.
-    unsafe {
-        if let Ok(hwnd) = FindWindowW(WINDOW_CLASS, None) {
+    // Every dock process: one per display.
+    for hwnd in muelle_shell::dock_link::dock_windows() {
+        // SAFETY: Posts a message with no associated data.
+        unsafe {
             let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+/// Closes this process's own dock (a display's dock whose display or
+/// parent went away, or that was turned off).
+pub fn quit_this() {
+    let hwnd = MAIN_WINDOW.load(Ordering::Relaxed);
+    if hwnd != 0 {
+        // SAFETY: Only a message is posted; a closed window ignores it.
+        unsafe {
+            let _ = PostMessageW(Some(HWND(hwnd as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -199,7 +212,10 @@ pub fn run() -> Result<()> {
         muelle_config::migrate_legacy_folder();
         let config = load_config();
         crate::widgets::configure(&config.widgets);
-        muelle_shell::taskbar::set_keep_taskbar(!config.hide_windows_taskbar);
+        // Only the primary display's dock hides the taskbar (on every display).
+        muelle_shell::taskbar::set_keep_taskbar(
+            !config.hide_windows_taskbar || muelle_shell::displays::is_secondary_process(),
+        );
         strings::set_language(config.language);
         crate::appearance::set(config.appearance);
         let roster = roster_from(&config);
@@ -375,6 +391,11 @@ pub fn run() -> Result<()> {
     query_bin_in_background();
     with_app("ocultar la barra de Windows", |app| {
         app.request_taskbar(false)
+    });
+    // One dock process for each other display that has one turned on.
+    with_app("pantallas", |app| {
+        crate::screens::sync(&app.config.widgets);
+        Ok(())
     });
 
     muelle_shell::log::line(&format!(

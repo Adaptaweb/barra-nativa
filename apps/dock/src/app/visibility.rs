@@ -95,7 +95,7 @@ impl App {
         if !self.config.menu_bar || self.config.menu_bar_auto_hide {
             return 0;
         }
-        primary_monitor()
+        muelle_shell::displays::home_monitor()
             .filter(|primary| primary.screen == screen)
             .map_or(0, |primary| MenuBar::strip_height(primary.scale))
     }
@@ -114,7 +114,7 @@ impl App {
         self.dock_display
             .filter(|_| self.config.hides_automatically())
             .and_then(monitor_at)
-            .or_else(primary_monitor)
+            .or_else(muelle_shell::displays::home_monitor)
     }
 
     pub(super) fn apply_edge_settings(&mut self) {
@@ -295,7 +295,7 @@ impl App {
         if self.windows.iter().any(|window| window.hwnd == front) {
             self.remember_rect(front);
         }
-        let Some(monitor) = primary_monitor() else {
+        let Some(monitor) = muelle_shell::displays::home_monitor() else {
             return Ok(());
         };
         let bar_fullscreen = tracker::foreground_is_fullscreen(monitor.screen);

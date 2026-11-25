@@ -214,6 +214,12 @@ pub fn monitor_rects() -> Vec<RECT> {
     screens
 }
 
+/// Bounds, work area and scale of a monitor handle.
+#[must_use]
+pub fn monitor_from_handle(handle: HMONITOR) -> Option<Monitor> {
+    monitor_info(handle)
+}
+
 fn monitor_info(handle: HMONITOR) -> Option<Monitor> {
     // SAFETY: Read-only queries using correctly sized structures.
     unsafe {

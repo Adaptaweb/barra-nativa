@@ -497,6 +497,7 @@ pub(super) unsafe extern "system" fn wndproc(
             unsafe {
                 SetTimer(Some(hwnd), REFRESH_TIMER, REFRESH_DELAY_MS, None);
                 if msg == WM_DISPLAYCHANGE && hwnd == main_window() {
+                    crate::screens::display_changed();
                     // Let Explorer settle and create any new secondary taskbars.
                     SetTimer(Some(hwnd), TASKBAR_TIMER, TASKBAR_DELAY_MS, None);
                 }

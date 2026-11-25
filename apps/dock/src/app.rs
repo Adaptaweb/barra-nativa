@@ -98,7 +98,7 @@ pub use events::{
     multi_window_view_scroll, multi_window_view_tick,
 };
 pub(crate) use input::primary_button_down;
-pub use lifecycle::{request_quit, run};
+pub use lifecycle::{quit_this, request_quit, run};
 
 /// These constants are not named in the `windows` crate.
 const WM_MOUSELEAVE: u32 = 0x02A3;

@@ -21,11 +21,28 @@ pub fn is_running() -> bool {
 /// Tells the dock, if it is running, to reload its configuration. A window
 /// message instead of a file watcher: the dock spends nothing while idle.
 pub fn notify_config_changed() {
-    // SAFETY: Looks up a window and posts a message without associated data.
+    // SAFETY: Looks up windows and posts a message without associated data.
     unsafe {
-        if let Ok(dock) = FindWindowW(DOCK_WINDOW_CLASS, None) {
-            let message = RegisterWindowMessageW(CONFIG_CHANGED);
+        let message = RegisterWindowMessageW(CONFIG_CHANGED);
+        for dock in dock_windows() {
             let _ = PostMessageW(Some(dock), message, WPARAM(0), LPARAM(0));
         }
     }
+}
+
+/// The main window of every dock process: one per display.
+#[must_use]
+pub fn dock_windows() -> Vec<windows::Win32::Foundation::HWND> {
+    let mut found = Vec::new();
+    let mut previous = None;
+    // SAFETY: Read-only window lookups.
+    unsafe {
+        while let Ok(hwnd) =
+            windows::Win32::UI::WindowsAndMessaging::FindWindowExW(None, previous, DOCK_WINDOW_CLASS, None)
+        {
+            found.push(hwnd);
+            previous = Some(hwnd);
+        }
+    }
+    found
 }

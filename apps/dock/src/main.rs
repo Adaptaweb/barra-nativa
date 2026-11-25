@@ -33,6 +33,7 @@ mod scene;
 mod shell_work;
 mod strings;
 mod thumbnails;
+mod screens;
 mod usage;
 mod widgets;
 
@@ -70,6 +71,9 @@ fn main() -> Result<()> {
         .as_slice()
     {
         [] => run_dock(false),
+        [screens::FLAG, device, parent] => {
+            screens::run_child(device, parent.parse().context("pid no válido")?, initialize_dock)
+        }
         [recovery::RECOVERED_FLAG] => run_dock(true),
         ["--quit"] => {
             app::request_quit();

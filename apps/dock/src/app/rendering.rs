@@ -12,7 +12,7 @@ use muelle_core::{
 use muelle_shell::{
     appbar::Edge,
     power, recycle_bin,
-    system::{animations_enabled, primary_monitor},
+    system::animations_enabled,
 };
 use windows::Win32::{Foundation::RECT, UI::WindowsAndMessaging::SetTimer};
 
@@ -478,7 +478,7 @@ impl App {
             // Auto-hide reserves zero height. Moving the dock must never
             // change the destination monitor's work area.
             let reservation = if automatic {
-                primary_monitor().map_or(screen, |primary| primary.screen)
+                muelle_shell::displays::home_monitor().map_or(screen, |home| home.screen)
             } else {
                 screen
             };

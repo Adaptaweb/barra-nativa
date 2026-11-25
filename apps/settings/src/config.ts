@@ -75,7 +75,27 @@ export interface WidgetSettings {
   homeItems: HomeItem[];
   /** Size of each widget in the dock: compacto, mediano or ancho. */
   dockSizes: Record<string, string>;
+  /** Other displays by device name: their own dock, menu bar and widgets. */
+  screens: Record<string, ScreenWidgets>;
 }
+
+/** Mirrors `muelle_config::ScreenWidgets`. */
+export interface ScreenWidgets {
+  enabled: boolean;
+  barLeft: string[];
+  barRight: string[];
+  dockLeft: string[];
+  dock: string[];
+  dockSizes: Record<string, string>;
+}
+
+export interface DisplayInfo {
+  device: string;
+  label: string;
+  primary: boolean;
+}
+
+export const listDisplays = () => invoke<DisplayInfo[]>("list_displays");
 
 export const ICON_SIZE = { min: 32, max: 96 } as const;
 export const MAX_MAGNIFIED_SIZE = 160;

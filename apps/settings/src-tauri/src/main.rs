@@ -352,7 +352,8 @@ fn main() {
             wallpapers::apply_wallpaper,
             barra::secret_saved,
             barra::set_secret,
-            barra::import_home
+            barra::import_home,
+            barra::list_displays
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {

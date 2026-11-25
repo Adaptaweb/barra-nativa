@@ -1913,7 +1913,7 @@ impl MenuBar {
 
     /// Redraws the bar if anything it shows has changed.
     pub fn refresh(&mut self, gfx: &Gfx) -> Result<()> {
-        let Some(monitor) = system::primary_monitor() else {
+        let Some(monitor) = muelle_shell::displays::home_monitor() else {
             return Ok(());
         };
         let active_providers = if self.usage.is_some() {
