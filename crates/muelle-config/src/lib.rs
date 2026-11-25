@@ -101,7 +101,8 @@ pub struct Config {
     pub accessory_battery: bool,
     /// The dot under apps that have windows open.
     pub show_indicators: bool,
-    /// The section of recently used apps that are not pinned.
+    /// The section of recently used apps that are not pinned. Off in Barra:
+    /// closed apps leave the dock.
     pub show_recents: bool,
     /// Icons bounce while the app they open is starting.
     pub bounce_on_open: bool,
@@ -461,7 +462,7 @@ impl Default for Config {
             menu_bar_island_style: IslandStyle::Notch,
             accessory_battery: false,
             show_indicators: true,
-            show_recents: true,
+            show_recents: false,
             bounce_on_open: true,
             mascot: true,
             // Barra is a fork: Muelle's updates would replace it with Muelle.
@@ -888,7 +889,7 @@ mod tests {
         fs::write(&path, r#"{"version":1,"iconSize":56}"#).ok();
         let config = load(&path).ok().flatten().unwrap_or_default();
         assert_eq!(config.icon_size, 56);
-        assert!(config.show_indicators && config.show_recents && config.bounce_on_open);
+        assert!(config.show_indicators && !config.show_recents && config.bounce_on_open);
         // Barra turns Muelle's updates off: they would install Muelle itself.
         assert!(!config.check_updates);
         assert!(!config.auto_update);

@@ -22,6 +22,8 @@ export function CustomWallpapers({ config, update, onApplied }: Props) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [picture, setPicture] = useState<string | null>(null);
+  // The tile the user picked; "Guardar fondo" applies it.
+  const [chosen, setChosen] = useState<string | null>(null);
 
   useEffect(() => {
     listCustomWallpapers().then(setItems).catch(() => setItems([]));
@@ -55,8 +57,8 @@ export function CustomWallpapers({ config, update, onApplied }: Props) {
       const added = await addCustomWallpaper();
       if (added) {
         setItems((list) => [added, ...list]);
-        setBusy(false);
-        await apply(added);
+        setChosen(added.name);
+        setMessage({ text: "Agregado. Presiona \"Guardar fondo\" para usarlo.", error: false });
       }
     } catch (error) {
       setMessage({ text: typeof error === "string" ? error : "No se pudo agregar el fondo.", error: true });
@@ -68,6 +70,7 @@ export function CustomWallpapers({ config, update, onApplied }: Props) {
   const remove = async (item: CustomWallpaper) => {
     try {
       if (config.videoWallpaper === item.path) update({ videoWallpaper: null });
+      if (chosen === item.name) setChosen(null);
       await removeCustomWallpaper(item.name);
       setItems((list) => list.filter((i) => i.name !== item.name));
     } catch {
@@ -77,15 +80,29 @@ export function CustomWallpapers({ config, update, onApplied }: Props) {
 
   const active = (item: CustomWallpaper) =>
     item.video ? config.videoWallpaper === item.path : !config.videoWallpaper && picture === item.name;
+  const selected = items.find((item) => item.name === chosen) ?? null;
+  const save = async () => {
+    if (!selected) return;
+    await apply(selected);
+    setChosen(null);
+  };
 
   return (
     <Card title="Tus fondos">
       <p className="wallpaper-hint">
-        Agrega tus imágenes o videos MP4. Un video se reproduce en movimiento detrás de los iconos, en todas las pantallas, sin sonido.
+        Agrega tus imágenes o videos MP4, elige uno y presiona "Guardar fondo". Un video se reproduce en movimiento detrás de los iconos, en todas las pantallas, sin sonido.
       </p>
       <div className="custom-actions">
-        <button type="button" className="push push-primary" disabled={busy} onClick={add}>
+        <button type="button" className="push" disabled={busy} onClick={add}>
           Agregar imagen o video…
+        </button>
+        <button
+          type="button"
+          className="push push-primary"
+          disabled={busy || !selected || active(selected)}
+          onClick={save}
+        >
+          Guardar fondo
         </button>
         {config.videoWallpaper ? (
           <button type="button" className="push" onClick={() => update({ videoWallpaper: null })}>
@@ -101,10 +118,14 @@ export function CustomWallpapers({ config, update, onApplied }: Props) {
                 type="button"
                 className="wallpaper-choice"
                 title={item.name}
-                aria-label={`Usar ${item.name} como fondo`}
-                aria-pressed={active(item)}
+                aria-label={`Elegir ${item.name}`}
+                aria-pressed={chosen === item.name || (chosen === null && active(item))}
+                data-chosen={chosen === item.name || undefined}
                 disabled={busy}
-                onClick={() => apply(item)}
+                onClick={() => {
+                  setChosen(item.name);
+                  setMessage(active(item) ? { text: "Este es tu fondo actual.", error: false } : null);
+                }}
               >
                 <span className="wallpaper-image">
                   {item.preview ? <img src={item.preview} alt="" /> : <span className="custom-placeholder">{item.video ? "Video" : "Imagen"}</span>}
