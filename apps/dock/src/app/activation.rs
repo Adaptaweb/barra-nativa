@@ -527,7 +527,7 @@ impl App {
         let recent_before = self.roster.recent().to_vec();
         let changed = self
             .roster
-            .sync(self.windows.iter().filter(|window| crate::screens::on_this_display(window.hwnd)).map(|window| window.app_id.as_str()));
+            .sync(self.windows.iter().map(|window| window.app_id.as_str()));
         if !self.config.pin_explorer {
             self.roster.forget_recent(&explorer_id());
         }
@@ -619,6 +619,13 @@ impl App {
         self.windows = self
             .tracker
             .list_with_workspaces(self.config.show_other_workspaces);
+        // With a dock on each display, this dock owns only the windows on its
+        // own display: its running dots, clicks (show, minimize, cycle),
+        // previews and menus never touch a window on another display.
+        if crate::screens::pinned(&self.config.widgets) {
+            self.windows
+                .retain(|window| crate::screens::on_this_display(window.hwnd));
+        }
         self.preview_order.update(&self.windows);
         let pruned = self
             .attention

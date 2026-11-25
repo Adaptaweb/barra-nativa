@@ -73,6 +73,12 @@ pub(super) unsafe extern "system" fn on_win_event(
         // the existing full-screen timer, without enumerating apps or polling.
         if child == 0 && hwnd.0 as isize == tracker::foreground_window() {
             unsafe { SetTimer(Some(main_window()), FULLSCREEN_TIMER, SYNC_DELAY_MS, None) };
+            // With a dock per display, a window dragged to another display
+            // moves to that display's dock: re-read once the burst settles.
+            if crate::screens::pinned_cached() {
+                // SAFETY: A timer on our own window.
+                unsafe { SetTimer(Some(main_window()), SYNC_TIMER, SYNC_DELAY_MS, None) };
+            }
         }
     } else if event == EVENT_OBJECT_CLOAKED || event == EVENT_OBJECT_UNCLOAKED {
         // Shows the windows of the virtual desktop in front, as the Windows

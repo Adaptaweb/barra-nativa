@@ -111,6 +111,11 @@ pub fn pinned(widgets: &Widgets) -> bool {
     })
 }
 
+/// The last `pinned` answer, without the settings: for window events.
+pub fn pinned_cached() -> bool {
+    displays::is_secondary_process() || PINNED.lock().is_ok_and(|cached| cached.unwrap_or(false))
+}
+
 /// `pinned`, worked out again after a settings or display change.
 static PINNED: Mutex<Option<bool>> = Mutex::new(None);
 
