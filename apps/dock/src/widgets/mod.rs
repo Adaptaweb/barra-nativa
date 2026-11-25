@@ -10,6 +10,7 @@
 mod casa;
 mod cell;
 mod clima;
+mod control;
 mod draw;
 mod ia;
 mod more;
@@ -54,11 +55,14 @@ pub enum WidgetId {
     /// The programs in the notification area: opens the Windows flyout of
     /// hidden tray icons.
     Bandeja,
+    /// Network, volume and battery; opens the Windows quick settings.
+    Control,
 }
 
 impl WidgetId {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Bandeja,
+        Self::Control,
         Self::Sistema,
         Self::Clima,
         Self::Reloj,
@@ -83,6 +87,7 @@ impl WidgetId {
             Self::ChatGpt => "chatgpt",
             Self::Gemini => "gemini",
             Self::Bandeja => "bandeja",
+            Self::Control => "control",
         }
     }
 
@@ -97,6 +102,7 @@ impl WidgetId {
             Self::ChatGpt => "ChatGPT",
             Self::Gemini => "Gemini",
             Self::Bandeja => "Segundo plano",
+            Self::Control => "Centro de control",
         }
     }
 
@@ -135,7 +141,7 @@ impl WidgetId {
             Self::Claude => "https://claude.ai/settings/usage".to_owned(),
             Self::ChatGpt => "https://chatgpt.com/codex/settings/usage".to_owned(),
             Self::Gemini => "https://aistudio.google.com/".to_owned(),
-            Self::Bandeja => String::new(),
+            Self::Bandeja | Self::Control => String::new(),
         }
     }
 
@@ -156,6 +162,7 @@ impl WidgetId {
             Self::Casa => format!("{:?}", readings.casa),
             // The dock shows only its chevron; the icons are in the panel.
             Self::Bandeja => String::new(),
+            Self::Control => format!("{:?}", readings.control),
             Self::Claude | Self::ChatGpt | Self::Gemini => {
                 let provider = self.provider().unwrap_or(Provider::Claude);
                 readings.ia.as_ref().map_or_else(String::new, |snapshot| {
@@ -172,7 +179,7 @@ impl WidgetId {
             Self::Clima => readings.clima.is_some(),
             Self::Reloj => readings.reloj.is_some(),
             Self::Casa => readings.casa.is_some(),
-            Self::Bandeja => true,
+            Self::Bandeja | Self::Control => true,
             Self::Claude | Self::ChatGpt | Self::Gemini => readings.ia.is_some(),
         }
     }
@@ -185,6 +192,7 @@ impl WidgetId {
             Self::Casa => (&CASA_ON, casa::start),
             Self::Claude | Self::ChatGpt | Self::Gemini => (&IA_ON, ia::start),
             Self::Bandeja => (&BANDEJA_ON, start_tray),
+            Self::Control => (&CONTROL_ON, control::start),
         }
     }
 }
@@ -296,6 +304,16 @@ pub struct Readings {
     pub reloj: Option<RelojData>,
     pub casa: Option<CasaData>,
     pub ia: Option<usage::Snapshot>,
+    pub control: Option<ControlData>,
+}
+
+/// What the quick settings button shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ControlData {
+    pub network: muelle_shell::status::Network,
+    pub volume: Option<muelle_shell::status::Volume>,
+    pub battery: Option<muelle_shell::system::Battery>,
+    pub bluetooth: bool,
 }
 
 /// Which widgets the menu bar shows, left and right.
@@ -318,6 +336,7 @@ static READINGS: Mutex<Readings> = Mutex::new(Readings {
     reloj: None,
     casa: None,
     ia: None,
+    control: None,
 });
 static SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
 static TARGET: AtomicIsize = AtomicIsize::new(0);
@@ -328,6 +347,7 @@ static RELOJ_ON: AtomicBool = AtomicBool::new(false);
 static CASA_ON: AtomicBool = AtomicBool::new(false);
 static IA_ON: AtomicBool = AtomicBool::new(false);
 static BANDEJA_ON: AtomicBool = AtomicBool::new(false);
+static CONTROL_ON: AtomicBool = AtomicBool::new(false);
 
 fn ids(keys: &[String]) -> Vec<WidgetId> {
     let mut out = Vec::new();

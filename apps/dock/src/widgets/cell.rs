@@ -51,6 +51,8 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
     }
     match (id, size) {
         (WidgetId::Bandeja, _) => 70,
+        (WidgetId::Control, Size::Compact) => 120,
+        (WidgetId::Control, _) => 200,
         (WidgetId::Reloj, Size::Compact) => 135,
         (WidgetId::Reloj, Size::Medium) => 290,
         (WidgetId::Reloj, Size::Wide) => 600,
@@ -99,6 +101,7 @@ pub fn render(
                 WidgetId::Sistema => sistema(&mut c, size, readings),
                 WidgetId::Casa => casa(&mut c, size, readings),
                 WidgetId::Bandeja => bandeja(&mut c, readings),
+                WidgetId::Control => control(&mut c, size, readings),
                 WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini => {
                     ia(&mut c, id, size, readings)
                 }
@@ -137,6 +140,49 @@ fn bandeja(c: &mut Cell<'_, '_>, _r: &Readings) -> Result<()> {
     c.x += c.px(4.0);
     c.pen.icon('\u{E70E}', (c.x, (c.height - h) / 2.0), size, c.strong())?;
     c.x += w + c.px(4.0);
+    Ok(())
+}
+
+/// Network, volume and battery, as the Windows quick settings button.
+fn control(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
+    let icon = 17.0;
+    let gap = c.px(9.0);
+    c.x += c.px(4.0);
+    let Some(d) = r.control else {
+        let (_, h) = c.gfx.measure_icon('\u{E713}', icon, c.unit)?;
+        c.x += c.pen.icon('\u{E713}', (c.x, (c.height - h) / 2.0), icon, c.strong())?;
+        c.x += c.px(4.0);
+        return Ok(());
+    };
+    let mut glyphs = vec![super::control::network_glyph(d.network), super::control::volume_glyph(d.volume)];
+    if d.bluetooth && size != Size::Compact {
+        glyphs.push('\u{E702}');
+    }
+    for (index, glyph) in glyphs.into_iter().enumerate() {
+        if index > 0 {
+            c.x += gap;
+        }
+        let (_, h) = c.gfx.measure_icon(glyph, icon, c.unit)?;
+        c.x += c.pen.icon(glyph, (c.x, (c.height - h) / 2.0), icon, c.strong())?;
+    }
+    if let Some(battery) = d.battery {
+        c.x += gap;
+        let glyph = super::control::battery_glyph(battery);
+        let (_, h) = c.gfx.measure_icon(glyph, icon, c.unit)?;
+        let color = if battery.charging {
+            GREEN
+        } else if battery.percent <= 20 {
+            RED
+        } else {
+            c.strong()
+        };
+        c.x += c.pen.icon(glyph, (c.x, (c.height - h) / 2.0), icon, color)?;
+        if size != Size::Compact {
+            c.x += c.px(4.0);
+            c.text(&format!("{}%", battery.percent), 12.0, Weight::Bold, c.strong())?;
+        }
+    }
+    c.x += c.px(4.0);
     Ok(())
 }
 
@@ -263,25 +309,17 @@ const MONTHS: [&str; 12] = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ag
 fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     use chrono::{Datelike, Timelike};
     let now = Local::now();
-    let hour12 = match now.hour() % 12 {
-        0 => 12,
-        h => h,
-    };
-    let time = format!("{hour12}:{:02}", now.minute());
-    let ampm = if now.hour() < 12 { "AM" } else { "PM" };
+    let time = format!("{:02}:{:02}", now.hour(), now.minute());
     let weekday = WEEKDAYS[now.weekday().num_days_from_monday() as usize];
     if size == Size::Compact {
         let short: String = weekday.chars().take(3).collect();
         let date = format!("{short} {}", now.day());
         let (tw, th) = c.gfx.measure(&time, 17.0, c.unit, Weight::Bold)?;
-        let (aw, _) = c.gfx.measure(ampm, 10.0, c.unit, Weight::Bold)?;
         let (dw, dh) = c.gfx.measure(&date, 10.5, c.unit, Weight::Normal)?;
-        let total = (tw + c.px(2.0) + aw).max(dw);
+        let total = tw.max(dw);
         let x = c.x;
         let y = (c.height - th - dh) / 2.0;
-        let top_x = x + (total - (tw + c.px(2.0) + aw)) / 2.0;
-        c.pen.text(&time, (top_x, y), 17.0, Weight::Bold, c.strong())?;
-        c.pen.text(ampm, (top_x + tw + c.px(2.0), y + th * 0.38), 10.0, Weight::Bold, c.faded())?;
+        c.pen.text(&time, (x + (total - tw) / 2.0, y), 17.0, Weight::Bold, c.strong())?;
         c.pen.text(&date, (x + (total - dw) / 2.0, y + th), 10.5, Weight::Normal, c.faded())?;
         c.x += total;
         return Ok(());
@@ -295,11 +333,6 @@ fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     )?;
     c.separator()?;
     c.text(&time, 17.0, Weight::Bold, c.strong())?;
-    c.x += c.px(2.0);
-    let (_, th) = c.gfx.measure(&time, 17.0, c.unit, Weight::Bold)?;
-    let (_, ah) = c.gfx.measure(ampm, 10.0, c.unit, Weight::Bold)?;
-    c.pen.text(ampm, (c.x, (c.height + th) / 2.0 - ah - c.px(2.0)), 10.0, Weight::Bold, c.faded())?;
-    c.x += c.gfx.measure(ampm, 10.0, c.unit, Weight::Bold)?.0;
     if size != Size::Wide {
         return Ok(());
     }

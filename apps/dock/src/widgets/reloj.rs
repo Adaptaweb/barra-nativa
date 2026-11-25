@@ -287,7 +287,7 @@ pub(super) fn start() {
                 let now = Utc::now().timestamp();
                 events.retain(|e| e.end > now);
                 let reading = RelojData {
-                    clock: muelle_shell::system::clock_text(),
+                    clock: clock_24h(),
                     day: Local::now().format("%d").to_string().trim_start_matches('0').to_owned(),
                     weekday: weekday(),
                     calendar,
@@ -307,6 +307,22 @@ pub(super) fn start() {
     if spawned.is_err() {
         RELOJ_ON.store(false, Ordering::Release);
     }
+}
+
+/// "mié 25 nov 14:19": always 24 hours, whatever the regional format.
+fn clock_24h() -> String {
+    use chrono::{Datelike, Timelike};
+    const DAYS: [&str; 7] = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"];
+    const MONTHS: [&str; 12] = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];
+    let now = Local::now();
+    format!(
+        "{} {} {}  {:02}:{:02}",
+        DAYS[now.weekday().num_days_from_monday() as usize],
+        now.day(),
+        MONTHS[now.month0() as usize],
+        now.hour(),
+        now.minute()
+    )
 }
 
 fn weekday() -> String {

@@ -98,6 +98,8 @@ fn reset_note(reset: Option<DateTime<Utc>>) -> String {
 pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
     let mut b = Vec::new();
     match id {
+        // Opens the Windows quick settings; never a panel of its own.
+        WidgetId::Control => {}
         WidgetId::Bandeja => {
             b.push(Block::Title("Segundo plano".into(), format!("{} apps", r.tray.len())));
             if r.tray.is_empty() {

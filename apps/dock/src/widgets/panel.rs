@@ -177,6 +177,11 @@ thread_local! {
 
 /// Opens the widget's panel at `anchor`, or closes it if it is open.
 pub fn toggle(gfx: &Gfx, id: WidgetId, anchor: POINT, placement: Placement) {
+    if id == WidgetId::Control {
+        close();
+        muelle_shell::launcher::open_quick_settings();
+        return;
+    }
 
     let was_open = OPEN.with(|open| {
         open.try_borrow()
