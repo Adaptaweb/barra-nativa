@@ -192,6 +192,9 @@ pub fn run() -> Result<()> {
         };
         let visual = create(WS_EX_LAYERED | WS_EX_TRANSPARENT)?;
         let input = create(WINDOW_EX_STYLE::default())?;
+        // The visual window lives for the whole process and already receives
+        // the background `ASSETS_READY` posts.
+        crate::widgets::set_target(visual, super::WIDGETS_CHANGED);
 
         // Without this, the system backdrop brush appears black. Windows 10
         // does not know the attribute; the dock then draws solid glass

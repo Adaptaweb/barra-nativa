@@ -53,9 +53,9 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
         (WidgetId::Bandeja, _) => 70,
         (WidgetId::Control, Size::Compact) => 120,
         (WidgetId::Control, _) => 200,
-        (WidgetId::Reloj, Size::Compact) => 135,
-        (WidgetId::Reloj, Size::Medium) => 290,
-        (WidgetId::Reloj, Size::Wide) => 600,
+        (WidgetId::Reloj, Size::Compact) => 150,
+        (WidgetId::Reloj, Size::Medium) => 330,
+        (WidgetId::Reloj, Size::Wide) => 640,
         (WidgetId::Clima, Size::Compact) => 160,
         (WidgetId::Clima, Size::Medium) => 300,
         (WidgetId::Clima, Size::Wide) => 480,
@@ -338,12 +338,12 @@ fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     if size == Size::Compact {
         let short: String = weekday.chars().take(3).collect();
         let date = format!("{short} {}", now.day());
-        let (tw, th) = c.clock_measure(&now, 17.0, 10.5)?;
+        let (tw, th) = c.clock_measure(&now, 20.0, 12.0)?;
         let (dw, dh) = c.gfx.measure(&date, 10.5, c.unit, Weight::Normal)?;
         let total = tw.max(dw);
         let x = c.x;
         let y = (c.height - th - dh) / 2.0;
-        c.clock_draw(&now, x + (total - tw) / 2.0, y, 17.0, 10.5)?;
+        c.clock_draw(&now, x + (total - tw) / 2.0, y, 20.0, 12.0)?;
         c.pen.text(&date, (x + (total - dw) / 2.0, y + th), 10.5, Weight::Normal, c.faded())?;
         c.x += total;
         return Ok(());
@@ -356,8 +356,8 @@ fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
         12,
     )?;
     c.separator()?;
-    let (_, hb) = c.clock_measure(&now, 17.0, 11.0)?;
-    let width = c.clock_draw(&now, c.x, (c.height - hb) / 2.0, 17.0, 11.0)?;
+    let (_, hb) = c.clock_measure(&now, 24.0, 14.0)?;
+    let width = c.clock_draw(&now, c.x, (c.height - hb) / 2.0, 24.0, 14.0)?;
     c.x += width;
     if size != Size::Wide {
         return Ok(());

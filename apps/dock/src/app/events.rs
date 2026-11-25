@@ -33,7 +33,8 @@ use super::{
     PBT_POWERSETTINGCHANGE, PINS_CHANGED, PINS_DELAY_MS, PINS_TIMER, PREVIEW_TIMER,
     REFRESH_DELAY_MS, REFRESH_TIMER, SHELL_HOOK, SPI_SETWORKAREA, SPRING_TIMER, SWITCHER_TIMER,
     SYNC_DELAY_MS, SYNC_TIMER, TASKBAR_CREATED, TASKBAR_DELAY_MS, TASKBAR_PREFS_CHANGED,
-    TASKBAR_TAKEN, TASKBAR_TIMER, TRIM_TIMER, UPDATE_TIMER, WM_MOUSELEAVE, WM_POWERBROADCAST,
+    TASKBAR_TAKEN, TASKBAR_TIMER, TRIM_TIMER, UPDATE_TIMER, WIDGETS_CHANGED, WM_MOUSELEAVE,
+    WM_POWERBROADCAST,
     feedback::query_bin_in_background,
     lifecycle::{is_tracked, main_window},
     with_app, with_app_then,
@@ -439,6 +440,7 @@ pub(super) unsafe extern "system" fn wndproc(
             // the button message so the same click also opens the chosen app.
             return LRESULT(if activate { MA_ACTIVATE } else { MA_NOACTIVATE } as isize);
         }
+        WIDGETS_CHANGED => menu_bar_widgets_changed(),
         ASSETS_READY => {
             // SAFETY: Coalesce background results on this UI window.
             unsafe { SetTimer(Some(hwnd), ASSETS_TIMER, ASSETS_DELAY_MS, None) };

@@ -91,7 +91,7 @@ pub use events::{
     group_view_press, group_view_press_lost, group_view_release, group_view_tick,
     menu_bar_accessories_changed, menu_bar_accessories_reset, menu_bar_audio_changed,
     menu_bar_bluetooth_changed, menu_bar_check_pointer, menu_bar_clicked, menu_bar_dismiss_island,
-    menu_bar_finish_hide, menu_bar_media_changed, menu_bar_widgets_changed, menu_bar_pointer_moved, menu_bar_progress_tick,
+    menu_bar_finish_hide, menu_bar_media_changed, menu_bar_pointer_moved, menu_bar_progress_tick,
     menu_bar_registry_changed, menu_bar_scrolled, menu_bar_tick, menu_bar_volume_flush,
     menu_bar_volume_press, menu_bar_volume_release, multi_window_view_dismiss,
     multi_window_view_middle_click, multi_window_view_press, multi_window_view_release,
@@ -138,6 +138,8 @@ const ASSETS_READY: u32 = WM_APP + 8;
 /// The guard also checks graphics health while the scene is otherwise idle.
 pub(crate) const HEALTH_CHECK: u32 = WM_APP + 9;
 const TASKBAR_PREFS_CHANGED: u32 = WM_APP + 10;
+/// A widget published a new reading; works with or without a menu bar.
+const WIDGETS_CHANGED: u32 = WM_APP + 27;
 
 /// Magnification range, in icons on either side of the cursor.
 const RANGE_IN_ICONS: f32 = 3.0;

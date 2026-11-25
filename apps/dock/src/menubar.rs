@@ -94,8 +94,6 @@ const HIT_SLOP: f32 = 7.0;
 const WIDGET_HEIGHT: f32 = 24.0;
 
 const MEDIA_CHANGED: u32 = WM_APP + 28;
-/// A widget reading changed (see `widgets`).
-const WIDGETS_CHANGED: u32 = WM_APP + 27;
 const VOLUME_CAPTURE_LOST: u32 = WM_APP + 31;
 const AUDIO_CHANGED: u32 = WM_APP + 32;
 const AUDIO_TICK: u32 = WM_APP + 33;
@@ -600,7 +598,6 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         REGISTRY_CHANGED => app::menu_bar_registry_changed(),
         ACCESSORIES_CHANGED => app::menu_bar_accessories_changed(),
         MEDIA_CHANGED => app::menu_bar_media_changed(),
-        WIDGETS_CHANGED => app::menu_bar_widgets_changed(),
         BLUETOOTH_CHANGED => app::menu_bar_bluetooth_changed(),
         AUDIO_CHANGED => {
             if !AUDIO_TICK_PENDING.swap(true, Ordering::Relaxed) {
@@ -1219,7 +1216,6 @@ impl MenuBar {
             widget_visuals: Vec::new(),
             bar_print: String::new(),
         };
-        widgets::set_target(hwnd, WIDGETS_CHANGED);
         AUDIO_TICK_PENDING.store(false, Ordering::Relaxed);
         bar.update_status();
         bar.refresh(gfx)?;
