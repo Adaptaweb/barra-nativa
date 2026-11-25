@@ -1,7 +1,8 @@
 //! Widget islands: two glass pills of their own at the bottom left and bottom
 //! right of the display, apart from the dock, which keeps the apps in the
-//! middle. They look like the dock (same glass, height and corners), hide
-//! with it, and open each widget's panel above them.
+//! middle. They look like the dock (same glass, proportional corners) but are
+//! taller (`ISLAND_SCALE` x the icon) so the widgets read well. They hide with
+//! it and open each widget's panel above them.
 
 use crate::gfx::Gfx;
 use crate::scene::Theme;
@@ -45,6 +46,20 @@ pub struct Frame {
     pub padding: f32,
     pub margin: f32,
     pub scale: f32,
+}
+
+/// Islands are 1.5 times the icon tall, so the widgets inside read well.
+const ISLAND_SCALE: f32 = 1.5;
+
+/// Height of a widget cell inside an island, in physical pixels.
+fn cell_height(frame: &Frame) -> f32 {
+    (frame.icon * ISLAND_SCALE).round()
+}
+
+/// Height of an island's glass pill: the dock's, grown by the extra cell
+/// height. It stays at the same margin from the screen edge and grows up.
+fn pill_height(frame: &Frame) -> f32 {
+    (frame.height + frame.icon * (ISLAND_SCALE - 1.0)).round()
 }
 
 struct Island {
@@ -138,14 +153,15 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
     let mut x = frame.padding;
     let mut brushes = Vec::new();
     for id in list {
-        let (brush, _) = widgets::render_cell(gfx, *id, &readings, frame.icon as u32, light)?;
-        let width = (frame.icon * f32::from(widgets::dock_width(*id, widgets::dock_size(*id))) / 100.0).round();
+        let (brush, _) = widgets::render_cell(gfx, *id, &readings, cell_height(frame) as u32, light)?;
+        let width = (cell_height(frame) * f32::from(widgets::dock_width(*id, widgets::dock_size(*id))) / 100.0).round();
         cells.push((*id, x, width));
         brushes.push(brush);
         x += width + gap;
     }
     let width = (x - gap + frame.padding).round();
-    let height = frame.height;
+    let height = pill_height(frame);
+    let cell_h = cell_height(frame);
     let c = &gfx.compositor;
     let hwnd = create_window()?;
     // SAFETY: `hwnd` is the live window created above.
@@ -162,8 +178,8 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
     let mut sprites = Vec::new();
     for ((_, left, w), brush) in cells.iter().zip(&brushes) {
         let sprite = c.CreateSpriteVisual()?;
-        sprite.SetSize(Vector2::new(*w, frame.icon))?;
-        sprite.SetOffset(Vector3::new(*left, ((height - frame.icon) / 2.0).round(), 0.0))?;
+        sprite.SetSize(Vector2::new(*w, cell_h))?;
+        sprite.SetOffset(Vector3::new(*left, ((height - cell_h) / 2.0).round(), 0.0))?;
         sprite.SetBrush(brush)?;
         root.Children()?.InsertAtTop(&sprite)?;
         sprites.push(sprite);
@@ -279,11 +295,11 @@ pub fn repaint() {
         'all: for island in &state.islands {
             for ((id, _, width), sprite) in island.cells.iter().zip(&island.sprites) {
                 let Ok((brush, _)) =
-                    widgets::render_cell(&gfx, *id, &readings, frame.icon as u32, frame.theme.light)
+                    widgets::render_cell(&gfx, *id, &readings, cell_height(&frame) as u32, frame.theme.light)
                 else {
                     continue;
                 };
-                let now = (frame.icon * f32::from(widgets::dock_width(*id, widgets::dock_size(*id))) / 100.0).round();
+                let now = (cell_height(&frame) * f32::from(widgets::dock_width(*id, widgets::dock_size(*id))) / 100.0).round();
                 if (now - width).abs() > 0.5 {
                     resized = true;
                     break 'all;

@@ -41,8 +41,19 @@ pub(super) fn bar(
             .control
             .map(|d| control_bar(gfx, d, scale, height, light))
             .transpose(),
+        WidgetId::Notificaciones => notificaciones_bar(gfx, scale, height, light).map(Some),
         WidgetId::Sistema | WidgetId::Clima | WidgetId::Bandeja => Ok(None),
     }
+}
+
+/// Only the bell.
+fn notificaciones_bar(gfx: &Gfx, scale: f32, height: f32, light: bool) -> Result<LabelBrush> {
+    let size = 13.0;
+    let (w, h) = gfx.measure_icon('\u{EA8F}', size, scale)?;
+    gfx.paint((w, height), scale, |pen| {
+        pen.icon('\u{EA8F}', (0.0, (height - h) / 2.0), size, ink(light, 1.0))?;
+        Ok(())
+    })
 }
 
 fn control_bar(

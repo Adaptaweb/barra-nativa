@@ -89,6 +89,8 @@ function dockCell(key: string, size: PreviewSize) {
       );
     case "bandeja":
       return <span className="wp-glyph">{""}</span>;
+    case "notificaciones":
+      return <span className="wp-glyph">{""}</span>;
     default:
       return <span className="wp-dim">{key}</span>;
   }
@@ -104,6 +106,7 @@ function barCell(key: string) {
     case "chatgpt": return <span><b>G</b> 40% · 3 h</span>;
     case "gemini": return <span><b>✦</b> 12%</span>;
     case "control": return <span className="wp-glyphs"><span className="wp-glyph">{""}</span><span className="wp-glyph">{""}</span></span>;
+    case "notificaciones": return <span className="wp-glyph">{""}</span>;
     default: return null;
   }
 }

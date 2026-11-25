@@ -82,6 +82,8 @@ pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
     match id {
         // Opens the Windows quick settings; never a panel of its own.
         WidgetId::Control => {}
+        // Opens the Windows notification center; never a panel of its own.
+        WidgetId::Notificaciones => {}
         WidgetId::Bandeja => {
             b.push(Block::Title("Segundo plano".into(), format!("{} apps", r.tray.len())));
             if r.tray.is_empty() {

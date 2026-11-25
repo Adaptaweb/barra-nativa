@@ -59,12 +59,15 @@ pub enum WidgetId {
     Bandeja,
     /// Network, volume and battery; opens the Windows quick settings.
     Control,
+    /// A bell button; opens the Windows notification center.
+    Notificaciones,
 }
 
 impl WidgetId {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Bandeja,
         Self::Control,
+        Self::Notificaciones,
         Self::Sistema,
         Self::Clima,
         Self::Reloj,
@@ -90,6 +93,7 @@ impl WidgetId {
             Self::Gemini => "gemini",
             Self::Bandeja => "bandeja",
             Self::Control => "control",
+            Self::Notificaciones => "notificaciones",
         }
     }
 
@@ -105,6 +109,7 @@ impl WidgetId {
             Self::Gemini => "Gemini",
             Self::Bandeja => "Segundo plano",
             Self::Control => "Centro de control",
+            Self::Notificaciones => "Notificaciones",
         }
     }
 
@@ -143,7 +148,7 @@ impl WidgetId {
             Self::Claude => "https://claude.ai/settings/usage".to_owned(),
             Self::ChatGpt => "https://chatgpt.com/codex/settings/usage".to_owned(),
             Self::Gemini => "https://aistudio.google.com/".to_owned(),
-            Self::Bandeja | Self::Control => String::new(),
+            Self::Bandeja | Self::Control | Self::Notificaciones => String::new(),
         }
     }
 
@@ -178,7 +183,7 @@ impl WidgetId {
             Self::Reloj => format!("{:?}", readings.reloj),
             Self::Casa => format!("{:?}", readings.casa),
             // The dock shows only its chevron; the icons are in the panel.
-            Self::Bandeja => String::new(),
+            Self::Bandeja | Self::Notificaciones => String::new(),
             Self::Control => format!("{:?}", readings.control),
             Self::Claude | Self::ChatGpt | Self::Gemini => {
                 let provider = self.provider().unwrap_or(Provider::Claude);
@@ -196,7 +201,7 @@ impl WidgetId {
             Self::Clima => readings.clima.is_some(),
             Self::Reloj => readings.reloj.is_some(),
             Self::Casa => readings.casa.is_some(),
-            Self::Bandeja | Self::Control => true,
+            Self::Bandeja | Self::Control | Self::Notificaciones => true,
             Self::Claude | Self::ChatGpt | Self::Gemini => readings.ia.is_some(),
         }
     }
@@ -210,6 +215,8 @@ impl WidgetId {
             Self::Claude | Self::ChatGpt | Self::Gemini => (&IA_ON, ia::start),
             Self::Bandeja => (&BANDEJA_ON, start_tray),
             Self::Control => (&CONTROL_ON, control::start),
+            // Nothing to read: a shape flag with no source thread (`configure` sets it).
+            Self::Notificaciones => (&NOTIFICACIONES_ON, no_source),
         }
     }
 }
@@ -391,6 +398,10 @@ static CASA_ON: AtomicBool = AtomicBool::new(false);
 static IA_ON: AtomicBool = AtomicBool::new(false);
 static BANDEJA_ON: AtomicBool = AtomicBool::new(false);
 static CONTROL_ON: AtomicBool = AtomicBool::new(false);
+static NOTIFICACIONES_ON: AtomicBool = AtomicBool::new(false);
+
+/// The bell has no data source to start.
+fn no_source() {}
 
 fn ids(keys: &[String]) -> Vec<WidgetId> {
     let mut out = Vec::new();

@@ -1,6 +1,7 @@
 //! Widgets in the dock, drawn like the Tauri Barra's cells: no surface of
-//! their own, straight on the dock glass, as tall as an icon and as wide as
-//! their size (compact, medium, wide) asks. Icon, big figures, faded
+//! their own, straight on the dock glass, as tall as an icon inside the dock
+//! (taller in the islands) and as wide as their size (compact, medium, wide)
+//! asks. Icon, big figures, faded
 //! details, thin separators.
 
 use super::draw::{BLUE, GREEN, ORANGE, RED, ink, symbol};
@@ -51,6 +52,7 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
     }
     match (id, size) {
         (WidgetId::Bandeja, _) => 70,
+        (WidgetId::Notificaciones, _) => 100,
         (WidgetId::Control, Size::Compact) => 120,
         (WidgetId::Control, _) => 200,
         (WidgetId::Reloj, Size::Compact) => 150,
@@ -60,7 +62,7 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
         (WidgetId::Clima, Size::Medium) => 300,
         (WidgetId::Clima, Size::Wide) => 480,
         (WidgetId::Sistema, Size::Compact) => 100,
-        (WidgetId::Sistema, Size::Medium | Size::Wide) => 340,
+        (WidgetId::Sistema, Size::Medium | Size::Wide) => 370,
         (WidgetId::Casa, Size::Compact) => 140,
         (WidgetId::Casa, Size::Medium | Size::Wide) => 250,
         (WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini, Size::Compact) => 170,
@@ -102,6 +104,7 @@ pub fn render(
                 WidgetId::Casa => casa(&mut c, size, readings),
                 WidgetId::Bandeja => bandeja(&mut c, readings),
                 WidgetId::Control => control(&mut c, size, readings),
+                WidgetId::Notificaciones => notificaciones(&mut c),
                 WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini => {
                     ia(&mut c, id, size, readings)
                 }
@@ -140,6 +143,26 @@ fn bandeja(c: &mut Cell<'_, '_>, _r: &Readings) -> Result<()> {
     c.x += c.px(4.0);
     c.pen.icon('\u{E70E}', (c.x, (c.height - h) / 2.0), size, c.strong())?;
     c.x += w + c.px(4.0);
+    Ok(())
+}
+
+/// A round bell button inside a rounded square; opens the notification center.
+fn notificaciones(c: &mut Cell<'_, '_>) -> Result<()> {
+    let side = (c.height * 0.84).round();
+    let top = ((c.height - side) / 2.0).round();
+    c.pen.round_rect((c.x, top), (side, side), side * 0.28, ink(c.light, 0.10))?;
+    let disc = (side * 0.64).round();
+    let offset = ((side - disc) / 2.0).round();
+    c.pen.round_rect((c.x + offset, top + offset), (disc, disc), disc / 2.0, ink(c.light, 0.10))?;
+    let glyph = 17.0;
+    let (gw, gh) = c.gfx.measure_icon('\u{EA8F}', glyph, c.unit)?;
+    c.pen.icon(
+        '\u{EA8F}',
+        (c.x + (side - gw) / 2.0, top + (side - gh) / 2.0),
+        glyph,
+        c.strong(),
+    )?;
+    c.x += side;
     Ok(())
 }
 
@@ -443,11 +466,12 @@ fn clima(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     Ok(())
 }
 
+/// Ring colour of the CPU temperature: green, yellow from 65, red from 80.
 fn temp_color(t: u8) -> Rgba {
     match t {
-        85.. => RED,
-        70.. => ORANGE,
-        _ => GREEN,
+        80.. => [1.0, 0.27, 0.23, 1.0],
+        65.. => [1.0, 0.80, 0.0, 1.0],
+        _ => [0.20, 0.78, 0.35, 1.0],
     }
 }
 
@@ -455,19 +479,21 @@ fn sistema(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     let Some(d) = r.sistema else {
         return c.text("Sistema…", 11.0, Weight::Normal, c.faded());
     };
-    // The gauge: a 270° ring with the temperature, or the CPU load.
-    let ring = c.height * 0.84;
-    let (value, fraction, color, unit) = match d.temp {
-        Some(t) => (t, f32::from(t) / 100.0, temp_color(t), "°"),
-        None => (d.cpu, f32::from(d.cpu) / 100.0, BLUE, "%"),
-    };
+    // The gauge: a 270° ring that always shows the CPU temperature.
+    let ring = c.height * 0.8;
     let left = if size == Size::Compact { c.x } else { c.x - c.px(4.0) };
     let center = (left + ring / 2.0, c.height / 2.0);
     let stroke = c.px(4.5);
     let radius = ring / 2.0 - stroke;
     c.pen.arc(center, radius, stroke, (225.0, 270.0), ink(c.light, 0.22))?;
-    c.pen.arc(center, radius, stroke, (225.0, 270.0 * fraction.clamp(0.0, 1.0)), color)?;
-    let number = format!("{value}{unit}");
+    let number = match d.temp {
+        Some(t) => {
+            let fraction = (f32::from(t) / 100.0).clamp(0.0, 1.0);
+            c.pen.arc(center, radius, stroke, (225.0, 270.0 * fraction), temp_color(t))?;
+            format!("{t}°")
+        }
+        None => "—".to_owned(),
+    };
     let (nw, nh) = c.gfx.measure(&number, 13.0, c.unit, Weight::Bold)?;
     c.pen.text(&number, (center.0 - nw / 2.0, center.1 - nh / 2.0 - c.px(3.0)), 13.0, Weight::Bold, c.strong())?;
     let (lw, _) = c.gfx.measure("CPU", 7.5, c.unit, Weight::Bold)?;
@@ -478,27 +504,27 @@ fn sistema(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     }
     c.x += c.px(10.0);
     // CPU and RAM rows: label, bar, percent.
-    let rows = [("CPU", d.cpu, BLUE), ("RAM", d.ram, GREEN)];
-    let row_h = c.line(11.0, Weight::Bold)?;
+    let rows = [("CPU", d.cpu), ("RAM", d.ram)];
+    let row_h = c.line(15.0, Weight::Bold)?;
     let top = (c.height - row_h * 2.0 - c.px(4.0)) / 2.0;
-    let (label_w, _) = c.gfx.measure("RAM", 11.0, c.unit, Weight::Bold)?;
-    let (pct_w, _) = c.gfx.measure("100%", 11.0, c.unit, Weight::Bold)?;
+    let (label_w, label_h) = c.gfx.measure("RAM", 11.0, c.unit, Weight::Bold)?;
+    let (pct_w, _) = c.gfx.measure("100%", 15.0, c.unit, Weight::Bold)?;
     let bar_x = c.x + label_w + c.px(8.0);
-    let bar_w = c.px(52.0);
+    let bar_w = c.px(44.0);
     let pct_x = bar_x + bar_w + c.px(8.0);
-    for (index, (label, pct, color)) in rows.into_iter().enumerate() {
+    for (index, (label, pct)) in rows.into_iter().enumerate() {
         let y = top + (row_h + c.px(4.0)) * index as f32;
-        c.pen.text(label, (c.x, y), 11.0, Weight::Bold, c.faded())?;
-        let bar_h = c.px(4.0);
+        c.pen.text(label, (c.x, y + (row_h - label_h) / 2.0), 11.0, Weight::Bold, c.faded())?;
+        let bar_h = c.px(5.0);
         let bar_y = y + (row_h - bar_h) / 2.0;
-        c.pen.round_rect((bar_x, bar_y), (bar_w, bar_h), bar_h / 2.0, ink(c.light, 0.18))?;
+        c.pen.round_rect((bar_x, bar_y), (bar_w, bar_h), bar_h / 2.0, ink(c.light, 0.15))?;
         let filled = bar_w * f32::from(pct.min(100)) / 100.0;
         if filled > 0.5 {
-            c.pen.round_rect((bar_x, bar_y), (filled.max(bar_h), bar_h), bar_h / 2.0, color)?;
+            c.pen.round_rect((bar_x, bar_y), (filled.max(bar_h), bar_h), bar_h / 2.0, BLUE)?;
         }
         let text = format!("{pct}%");
-        let (tw, _) = c.gfx.measure(&text, 11.0, c.unit, Weight::Bold)?;
-        c.pen.text(&text, (pct_x + pct_w - tw, y), 11.0, Weight::Bold, c.strong())?;
+        let (tw, _) = c.gfx.measure(&text, 15.0, c.unit, Weight::Bold)?;
+        c.pen.text(&text, (pct_x + pct_w - tw, y), 15.0, Weight::Bold, c.strong())?;
     }
     c.x = pct_x + pct_w;
     Ok(())

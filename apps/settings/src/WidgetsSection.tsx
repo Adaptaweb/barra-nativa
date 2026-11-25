@@ -37,6 +37,7 @@ const WIDGETS: { key: string; name: string; detail: string }[] = [
   { key: "chatgpt", name: "ChatGPT", detail: "Límites de tu plan, a través de Codex." },
   { key: "gemini", name: "Gemini", detail: "Cuota de Gemini CLI o Antigravity." },
   { key: "control", name: "Centro de control", detail: "Red, volumen y batería; abre la configuración rápida de Windows." },
+  { key: "notificaciones", name: "Notificaciones", detail: "Un botón de campana; abre el centro de notificaciones de Windows." },
   { key: "bandeja", name: "Segundo plano", detail: "Los iconos ocultos de la bandeja de Windows (solo en el dock)." },
 ];
 

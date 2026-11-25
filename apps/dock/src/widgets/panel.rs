@@ -189,6 +189,11 @@ pub fn toggle(gfx: &Gfx, id: WidgetId, anchor: POINT, placement: Placement) {
         muelle_shell::launcher::open_quick_settings();
         return;
     }
+    if id == WidgetId::Notificaciones {
+        close();
+        muelle_shell::launcher::open_notifications();
+        return;
+    }
 
     let was_open = OPEN.with(|open| {
         open.try_borrow()
