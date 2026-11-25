@@ -469,6 +469,10 @@ fn ia(c: &mut Cell<'_, '_>, id: WidgetId, size: Size, r: &Readings) -> Result<()
         return c.text("Leyendo…", 11.0, Weight::Normal, c.faded());
     };
     if u.windows.is_empty() {
+        if size == Size::Compact {
+            // No room to explain: the panel tells how to connect it.
+            return c.text("—", 15.0, Weight::Bold, c.faded());
+        }
         let text = match (u.state, provider) {
             (State::SignIn, usage::Provider::Claude) => "Abre Claude Code",
             (State::SignIn, usage::Provider::Codex) => "Conectar ChatGPT",
