@@ -145,5 +145,8 @@
     "Pradera al amanecer",
     "Horizonte",
     "Cielo azul"
-  ]
+  ],
+  "windowsTaskbar": "Barra de tareas de Windows",
+  "hideWindowsTaskbar": "Reemplazar la barra de tareas de Windows",
+  "hideWindowsTaskbarHint": "La oculta mientras Muelle está abierto. Desactivado, se ven las dos. El menú Inicio y la tecla Windows siguen funcionando."
 }

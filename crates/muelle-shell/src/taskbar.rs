@@ -46,10 +46,17 @@ pub fn take_over() -> bool {
     take_over_taskbars(&taskbars(), &state_file())
 }
 
-/// Development switch: debug builds leave the Windows taskbar alone unless
-/// `BARRA_HIDE_TASKBAR=1` is set, so the developer keeps using it.
+static KEEP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The user's choice in Settings: keep the Windows taskbar visible next to the
+/// dock instead of replacing it.
+pub fn set_keep_taskbar(keep: bool) {
+    KEEP.store(keep, std::sync::atomic::Ordering::Release);
+}
+
+/// Whether the Windows taskbar is left alone (see `set_keep_taskbar`).
 pub fn keep_taskbar() -> bool {
-    cfg!(debug_assertions) && env::var_os("BARRA_HIDE_TASKBAR").is_none_or(|v| v != "1")
+    KEEP.load(std::sync::atomic::Ordering::Acquire)
 }
 
 /// Whether Explorer has restored the visibility of a taskbar window.

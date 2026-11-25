@@ -380,6 +380,15 @@ export function App() {
             </>
           ) : section === "dock" ? (
             <>
+              <Card title={t.windowsTaskbar}>
+                <Row label={t.hideWindowsTaskbar} hint={t.hideWindowsTaskbarHint}>
+                  <Toggle
+                    label={t.hideWindowsTaskbar}
+                    checked={config.hideWindowsTaskbar ?? true}
+                    onChange={(hideWindowsTaskbar) => update({ hideWindowsTaskbar })}
+                  />
+                </Row>
+              </Card>
               <Card title={t.groupAppearance}>
                 <VisualChoices<DockPosition>
                   label={t.dockPosition}

@@ -145,5 +145,8 @@
     "Prado ao amanhecer",
     "Horizonte",
     "Céu azul"
-  ]
+  ],
+  "windowsTaskbar": "Barra de tarefas do Windows",
+  "hideWindowsTaskbar": "Substituir a barra de tarefas do Windows",
+  "hideWindowsTaskbarHint": "Oculta-a enquanto o Muelle está aberto. Desativado, as duas ficam visíveis. O menu Iniciar e a tecla Windows continuam a funcionar."
 }

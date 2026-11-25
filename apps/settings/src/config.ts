@@ -52,6 +52,8 @@ export interface Config {
   shortcutsFolder: string | null;
   /** Barra widgets. */
   widgets: WidgetSettings;
+  /** Replace the Windows taskbar (hide it) while the dock runs. */
+  hideWindowsTaskbar: boolean;
 }
 
 /** Mirrors `muelle_config::HomeItem`. */

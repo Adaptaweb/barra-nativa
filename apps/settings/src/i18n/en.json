@@ -145,5 +145,8 @@
     "Meadow at sunrise",
     "Horizon",
     "Blue sky"
-  ]
+  ],
+  "windowsTaskbar": "Windows taskbar",
+  "hideWindowsTaskbar": "Replace the Windows taskbar",
+  "hideWindowsTaskbarHint": "Hide it while Muelle runs. Off, both stay on screen. The Start menu and the Windows key keep working."
 }

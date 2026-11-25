@@ -190,6 +190,7 @@ impl App {
             || config.smart_hide != self.config.smart_hide;
         let workspaces_changed = config.show_other_workspaces != self.config.show_other_workspaces;
         let moved = config.dock_position != self.config.dock_position;
+        let taskbar_changed = config.hide_windows_taskbar != self.config.hide_windows_taskbar;
         apply_explorer_pin(&mut self.roster, config.pin_explorer);
         self.slide.omega = config.dock_auto_hide_speed.omega();
         self.config = config;
@@ -203,6 +204,14 @@ impl App {
             self.sync()?;
         }
         self.sync_thumbnails();
+        if taskbar_changed {
+            muelle_shell::taskbar::set_keep_taskbar(!self.config.hide_windows_taskbar);
+            if self.config.hide_windows_taskbar {
+                self.request_taskbar(true)?;
+            } else {
+                muelle_shell::taskbar::give_back();
+            }
+        }
         self.apply_menu_bar_setting();
         self.update_menu_bar_app()?;
         self.calm_windows();

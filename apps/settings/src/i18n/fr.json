@@ -145,5 +145,8 @@
     "Prairie à l’aube",
     "Horizon",
     "Ciel bleu"
-  ]
+  ],
+  "windowsTaskbar": "Barre des tâches de Windows",
+  "hideWindowsTaskbar": "Remplacer la barre des tâches de Windows",
+  "hideWindowsTaskbarHint": "La masque pendant que Muelle est ouvert. Désactivé, les deux restent visibles. Le menu Démarrer et la touche Windows fonctionnent toujours."
 }

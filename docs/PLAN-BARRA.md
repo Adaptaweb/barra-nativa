@@ -31,7 +31,9 @@ uses far less RAM and CPU.
 
 1. [x] Fork into `Proyectos\barra-nativa`, branch `barra`.
 2. [x] Build and run (`cargo run -p muelle`; `cargo run -p muelle -- --restore` restores the taskbar).
-   During development the Windows taskbar must stay visible: add a dev switch that skips hiding it.
+   Settings › Dock › "Reemplazar la barra de tareas de Windows" (`hideWindowsTaskbar`, on by
+   default) hides it or leaves it next to the dock; it applies live. The user keeps it off
+   while developing. The Start menu and the Windows key are untouched.
 3. [x] Widget framework in `apps/dock/src/widgets/`: sources on their own threads publish
    readings and post `WIDGETS_CHANGED` to the menu bar, which repaints only the widgets
    (and the dock tiles) whose reading changed. Free-form drawing through `gfx::Pen`

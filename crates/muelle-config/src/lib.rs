@@ -128,6 +128,9 @@ pub struct Config {
     pub notification_badges: bool,
     /// Barra widgets: where each one goes and their settings.
     pub widgets: Widgets,
+    /// Hide the Windows taskbar while the dock runs (replace it). Off, both
+    /// stay on screen; the Start menu and the Windows key work either way.
+    pub hide_windows_taskbar: bool,
 }
 
 /// Widgets in the menu bar and the dock, by id (`sistema`, `clima`), in order.
@@ -394,6 +397,7 @@ impl Default for Config {
             shortcuts_folder: None,
             notification_badges: true,
             widgets: Widgets::default(),
+            hide_windows_taskbar: true,
         }
     }
 }
