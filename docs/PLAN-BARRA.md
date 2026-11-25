@@ -69,8 +69,9 @@ uses far less RAM and CPU.
    content (measured on render, cached, in tenths of an icon); wide cells grow a quarter as
    much as icons under the cursor. Zones: `widgets.dockLeft` (before the apps) and
    `widgets.dock` (at the far end); the apps stay centred on the screen when it has room.
-   `bandeja` shows the tray icons (apps in the background) at the far right end of the dock,
-   always last; its panel lists them all (click, right click for the app's menu). Source:
+   `bandeja` is a chevron at the far right end of the dock, always last; its panel (bubble)
+   holds all the tray icons (click, right click for the app's menu). Panels stay open while
+   used and close on a click outside them (polled every 50 ms; app menus count as inside). Source:
    `muelle_shell::tray`, an own `Shell_TrayWnd` that copies every Shell_NotifyIcon call and
    forwards it to Explorer (ported from the Tauri Barra); `taskbar::taskbars` skips it.
    The dock does not magnify while the pointer is over a widget cell. Debug builds:

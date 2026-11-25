@@ -154,12 +154,8 @@ impl WidgetId {
             Self::Clima => format!("{:?}", readings.clima),
             Self::Reloj => format!("{:?}", readings.reloj),
             Self::Casa => format!("{:?}", readings.casa),
-            Self::Bandeja => readings
-                .tray
-                .iter()
-                .map(|t| format!("{}:{}", t.icon.id, t.icon.hicon))
-                .collect::<Vec<_>>()
-                .join(","),
+            // The dock shows only its chevron; the icons are in the panel.
+            Self::Bandeja => String::new(),
             Self::Claude | Self::ChatGpt | Self::Gemini => {
                 let provider = self.provider().unwrap_or(Provider::Claude);
                 readings.ia.as_ref().map_or_else(String::new, |snapshot| {

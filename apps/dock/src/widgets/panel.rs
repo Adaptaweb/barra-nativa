@@ -22,9 +22,9 @@ use windows::{
             Input::KeyboardAndMouse::VK_ESCAPE,
             WindowsAndMessaging::{
                 CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, DestroyWindow, HWND_TOPMOST,
-                IDC_ARROW, IDC_HAND, LoadCursorW, PostMessageW, RegisterClassW, SW_SHOW,
-                SWP_NOACTIVATE, SetCursor, SetForegroundWindow, SetWindowPos, ShowWindow,
-                WA_INACTIVE, WM_ACTIVATE, WM_APP, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+                IDC_ARROW, IDC_HAND, LoadCursorW, RegisterClassW, SW_SHOW,
+                SWP_NOACTIVATE, SetCursor, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
+                WM_APP, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_TIMER,
                 WM_RBUTTONUP,
                 WM_SETCURSOR, WNDCLASSW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
                 WS_EX_TOPMOST, WS_POPUP,
@@ -39,6 +39,46 @@ use windows_numerics::{Vector2, Vector3};
 pub const WIDTH: f32 = 330.0;
 const PAD: f32 = 16.0;
 const CLOSE: u32 = WM_APP + 1;
+/// Watches for a click outside the panel while it is open.
+const OUTSIDE_TIMER: usize = 1;
+
+/// Whether a mouse button went down outside the panel since the last check.
+/// Menus that apps open from the panel (class `#32768`) count as inside.
+fn clicked_outside(hwnd: HWND) -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use windows::Win32::UI::{
+        Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON},
+        WindowsAndMessaging::{GA_ROOT, GetAncestor, GetClassNameW, GetCursorPos, WindowFromPoint},
+    };
+    static WAS_DOWN: AtomicBool = AtomicBool::new(true);
+    // SAFETY: Read-only queries of input state and windows.
+    unsafe {
+        let down = [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON]
+            .iter()
+            .any(|key| GetAsyncKeyState(i32::from(key.0)) as u16 & 0x8000 != 0);
+        let pressed = down && !WAS_DOWN.swap(down, Ordering::Relaxed);
+        if !down {
+            WAS_DOWN.store(false, Ordering::Relaxed);
+        }
+        if !pressed {
+            return false;
+        }
+        let mut point = POINT::default();
+        if GetCursorPos(&mut point).is_err() {
+            return false;
+        }
+        let under = WindowFromPoint(point);
+        if under.is_invalid() {
+            return true;
+        }
+        if GetAncestor(under, GA_ROOT) == hwnd {
+            return false;
+        }
+        let mut class = [0u16; 16];
+        let n = GetClassNameW(under, &mut class) as usize;
+        String::from_utf16_lossy(&class[..n]) != "#32768"
+    }
+}
 
 /// Where the panel goes from its anchor point.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -251,6 +291,7 @@ fn open(gfx: &Gfx, id: WidgetId, anchor: POINT, placement: Placement) -> Result<
     unsafe {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
+        SetTimer(Some(hwnd), OUTSIDE_TIMER, 50, None);
     }
     Ok(panel)
 }
@@ -538,11 +579,11 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM)
     let x = f32::from((l.0 & 0xFFFF) as i16);
     let y = f32::from(((l.0 >> 16) & 0xFFFF) as i16);
     match msg {
-        WM_ACTIVATE if (w.0 & 0xFFFF) as u32 == WA_INACTIVE => {
-            // SAFETY: Posting to our own window; closed from the queue, not
-            // while Windows is still activating the other window.
-            unsafe {
-                let _ = PostMessageW(Some(hwnd), CLOSE, WPARAM(0), LPARAM(0));
+        // The panel stays while you use it (an app opened from it may take
+        // the focus); a click anywhere else closes it.
+        WM_TIMER if w.0 == OUTSIDE_TIMER => {
+            if clicked_outside(hwnd) {
+                close();
             }
         }
         CLOSE => close(),
@@ -554,11 +595,7 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM)
                     .and_then(|panel| panel.as_ref().and_then(|p| p.hit(x, y)))
             });
             if let Some(action) = action {
-                let opens_elsewhere = matches!(action, PanelAction::Open(_) | PanelAction::Tray(_));
                 perform(action);
-                if opens_elsewhere {
-                    close();
-                }
             }
             return LRESULT(0);
         }
@@ -569,8 +606,6 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM)
                     .and_then(|panel| panel.as_ref().and_then(|p| p.hit(x, y)))
             });
             if let Some(PanelAction::Tray(id)) = action {
-                // The app's own menu takes over: the panel steps aside.
-                close();
                 muelle_shell::tray::click(&id, muelle_shell::tray::Click::Right);
             }
             return LRESULT(0);

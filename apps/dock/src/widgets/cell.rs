@@ -130,23 +130,8 @@ pub fn render(
     Ok((cell.brush, changed))
 }
 
-/// Most tray icons shown in the dock; the rest are in the panel.
-const TRAY_SHOWN: usize = 10;
-
-fn bandeja(c: &mut Cell<'_, '_>, r: &Readings) -> Result<()> {
-    // The apps in the background, in a row, as the Windows taskbar shows them.
-    let side = (c.height * 0.4).round();
-    for item in r.tray.iter().filter(|t| t.image.is_some()).take(TRAY_SHOWN) {
-        if let Some(image) = &item.image {
-            c.pen.image(image, (c.x, (c.height - side) / 2.0), (side, side))?;
-        }
-        c.x += side + c.px(9.0);
-    }
-    if r.tray.len() <= TRAY_SHOWN && !r.tray.is_empty() {
-        c.x -= c.px(5.0);
-        return Ok(());
-    }
-    // More than fit, or none read yet: the chevron opens the full list.
+fn bandeja(c: &mut Cell<'_, '_>, _r: &Readings) -> Result<()> {
+    // Only the chevron: the icons live in its bubble, not loose in the dock.
     let size = 15.0;
     let (w, h) = c.gfx.measure_icon('\u{E70E}', size, c.unit)?;
     c.x += c.px(4.0);
