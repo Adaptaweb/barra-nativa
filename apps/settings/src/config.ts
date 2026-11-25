@@ -54,7 +54,22 @@ export interface Config {
   widgets: WidgetSettings;
   /** Replace the Windows taskbar (hide it) while the dock runs. */
   hideWindowsTaskbar: boolean;
+  /** An MP4 played behind the desktop icons; the Windows wallpaper when unset. */
+  videoWallpaper?: string | null;
 }
+
+/** A picture or video the user added (`custom_wallpapers.rs`). */
+export interface CustomWallpaper {
+  name: string;
+  path: string;
+  video: boolean;
+  preview: string | null;
+}
+
+export const listCustomWallpapers = () => invoke<CustomWallpaper[]>("list_custom_wallpapers");
+export const addCustomWallpaper = () => invoke<CustomWallpaper | null>("add_custom_wallpaper");
+export const applyCustomPicture = (name: string) => invoke<void>("apply_custom_picture", { name });
+export const removeCustomWallpaper = (name: string) => invoke<void>("remove_custom_wallpaper", { name });
 
 /** Mirrors `muelle_config::HomeItem`. */
 export interface HomeItem {

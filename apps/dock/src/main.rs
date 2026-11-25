@@ -36,6 +36,7 @@ mod strings;
 mod thumbnails;
 mod screens;
 mod usage;
+mod video;
 mod widgets;
 
 use std::env;
@@ -72,6 +73,7 @@ fn main() -> Result<()> {
         .as_slice()
     {
         [] => run_dock(false),
+        [video::FLAG, path, parent] => video::run(path, parent.parse().context("pid no válido")?),
         [screens::FLAG, device, parent] => {
             screens::run_child(device, parent.parse().context("pid no válido")?, initialize_dock)
         }
@@ -126,6 +128,7 @@ fn run_dock(recovered: bool) -> Result<()> {
             startup.elapsed().as_millis()
         ));
     }
+    video::stop();
     taskbar::give_back_on_exit();
     muelle_shell::log::flush();
     result

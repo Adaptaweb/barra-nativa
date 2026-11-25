@@ -131,6 +131,10 @@ pub struct Config {
     /// Hide the Windows taskbar while the dock runs (replace it). Off, both
     /// stay on screen; the Start menu and the Windows key work either way.
     pub hide_windows_taskbar: bool,
+    /// A video (MP4) played as the desktop background behind the icons, on
+    /// every display; the Windows wallpaper shows when it is unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video_wallpaper: Option<String>,
 }
 
 /// Widgets in the menu bar and the dock, by id (`sistema`, `clima`), in order.
@@ -468,6 +472,7 @@ impl Default for Config {
             notification_badges: true,
             widgets: Widgets::default(),
             hide_windows_taskbar: true,
+            video_wallpaper: None,
         }
     }
 }

@@ -37,6 +37,7 @@ import { UpdateBanner } from "./UpdateBanner";
 /** Barra is installed from its own installer; it has no update server. */
 const UPDATES = false;
 import { WallpaperGallery } from "./WallpaperGallery";
+import { CustomWallpapers } from "./CustomWallpapers";
 import { WidgetsSection } from "./WidgetsSection";
 import { type Texts, LANGUAGE_OPTIONS, resolveLanguage, textsFor } from "./i18n";
 
@@ -367,7 +368,15 @@ export function App() {
                 />
                 <p className="card-note row-hint">{t.themeHint}</p>
               </Card>
-              <WallpaperGallery texts={t} onApplied={setWallpaper} />
+              <CustomWallpapers config={config} update={update} onApplied={setWallpaper} />
+              <WallpaperGallery
+                texts={t}
+                onApplied={(preview) => {
+                  setWallpaper(preview);
+                  // A gallery picture replaces a video background.
+                  if (config.videoWallpaper) update({ videoWallpaper: null });
+                }}
+              />
             </>
           ) : section === "dock" ? (
             <>

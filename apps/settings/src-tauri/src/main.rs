@@ -10,6 +10,7 @@
 #![windows_subsystem = "windows"]
 
 mod barra;
+mod custom_wallpapers;
 mod wallpapers;
 
 use std::{env, io, path::PathBuf, process::Command, sync::Mutex, time::Duration};
@@ -194,6 +195,29 @@ async fn open_repository() -> Result<(), String> {
     .map_err(|error| error.to_string())?
 }
 
+/// Premultiplied BGRA pixels as a PNG data URI for the page.
+pub(crate) fn png_data_url(width: u32, height: u32, mut rgba: Vec<u8>) -> Option<String> {
+    use base64::Engine;
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        let alpha = u32::from(pixel[3]);
+        pixel.swap(0, 2);
+        for value in &mut pixel[..3] {
+            *value = (u32::from(*value) * 255).checked_div(alpha).unwrap_or(0).min(255) as u8;
+        }
+    }
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.write_header().ok()?.write_image_data(&rgba).ok()?;
+    }
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
 /// A small data URI, never a path or screenshot of the user's desktop.
 #[tauri::command]
 async fn wallpaper_preview(window: tauri::WebviewWindow) -> Option<String> {
@@ -352,6 +376,10 @@ fn main() {
             wallpaper_preview,
             wallpapers::wallpaper_selection,
             wallpapers::apply_wallpaper,
+            custom_wallpapers::list_custom_wallpapers,
+            custom_wallpapers::add_custom_wallpaper,
+            custom_wallpapers::apply_custom_picture,
+            custom_wallpapers::remove_custom_wallpaper,
             barra::secret_saved,
             barra::set_secret,
             barra::import_home,

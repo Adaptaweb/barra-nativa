@@ -11,7 +11,7 @@ use windows::{
         UI::{
             Shell::{
                 IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SHDefExtractIconW,
-                SIIGBF_ICONONLY,
+                SIIGBF_ICONONLY, SIIGBF_THUMBNAILONLY,
             },
             WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO},
         },
@@ -90,6 +90,20 @@ pub fn load_icon(parsing_name: &str, size: u32) -> Result<IconImage, IconError> 
     };
 
     read_pixels(&bitmap).ok_or_else(|| IconError::Pixels(parsing_name.to_owned()))
+}
+
+/// The Windows thumbnail of a picture or video file (the one Explorer shows),
+/// at most `size` pixels on its longer side.
+#[must_use]
+pub fn file_thumbnail(path: &str, size: u32) -> Option<IconImage> {
+    let side = size as i32;
+    // SAFETY: The path lives for the call; the bitmap is owned from here.
+    let bitmap = unsafe {
+        let factory: IShellItemImageFactory =
+            SHCreateItemFromParsingName(&HSTRING::from(path), None).ok()?;
+        OwnedBitmap(factory.GetImage(SIZE { cx: side, cy: side }, SIIGBF_THUMBNAILONLY).ok()?)
+    };
+    read_pixels(&bitmap)
 }
 
 /// The icon of a shell item (a file, a folder, a known folder) at `size`

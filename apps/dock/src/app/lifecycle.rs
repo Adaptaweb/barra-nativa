@@ -394,6 +394,7 @@ pub fn run() -> Result<()> {
     });
     // One dock process for each other display that has one turned on.
     with_app("pantallas", |app| {
+        crate::video::sync(&app.config);
         crate::screens::sync(&app.config.widgets);
         Ok(())
     });
