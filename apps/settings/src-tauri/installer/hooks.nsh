@@ -54,12 +54,15 @@
 !macro NSIS_HOOK_POSTUNINSTALL
   ${If} $UpdateMode <> 1
     SetShellVarContext current
-    ; The icon cache is always disposable.
-    RmDir /r "$LOCALAPPDATA\Muelle"
+    ; The icon cache is always disposable; the user's wallpapers (pictures
+    ; and videos they added) go only with the app data.
+    RmDir /r "$LOCALAPPDATA\Muelle\icons"
+    Delete "$LOCALAPPDATA\Muelle\muelle.log"
     ; Where Muelle remembers that it starts with Windows.
     DeleteRegKey HKCU "Software\Muelle"
     ${If} $DeleteAppDataCheckboxState = 1
       RmDir /r "$APPDATA\Muelle"
+      RmDir /r "$LOCALAPPDATA\Muelle"
     ${EndIf}
   ${EndIf}
 !macroend

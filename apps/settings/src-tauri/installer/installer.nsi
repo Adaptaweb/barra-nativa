@@ -529,6 +529,16 @@ Function .onInit
 
   !insertmacro SetContext
 
+  ; Barra: installing over an installed Barra, of any version, is an update:
+  ; files are replaced in place, the settings, wallpapers, autostart and
+  ; shortcuts stay, and nothing is uninstalled first. (Passive mode used to
+  ; read a reinstall page that is never shown, and with the same version it
+  ; uninstalled first, removing the user's wallpapers.)
+  ReadRegStr $R0 SHCTX "${UNINSTKEY}" "UninstallString"
+  ${If} $R0 != ""
+    StrCpy $UpdateMode 1
+  ${EndIf}
+
   ${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
     ; Set default install location
     !if "${INSTALLMODE}" == "perMachine"
