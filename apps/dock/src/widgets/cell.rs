@@ -496,8 +496,9 @@ fn sistema(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     };
     let (nw, nh) = c.gfx.measure(&number, 13.0, c.unit, Weight::Bold)?;
     c.pen.text(&number, (center.0 - nw / 2.0, center.1 - nh / 2.0 - c.px(3.0)), 13.0, Weight::Bold, c.strong())?;
-    let (lw, _) = c.gfx.measure("CPU", 7.5, c.unit, Weight::Bold)?;
-    c.pen.text("CPU", (center.0 - lw / 2.0, center.1 + radius - c.px(6.0)), 7.5, Weight::Bold, c.faded())?;
+    let tag = if d.temp.is_some() { "CPU" } else { "sin sensor" };
+    let (lw, _) = c.gfx.measure(tag, 7.5, c.unit, Weight::Bold)?;
+    c.pen.text(tag, (center.0 - lw / 2.0, center.1 + radius - c.px(6.0)), 7.5, Weight::Bold, c.faded())?;
     c.x = left + ring;
     if size == Size::Compact {
         return Ok(());

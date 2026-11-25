@@ -178,6 +178,24 @@ function WidgetsPage({ config, update, part }: Props) {
           <ScreenPicker displays={displays} value={editing ? editing.device : ""} onChange={setScreen} />
         </Card>
       ) : null}
+      {part === "dock" ? (
+        <Card title="Islas">
+          <Row label="Alto de las islas" hint="Cuántas veces el icono mide de alto la burbuja de cada isla.">
+            <span className="select-wrap">
+              <select
+                className="select-control"
+                aria-label="Alto de las islas"
+                value={String(widgets.islandScale ?? 12)}
+                onChange={(e) => save({ islandScale: Number(e.target.value) })}
+              >
+                <option value="10">Normal (1,0×)</option>
+                <option value="12">Medio (1,2×)</option>
+                <option value="15">Grande (1,5×)</option>
+              </select>
+            </span>
+          </Row>
+        </Card>
+      ) : null}
       {ZONES.filter(({ zone }) => isBarZone(zone) === (part === "bar")).map(({ zone, title, hint }) => (
         <Card key={zone} title={title}>
           {(layout[zone] ?? []).length === 0 ? (

@@ -250,6 +250,7 @@ impl App {
                 padding: metrics.padding,
                 margin,
                 scale,
+                island_scale: f32::from(self.config.widgets.island_scale) / 10.0,
             },
         );
         // The whole dock is centred, widgets included: adding or resizing a

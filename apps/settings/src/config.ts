@@ -92,6 +92,8 @@ export interface WidgetSettings {
   homeItems: HomeItem[];
   /** Size of each widget in the dock: compacto, mediano or ancho. */
   dockSizes: Record<string, string>;
+  /** Island height in tenths of the icon size: 10 to 16 (12 = 1.2x, default). */
+  islandScale?: number;
   /** Other displays by device name: their own dock, menu bar and widgets. */
   screens: Record<string, ScreenWidgets>;
 }

@@ -2,7 +2,7 @@
 //! panel explains how to set it up, step by step.
 
 use super::panel::{Block, Cell, PanelAction};
-use super::{Home, Readings, WidgetId};
+use super::{Home, Readings, TempSource, WidgetId};
 use crate::usage::{Provider, State};
 use chrono::{DateTime, Local, Utc};
 
@@ -106,10 +106,39 @@ pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
                     color: level(if t >= 85 { 95 } else if t >= 70 { 75 } else { 10 }),
                     note: format!("{t} °C"),
                 }),
-                None => b.push(Block::Text(
-                    "Para ver la temperatura de la CPU abre LibreHardwareMonitor con su servidor web activo (Options › Remote Web Server › Run, puerto 8085) o el ayudante de ventiladores del Panel de proyectos. Windows no la entrega sin un controlador.".into(),
-                    true,
-                )),
+                None => {
+                    let (text, button) = match d.temp_why {
+                        _ if d.installing => ("Instalando LibreHardwareMonitor…", None),
+                        TempSource::NoLhm => (
+                            "Para ver la temperatura de la CPU, Barra necesita LibreHardwareMonitor (gratuito, de código abierto). Windows pedirá permiso de administrador una vez: lee los sensores con un controlador.",
+                            Some(("Instalar y activar", PanelAction::InstallLhm)),
+                        ),
+                        TempSource::LhmClosed => (
+                            "LibreHardwareMonitor está instalado pero cerrado o sin su servidor web.",
+                            Some(("Activar", PanelAction::StartLhm)),
+                        ),
+                        TempSource::NoSensor | TempSource::Ok => (
+                            "El sensor responde pero no entrega la temperatura de la CPU de este equipo.",
+                            None,
+                        ),
+                    };
+                    b.push(Block::Text(text.into(), true));
+                    if !d.installing && super::sistema::install_failed() {
+                        b.push(Block::Text(
+                            "No se pudo instalar con winget. Descárgalo de github.com/LibreHardwareMonitor/LibreHardwareMonitor.".into(),
+                            true,
+                        ));
+                    }
+                    if !d.installing && super::sistema::start_failed() {
+                        b.push(Block::Text(
+                            "No se encontró LibreHardwareMonitor. Pulsa Instalar y activar.".into(),
+                            true,
+                        ));
+                    }
+                    if let Some((label, action)) = button {
+                        b.push(Block::Buttons(vec![(label.to_owned(), action, true)]));
+                    }
+                }
             }
             b.push(Block::Meter {
                 label: "CPU".into(),

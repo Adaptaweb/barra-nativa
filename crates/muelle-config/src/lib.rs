@@ -165,6 +165,11 @@ pub struct Widgets {
     pub home_items: Vec<HomeItem>,
     /// Size of each widget in the dock: `compacto`, `mediano` (default) or `ancho`.
     pub dock_sizes: std::collections::BTreeMap<String, String>,
+    /// Height of the widget islands in tenths of the icon size (12 = 1.2x).
+    /// Valid range 10 to 16; the dock clamps anything outside it. Tenths and
+    /// not `f32` because this struct derives `Eq`.
+    #[serde(default = "default_island_scale")]
+    pub island_scale: u8,
     /// The other displays, by device name (`\\.\DISPLAY2`): whether they get
     /// a dock and menu bar, and their own widgets. The primary display uses
     /// the fields above.
@@ -218,6 +223,11 @@ pub struct HomeItem {
     pub entities: Vec<String>,
 }
 
+/// Islands are 1.2 times the icon tall unless the user changes it.
+fn default_island_scale() -> u8 {
+    12
+}
+
 impl Default for Widgets {
     fn default() -> Self {
         Self {
@@ -231,6 +241,7 @@ impl Default for Widgets {
             home_url: String::new(),
             home_items: Vec::new(),
             dock_sizes: std::collections::BTreeMap::new(),
+            island_scale: default_island_scale(),
             screens: std::collections::BTreeMap::new(),
         }
     }

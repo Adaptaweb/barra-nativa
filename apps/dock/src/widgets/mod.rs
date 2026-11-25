@@ -224,11 +224,27 @@ impl WidgetId {
 /// Dock entry ids start with this, then the widget key.
 const ENTRY_PREFIX: &str = "widget:";
 
+/// Why the CPU temperature is, or is not, available.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TempSource {
+    /// There is a temperature.
+    Ok,
+    /// No source answers and LibreHardwareMonitor is not installed.
+    NoLhm,
+    /// No source answers but LibreHardwareMonitor is installed.
+    LhmClosed,
+    /// A source answers but gives no plausible CPU temperature.
+    NoSensor,
+}
+
 /// Latest system reading.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SistemaData {
     /// CPU package temperature, °C, when a sensor source answers.
     pub temp: Option<u8>,
+    pub temp_why: TempSource,
+    /// LibreHardwareMonitor is being installed.
+    pub installing: bool,
     pub cpu: u8,
     pub ram: u8,
 }

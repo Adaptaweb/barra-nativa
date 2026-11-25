@@ -1,7 +1,7 @@
 //! Widget islands: two glass pills of their own at the bottom left and bottom
 //! right of the display, apart from the dock, which keeps the apps in the
 //! middle. They look like the dock (same glass, proportional corners) but are
-//! taller (`ISLAND_SCALE` x the icon) so the widgets read well. They hide with
+//! taller (`island_scale` x the icon, 1.2 by default) so the widgets read well. They hide with
 //! it and open each widget's panel above them.
 
 use crate::gfx::Gfx;
@@ -46,20 +46,24 @@ pub struct Frame {
     pub padding: f32,
     pub margin: f32,
     pub scale: f32,
+    /// Island height in times the icon, from the settings (1.0 to 1.6).
+    pub island_scale: f32,
 }
 
-/// Islands are 1.5 times the icon tall, so the widgets inside read well.
-const ISLAND_SCALE: f32 = 1.5;
+/// How many times the icon an island is tall, kept within the allowed range.
+fn island_scale(frame: &Frame) -> f32 {
+    frame.island_scale.clamp(1.0, 1.6)
+}
 
 /// Height of a widget cell inside an island, in physical pixels.
 fn cell_height(frame: &Frame) -> f32 {
-    (frame.icon * ISLAND_SCALE).round()
+    (frame.icon * island_scale(frame)).round()
 }
 
 /// Height of an island's glass pill: the dock's, grown by the extra cell
 /// height. It stays at the same margin from the screen edge and grows up.
 fn pill_height(frame: &Frame) -> f32 {
-    (frame.height + frame.icon * (ISLAND_SCALE - 1.0)).round()
+    (frame.height + frame.icon * (island_scale(frame) - 1.0)).round()
 }
 
 struct Island {
@@ -243,6 +247,7 @@ pub fn update(gfx: &Gfx, frame: Frame) {
                 && f.height == frame.height
                 && f.icon == frame.icon
                 && f.margin == frame.margin
+                && f.island_scale == frame.island_scale
                 && f.theme.light == frame.theme.light
         });
         state.gfx = Some(gfx.clone());

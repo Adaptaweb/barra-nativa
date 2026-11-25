@@ -102,6 +102,9 @@ pub enum PanelAction {
     CalToday,
     CalDay(chrono::NaiveDate),
     CalClose,
+    /// System: install LibreHardwareMonitor with winget, or start it.
+    InstallLhm,
+    StartLhm,
 }
 
 /// A Home Assistant button in the panel grid.
@@ -621,6 +624,8 @@ fn perform(action: PanelAction) {
         PanelAction::CalToday => change_view(|view| *view = calendario::View::today()),
         PanelAction::CalDay(day) => change_view(|view| view.select(day)),
         PanelAction::CalClose => close(),
+        PanelAction::InstallLhm => super::sistema::install_lhm(),
+        PanelAction::StartLhm => super::sistema::start_lhm(),
     }
 }
 
