@@ -132,6 +132,15 @@ thread_local! {
 
 /// Opens the widget's panel at `anchor`, or closes it if it is open.
 pub fn toggle(gfx: &Gfx, id: WidgetId, anchor: POINT, placement: Placement) {
+    if id == WidgetId::Bandeja {
+        // Windows' own flyout of hidden tray icons, by the widget.
+        close();
+        muelle_shell::launcher::toggle_hidden_icons_at(
+            (anchor.x, anchor.y),
+            placement == Placement::Above,
+        );
+        return;
+    }
     let was_open = OPEN.with(|open| {
         open.try_borrow()
             .is_ok_and(|panel| panel.as_ref().is_some_and(|p| p.id == id))

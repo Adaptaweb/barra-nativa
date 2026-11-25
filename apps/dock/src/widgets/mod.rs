@@ -51,10 +51,14 @@ pub enum WidgetId {
     ChatGpt,
     /// Gemini quota.
     Gemini,
+    /// The programs in the notification area: opens the Windows flyout of
+    /// hidden tray icons.
+    Bandeja,
 }
 
 impl WidgetId {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
+        Self::Bandeja,
         Self::Sistema,
         Self::Clima,
         Self::Reloj,
@@ -78,6 +82,7 @@ impl WidgetId {
             Self::Claude => "claude",
             Self::ChatGpt => "chatgpt",
             Self::Gemini => "gemini",
+            Self::Bandeja => "bandeja",
         }
     }
 
@@ -91,6 +96,7 @@ impl WidgetId {
             Self::Claude => "Claude",
             Self::ChatGpt => "ChatGPT",
             Self::Gemini => "Gemini",
+            Self::Bandeja => "Segundo plano",
         }
     }
 
@@ -129,6 +135,7 @@ impl WidgetId {
             Self::Claude => "https://claude.ai/settings/usage".to_owned(),
             Self::ChatGpt => "https://chatgpt.com/codex/settings/usage".to_owned(),
             Self::Gemini => "https://aistudio.google.com/".to_owned(),
+            Self::Bandeja => String::new(),
         }
     }
 
@@ -147,6 +154,7 @@ impl WidgetId {
             Self::Clima => format!("{:?}", readings.clima),
             Self::Reloj => format!("{:?}", readings.reloj),
             Self::Casa => format!("{:?}", readings.casa),
+            Self::Bandeja => String::new(),
             Self::Claude | Self::ChatGpt | Self::Gemini => {
                 let provider = self.provider().unwrap_or(Provider::Claude);
                 readings.ia.as_ref().map_or_else(String::new, |snapshot| {
@@ -163,6 +171,7 @@ impl WidgetId {
             Self::Clima => readings.clima.is_some(),
             Self::Reloj => readings.reloj.is_some(),
             Self::Casa => readings.casa.is_some(),
+            Self::Bandeja => true,
             Self::Claude | Self::ChatGpt | Self::Gemini => readings.ia.is_some(),
         }
     }
@@ -174,6 +183,7 @@ impl WidgetId {
             Self::Reloj => (&RELOJ_ON, reloj::start),
             Self::Casa => (&CASA_ON, casa::start),
             Self::Claude | Self::ChatGpt | Self::Gemini => (&IA_ON, ia::start),
+            Self::Bandeja => (&BANDEJA_ON, || {}),
         }
     }
 }
@@ -300,6 +310,7 @@ static CLIMA_ON: AtomicBool = AtomicBool::new(false);
 static RELOJ_ON: AtomicBool = AtomicBool::new(false);
 static CASA_ON: AtomicBool = AtomicBool::new(false);
 static IA_ON: AtomicBool = AtomicBool::new(false);
+static BANDEJA_ON: AtomicBool = AtomicBool::new(false);
 
 fn ids(keys: &[String]) -> Vec<WidgetId> {
     let mut out = Vec::new();
@@ -318,6 +329,7 @@ pub fn configure(settings: &Settings) {
         .into_iter()
         .chain(ids(&settings.bar_right))
         .chain(ids(&settings.dock))
+        .chain(ids(&settings.dock_left))
         .collect();
     let previous = SETTINGS
         .lock()
@@ -363,11 +375,20 @@ pub fn bar_layout() -> BarLayout {
         .unwrap_or_default()
 }
 
-/// The widgets placed in the dock, in order, with their size.
+/// The widgets on the right of the dock, in order, with their size.
 pub fn dock() -> Vec<(WidgetId, Size)> {
+    dock_zone(false)
+}
+
+/// The widgets on the left of the dock, in order, with their size.
+pub fn dock_left() -> Vec<(WidgetId, Size)> {
+    dock_zone(true)
+}
+
+fn dock_zone(left: bool) -> Vec<(WidgetId, Size)> {
     settings()
         .map(|s| {
-            ids(&s.dock)
+            ids(if left { &s.dock_left } else { &s.dock })
                 .into_iter()
                 .map(|id| (id, Size::from_key(s.dock_sizes.get(id.key()).map(String::as_str))))
                 .collect()
@@ -377,7 +398,11 @@ pub fn dock() -> Vec<(WidgetId, Size)> {
 
 /// The size of a widget in the dock.
 pub fn dock_size(id: WidgetId) -> Size {
-    dock().into_iter().find(|(w, _)| *w == id).map_or(Size::Medium, |(_, s)| s)
+    dock()
+        .into_iter()
+        .chain(dock_left())
+        .find(|(w, _)| *w == id)
+        .map_or(Size::Medium, |(_, s)| s)
 }
 
 /// Cell width in the dock, in hundredths of an icon.
@@ -385,14 +410,15 @@ pub fn dock_width(id: WidgetId, size: Size) -> u16 {
     cell::width(id, size)
 }
 
-/// The dock cell for a widget, `height` pixels tall.
+/// The dock cell for a widget, `height` pixels tall, and whether its width
+/// changed (the dock must then be laid out again).
 pub fn render_cell(
     gfx: &crate::gfx::Gfx,
     id: WidgetId,
     readings: &Readings,
     height: u32,
     light: bool,
-) -> anyhow::Result<windows::UI::Composition::CompositionSurfaceBrush> {
+) -> anyhow::Result<(windows::UI::Composition::CompositionSurfaceBrush, bool)> {
     cell::render(gfx, id, dock_size(id), readings, height, light)
 }
 
@@ -456,4 +482,9 @@ pub fn open_debug_panel(gfx: &crate::gfx::Gfx) {
         y: monitor.screen.top + (28.0 * monitor.scale) as i32,
     };
     toggle_panel(gfx, id, anchor, Placement::Below);
+}
+
+/// Asks for another pass of the dock layout (a cell's width changed).
+pub fn nudge() {
+    publish(|_| true);
 }

@@ -97,10 +97,14 @@ impl App {
                 {
                     continue;
                 }
-                let icon = crate::widgets::render_cell(&self.gfx, widget, &readings, wanted, light)
+                let rendered = crate::widgets::render_cell(&self.gfx, widget, &readings, wanted, light)
                     .inspect_err(|error| eprintln!("muelle: widget `{id}`: {error:#}"))
-                    .ok()
-                    .or_else(|| self.placeholder.clone());
+                    .ok();
+                if rendered.as_ref().is_some_and(|(_, changed)| *changed) {
+                    // Laid out with an estimated width: lay out again.
+                    crate::widgets::nudge();
+                }
+                let icon = rendered.map(|(brush, _)| brush).or_else(|| self.placeholder.clone());
                 let label = self.gfx.label_brush(widget.name(), scale, light, edge).ok();
                 self.assets.insert(
                     id.clone(),
@@ -224,10 +228,16 @@ impl App {
             {
                 continue;
             }
-            let Ok(icon) = crate::widgets::render_cell(&self.gfx, widget, &readings, wanted, light)
+            let Ok((icon, resized)) =
+                crate::widgets::render_cell(&self.gfx, widget, &readings, wanted, light)
             else {
                 continue;
             };
+            if resized {
+                // A different width: the dock layout changes, not just the picture.
+                self.assets.remove(id);
+                return self.refresh();
+            }
             if let Some(stage) = &self.stage {
                 stage.scene.set_slot_brush(index, &icon)?;
             }

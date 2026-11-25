@@ -65,7 +65,11 @@ uses far less RAM and CPU.
    `VITE_SECTION=widgets` opens that section first. Pending: drag to reorder.
    Dock widgets are wide transparent cells like the Tauri Barra's (`widgets/cell.rs`, layout
    `ItemKind::Wide(hundredths of an icon)`, no magnification), sized compacto / mediano /
-   ancho from `widgets.dockSizes` (Settings › Widgets › Dock). Debug builds:
+   ancho from `widgets.dockSizes` (Settings › Widgets › Dock). Each cell is as wide as its
+   content (measured on render, cached, in tenths of an icon); wide cells grow a quarter as
+   much as icons under the cursor. Zones: `widgets.dockLeft` (before the apps) and
+   `widgets.dock` (at the far end); the apps stay centred on the screen when it has room.
+   `bandeja` opens the Windows hidden tray icons flyout above the dock (no icon grid yet). Debug builds:
    `BARRA_MONITOR=x,y` puts the dock on the display at that point (screenshots while the
    primary screen is busy with a full-screen app).
 7. [ ] One dock and top bar per monitor, with per-screen widgets and on/off.

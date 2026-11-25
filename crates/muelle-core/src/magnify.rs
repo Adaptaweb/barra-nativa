@@ -82,7 +82,12 @@ pub fn magnify(layout: &Layout, cursor: f32, amount: f32, magnifier: &Magnifier)
             let center = rest_center + shift_of(rest_center) + centering;
             let scale = match slot.kind {
                 ItemKind::Icon => 1.0 + strength * falloff((rest_center - cursor) / range),
-                ItemKind::Separator | ItemKind::Wide(_) => 1.0,
+                // Wide widget cells grow a quarter as much: enough to show
+                // the hover, without pushing the dock apart.
+                ItemKind::Wide(_) => {
+                    1.0 + strength * 0.25 * falloff((rest_center - cursor) / range)
+                }
+                ItemKind::Separator => 1.0,
             };
             let (width, height) = (rest.width * scale, rest.height * scale);
             Rect {

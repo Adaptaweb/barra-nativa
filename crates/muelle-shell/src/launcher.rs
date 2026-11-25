@@ -259,6 +259,12 @@ const OVERFLOW_CLASSES: [PCWSTR; 2] = [
 /// flyout open would instead move the focus, and the pointer, to its first
 /// icon.
 pub fn toggle_hidden_icons(anchor: (i32, i32)) {
+    toggle_hidden_icons_at(anchor, false);
+}
+
+/// As `toggle_hidden_icons`, with the flyout above `anchor` (its bottom
+/// edge) when `above`, for the dock.
+pub fn toggle_hidden_icons_at(anchor: (i32, i32), above: bool) {
     let was_open = OVERFLOW_OPEN_AT_PRESS.swap(false, Ordering::Relaxed);
     if let Some(flyout) = open_overflow() {
         // SAFETY: Focuses the flyout so that Escape reaches it and not the
@@ -288,7 +294,7 @@ pub fn toggle_hidden_icons(anchor: (i32, i32)) {
         let until = Instant::now() + HIDDEN_ICONS_HOLD;
         while Instant::now() < until {
             if let Some(flyout) = open_overflow() {
-                keep_under(flyout, anchor);
+                keep_under(flyout, anchor, above);
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -350,7 +356,7 @@ fn open_overflow() -> Option<HWND> {
 
 /// Moves `flyout` (keeping its size) so it hangs centred under `anchor`,
 /// inside the primary monitor. Does nothing once it is there.
-fn keep_under(flyout: HWND, (center, top): (i32, i32)) {
+fn keep_under(flyout: HWND, (center, top): (i32, i32), above: bool) {
     let Some(monitor) = crate::system::primary_monitor() else {
         return;
     };
@@ -365,7 +371,11 @@ fn keep_under(flyout: HWND, (center, top): (i32, i32)) {
         screen.left + HIDDEN_ICONS_GAP,
         (screen.right - HIDDEN_ICONS_GAP - width).max(screen.left),
     );
-    let top = top + HIDDEN_ICONS_GAP;
+    let top = if above {
+        top - HIDDEN_ICONS_GAP - (rect.bottom - rect.top)
+    } else {
+        top + HIDDEN_ICONS_GAP
+    };
     if (rect.left, rect.top) == (left, top) {
         return;
     }

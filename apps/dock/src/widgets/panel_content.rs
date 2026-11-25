@@ -98,6 +98,7 @@ fn reset_note(reset: Option<DateTime<Utc>>) -> String {
 pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
     let mut b = Vec::new();
     match id {
+        WidgetId::Bandeja => {}
         WidgetId::Sistema => {
             b.push(Block::Title("Sistema".into(), String::new()));
             let Some(d) = r.sistema else {

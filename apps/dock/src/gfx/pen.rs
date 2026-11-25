@@ -1,7 +1,7 @@
 //! Free-form drawing for widgets: text, color emoji, rounded rectangles and
 //! arcs on a surface of any size.
 
-use super::{Gfx, LabelBrush, draw_image_in, rgb, text_font};
+use super::{Gfx, LabelBrush, draw_image_in, icon_font, rgb, text_font};
 use muelle_shell::icons::IconImage;
 use anyhow::Result;
 use windows::{
@@ -150,6 +150,12 @@ impl Pen<'_> {
             );
         }
         Ok(height)
+    }
+
+    /// A symbol from the system icon font (Segoe Fluent Icons).
+    pub fn icon(&self, glyph: char, (x, y): (f32, f32), size: f32, color: Rgba) -> Result<f32> {
+        let mut buffer = [0u8; 4];
+        self.run(glyph.encode_utf8(&mut buffer), icon_font(), (x, y), size, Weight::Normal, color, false)
     }
 
     /// A color emoji (weather symbols) with its top left at (`x`, `y`).
@@ -318,6 +324,14 @@ impl Gfx {
     /// Height of text wrapped to `width` physical pixels.
     pub fn measure_paragraph(&self, text: &str, size: f32, scale: f32, width: f32) -> Result<f32> {
         Ok(paragraph(&self.dwrite, text, size * scale, Weight::Normal, width)?.1)
+    }
+
+    /// Width and height of a system icon font symbol, in physical pixels.
+    pub fn measure_icon(&self, glyph: char, size: f32, scale: f32) -> Result<(f32, f32)> {
+        let mut buffer = [0u8; 4];
+        let (_, width, height) =
+            one_line(&self.dwrite, glyph.encode_utf8(&mut buffer), icon_font(), size * scale, Weight::Normal)?;
+        Ok((width, height))
     }
 
     /// Width and height of a color emoji, in physical pixels.

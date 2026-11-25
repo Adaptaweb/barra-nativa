@@ -142,8 +142,10 @@ pub struct Widgets {
     pub bar_left: Vec<String>,
     /// Right side of the menu bar, before the status icons.
     pub bar_right: Vec<String>,
-    /// The dock, after the apps.
+    /// The right of the dock, after the apps.
     pub dock: Vec<String>,
+    /// The left of the dock, before the apps.
+    pub dock_left: Vec<String>,
     /// City for the weather widget.
     pub weather_city: String,
     /// Home Assistant address, e.g. `http://192.168.1.10:8123`. Its token
@@ -173,6 +175,7 @@ impl Default for Widgets {
             bar_left: Vec::new(),
             bar_right: vec!["clima".into(), "sistema".into()],
             dock: Vec::new(),
+            dock_left: Vec::new(),
             weather_city: "Santiago".into(),
             home_url: String::new(),
             home_items: Vec::new(),

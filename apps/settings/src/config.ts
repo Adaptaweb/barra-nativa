@@ -69,6 +69,7 @@ export interface WidgetSettings {
   barLeft: string[];
   barRight: string[];
   dock: string[];
+  dockLeft: string[];
   weatherCity: string;
   homeUrl: string;
   homeItems: HomeItem[];

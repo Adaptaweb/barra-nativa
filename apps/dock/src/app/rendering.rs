@@ -59,6 +59,19 @@ impl App {
         if self.config.show_start {
             entries.insert(0, icon(START_ID, Role::Start, false));
         }
+        // Widgets on the left, then a divider, then the apps.
+        let left = crate::widgets::dock_left();
+        if !left.is_empty() {
+            let mut lead: Vec<Entry> = left
+                .into_iter()
+                .map(|(widget, size)| Entry {
+                    kind: ItemKind::Wide(crate::widgets::dock_width(widget, size)),
+                    ..icon(&widget.entry_id(), Role::Widget, false)
+                })
+                .collect();
+            lead.push(separator());
+            entries.splice(0..0, lead);
+        }
         if self.config.show_recents && !self.roster.recent().is_empty() {
             entries.push(separator());
             entries.extend(
@@ -78,18 +91,6 @@ impl App {
                     .map(|&hwnd| icon(&window_id(hwnd), Role::Window, false)),
             );
         }
-        let placed = crate::widgets::dock();
-        if !placed.is_empty() {
-            entries.extend(
-                placed
-                    .into_iter()
-                    .map(|(widget, size)| Entry {
-                        kind: ItemKind::Wide(crate::widgets::dock_width(widget, size)),
-                        ..icon(&widget.entry_id(), Role::Widget, false)
-                    }),
-            );
-            entries.push(separator());
-        }
         if let Some(folder) = &self.config.shortcuts_folder {
             entries.push(icon(folder, Role::Shortcuts, false));
         }
@@ -100,6 +101,19 @@ impl App {
         }
         if self.config.show_trash {
             entries.push(icon(recycle_bin::PARSING_NAME, Role::Trash, false));
+        }
+        // Widgets on the right, at the far end, as in the Barra dock.
+        let placed = crate::widgets::dock();
+        if !placed.is_empty() {
+            entries.push(separator());
+            entries.extend(
+                placed
+                    .into_iter()
+                    .map(|(widget, size)| Entry {
+                        kind: ItemKind::Wide(crate::widgets::dock_width(widget, size)),
+                        ..icon(&widget.entry_id(), Role::Widget, false)
+                    }),
+            );
         }
         // Hiding fixed items can leave a section empty. Never leave loose dividers.
         let mut previous_separator = true;
@@ -226,10 +240,28 @@ impl App {
         // Position relative to the screen, not the work area; the work area
         // already excludes the strip reserved by the dock.
         let margin = px(FLOAT_MARGIN);
-        let centred = span_start + ((length_room - dock.width) / 2.0).round();
+        // The apps stay centred on the screen, as in the Barra dock: widgets
+        // on either side make the dock longer on that side only.
+        let apps: Vec<f32> = dock
+            .slots
+            .iter()
+            .zip(&key.entries)
+            .filter(|(_, entry)| matches!(entry.role, Role::App | Role::Group | Role::Start))
+            .flat_map(|(slot, _)| [slot.rect.x, slot.rect.x + slot.rect.width])
+            .collect();
+        let apps_mid = match (apps.iter().copied().reduce(f32::min), apps.iter().copied().reduce(f32::max)) {
+            (Some(first), Some(last)) => (first + last) / 2.0,
+            _ => dock.width / 2.0,
+        };
+        let along = |start: f32, room: f32| {
+            (start + room / 2.0 - apps_mid)
+                .round()
+                .clamp(start + margin, (start + room - margin - dock.width).max(start + margin))
+        };
+        let centred = along(span_start, length_room);
         let (dock_x, dock_y) = match edge {
             DockEdge::Bottom => (
-                screen.left as f32 + ((screen_width - dock.width) / 2.0).round(),
+                along(screen.left as f32, screen_width),
                 screen.bottom as f32 - margin - dock.height,
             ),
             DockEdge::Left => (screen.left as f32 + margin, centred),

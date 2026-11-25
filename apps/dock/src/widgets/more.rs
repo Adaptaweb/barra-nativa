@@ -36,7 +36,8 @@ pub(super) fn bar(
             };
             ia_bar(gfx, provider, snapshot.get(provider), scale, height, light).map(Some)
         }
-        WidgetId::Sistema | WidgetId::Clima => Ok(None),
+        // The bar has its own arrow for hidden tray icons.
+        WidgetId::Sistema | WidgetId::Clima | WidgetId::Bandeja => Ok(None),
     }
 }
 

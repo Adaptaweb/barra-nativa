@@ -16,7 +16,7 @@ import {
 } from "./config";
 import { Card, Row } from "./controls";
 
-type Zone = "barLeft" | "barRight" | "dock";
+type Zone = "barLeft" | "barRight" | "dockLeft" | "dock";
 
 const WIDGETS: { key: string; name: string; detail: string }[] = [
   { key: "reloj", name: "Reloj y calendario", detail: "Fecha, hora y tu próximo evento. Reemplaza el reloj de la barra." },
@@ -26,12 +26,14 @@ const WIDGETS: { key: string; name: string; detail: string }[] = [
   { key: "claude", name: "Claude", detail: "Límites de 5 horas y semanal de tu plan." },
   { key: "chatgpt", name: "ChatGPT", detail: "Límites de tu plan, a través de Codex." },
   { key: "gemini", name: "Gemini", detail: "Cuota de Gemini CLI o Antigravity." },
+  { key: "bandeja", name: "Segundo plano", detail: "Los iconos ocultos de la bandeja de Windows (solo en el dock)." },
 ];
 
 const ZONES: { zone: Zone; title: string; hint: string }[] = [
   { zone: "barLeft", title: "Barra superior · izquierda", hint: "Después del nombre de la app activa." },
   { zone: "barRight", title: "Barra superior · derecha", hint: "Antes de los iconos de estado." },
-  { zone: "dock", title: "Dock", hint: "Entre tus apps y las carpetas." },
+  { zone: "dockLeft", title: "Dock · izquierda", hint: "Antes de tus apps; las apps quedan centradas." },
+  { zone: "dock", title: "Dock · derecha", hint: "Al final del dock, después de las carpetas." },
 ];
 
 const nameOf = (key: string) => WIDGETS.find((w) => w.key === key)?.name ?? key;
@@ -46,34 +48,34 @@ export function WidgetsSection({ config, update }: Props) {
   const save = (patch: Partial<WidgetSettings>) => update({ widgets: { ...widgets, ...patch } });
 
   const move = (zone: Zone, index: number, by: number) => {
-    const list = [...widgets[zone]];
+    const list = [...(widgets[zone] ?? [])];
     const target = index + by;
     if (target < 0 || target >= list.length) return;
     [list[index], list[target]] = [list[target], list[index]];
     save({ [zone]: list });
   };
   const remove = (zone: Zone, index: number) =>
-    save({ [zone]: widgets[zone].filter((_, i) => i !== index) });
+    save({ [zone]: (widgets[zone] ?? []).filter((_, i) => i !== index) });
   const add = (zone: Zone, key: string) => {
-    if (!key || widgets[zone].includes(key)) return;
-    save({ [zone]: [...widgets[zone], key] });
+    if (!key || (widgets[zone] ?? []).includes(key)) return;
+    save({ [zone]: [...(widgets[zone] ?? []), key] });
   };
 
   return (
     <>
       {ZONES.map(({ zone, title, hint }) => (
         <Card key={zone} title={title}>
-          {widgets[zone].length === 0 ? (
+          {(widgets[zone] ?? []).length === 0 ? (
             <div className="row"><div className="row-text"><span className="row-hint">{hint} Sin widgets.</span></div></div>
           ) : (
-            widgets[zone].map((key, index) => (
+            (widgets[zone] ?? []).map((key, index) => (
               <div className="row" key={key}>
                 <div className="row-text">
                   <span className="row-label">{nameOf(key)}</span>
                   {index === 0 ? <span className="row-hint">{hint}</span> : null}
                 </div>
                 <div className="row-control push-group">
-                  {zone === "dock" ? (
+                  {zone === "dock" || zone === "dockLeft" ? (
                     <span className="select-wrap">
                       <select
                         className="select-control size-control"
@@ -88,13 +90,13 @@ export function WidgetsSection({ config, update }: Props) {
                     </span>
                   ) : null}
                   <button type="button" className="push" aria-label="Subir" disabled={index === 0} onClick={() => move(zone, index, -1)}>↑</button>
-                  <button type="button" className="push" aria-label="Bajar" disabled={index === widgets[zone].length - 1} onClick={() => move(zone, index, 1)}>↓</button>
+                  <button type="button" className="push" aria-label="Bajar" disabled={index === (widgets[zone] ?? []).length - 1} onClick={() => move(zone, index, 1)}>↓</button>
                   <button type="button" className="push" aria-label={`Quitar ${nameOf(key)}`} onClick={() => remove(zone, index)}>Quitar</button>
                 </div>
               </div>
             ))
           )}
-          <AddRow zone={zone} placed={widgets[zone]} onAdd={(key) => add(zone, key)} />
+          <AddRow zone={zone} placed={widgets[zone] ?? []} onAdd={(key) => add(zone, key)} />
         </Card>
       ))}
 

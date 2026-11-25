@@ -8,6 +8,7 @@ use super::{Calendar, Home, Readings, WidgetId};
 use crate::gfx::{Gfx, Pen, Rgba, Weight};
 use crate::usage::{self, State};
 use anyhow::Result;
+use std::sync::Mutex;
 use chrono::{DateTime, Local, TimeZone, Utc};
 use windows::UI::Composition::CompositionSurfaceBrush;
 
@@ -41,7 +42,15 @@ impl Size {
 /// Width of the cell in hundredths of an icon. Fixed per widget and size so a
 /// changing reading never moves the dock.
 pub fn width(id: WidgetId, size: Size) -> u16 {
+    if let Some(known) = WIDTHS
+        .lock()
+        .ok()
+        .and_then(|w| w.iter().find(|(key, _)| *key == (id, size)).map(|(_, v)| *v))
+    {
+        return known;
+    }
     match (id, size) {
+        (WidgetId::Bandeja, _) => 70,
         (WidgetId::Reloj, Size::Compact) => 135,
         (WidgetId::Reloj, Size::Medium) => 290,
         (WidgetId::Reloj, Size::Wide) => 600,
@@ -57,7 +66,11 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
     }
 }
 
-/// Draws the cell `height` pixels tall.
+static WIDTHS: Mutex<Vec<((WidgetId, Size), u16)>> = Mutex::new(Vec::new());
+
+/// Draws the cell `height` pixels tall, as wide as its content. The width it
+/// needed is remembered for the dock layout (see `width`); returns whether it
+/// changed.
 pub fn render(
     gfx: &Gfx,
     id: WidgetId,
@@ -65,30 +78,66 @@ pub fn render(
     readings: &Readings,
     height: u32,
     light: bool,
-) -> Result<CompositionSurfaceBrush> {
+) -> Result<(CompositionSurfaceBrush, bool)> {
     let height = height.max(16) as f32;
-    let width = (height * f32::from(width(id, size)) / 100.0).round();
     // Text sizes are relative to a 48 pixel tall cell, as in the Barra dock.
     let unit = height / 48.0;
-    let cell = gfx.paint((width, height), unit, |pen| {
-        let mut c = Cell {
-            pen,
-            gfx,
-            unit,
-            height,
-            width,
-            light,
-            x: (height * 0.22).round(),
-        };
-        match id {
-            WidgetId::Reloj => reloj(&mut c, size, readings),
-            WidgetId::Clima => clima(&mut c, size, readings),
-            WidgetId::Sistema => sistema(&mut c, size, readings),
-            WidgetId::Casa => casa(&mut c, size, readings),
-            WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini => ia(&mut c, id, size, readings),
+    let pad = (height * 0.14).round();
+    let draw = |width: f32, end: &mut f32| {
+        gfx.paint((width, height), unit, |pen| {
+            let mut c = Cell {
+                pen,
+                gfx,
+                unit,
+                height,
+                light,
+                x: pad,
+            };
+            match id {
+                WidgetId::Reloj => reloj(&mut c, size, readings),
+                WidgetId::Clima => clima(&mut c, size, readings),
+                WidgetId::Sistema => sistema(&mut c, size, readings),
+                WidgetId::Casa => casa(&mut c, size, readings),
+                WidgetId::Bandeja => bandeja(&mut c),
+                WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini => {
+                    ia(&mut c, id, size, readings)
+                }
+            }?;
+            *end = c.x;
+            Ok(())
+        })
+    };
+    // First on a roomy surface to learn the width, then at that width.
+    let mut end = 0.0;
+    draw(height * 9.0, &mut end)?;
+    // In steps of a tenth of an icon, so small changes do not move the dock.
+    let hundredths = ((((end + pad) / height) * 10.0).ceil() * 10.0).clamp(60.0, 900.0) as u16;
+    let width = (height * f32::from(hundredths) / 100.0).round();
+    let cell = draw(width, &mut end)?;
+    let changed = WIDTHS.lock().is_ok_and(|mut widths| {
+        match widths.iter_mut().find(|(key, _)| *key == (id, size)) {
+            Some((_, old)) if *old == hundredths => false,
+            Some((_, old)) => {
+                *old = hundredths;
+                true
+            }
+            None => {
+                widths.push(((id, size), hundredths));
+                true
+            }
         }
-    })?;
-    Ok(cell.brush)
+    });
+    Ok((cell.brush, changed))
+}
+
+fn bandeja(c: &mut Cell<'_, '_>) -> Result<()> {
+    // The chevron of the Windows notification area.
+    let size = 15.0;
+    let (w, h) = c.gfx.measure_icon('\u{E70E}', size, c.unit)?;
+    c.x += c.px(4.0);
+    c.pen.icon('\u{E70E}', (c.x, (c.height - h) / 2.0), size, c.strong())?;
+    c.x += w + c.px(4.0);
+    Ok(())
 }
 
 /// Lays the cell out left to right.
@@ -97,7 +146,6 @@ struct Cell<'a, 'b> {
     gfx: &'a Gfx,
     unit: f32,
     height: f32,
-    width: f32,
     light: bool,
     x: f32,
 }
@@ -179,11 +227,8 @@ impl Cell<'_, '_> {
     fn strong(&self) -> Rgba {
         ink(self.light, 1.0)
     }
-
-    fn room(&self) -> f32 {
-        self.width - self.x - self.px(10.0)
-    }
 }
+
 
 fn shorten(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
@@ -231,12 +276,14 @@ fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
         let (tw, th) = c.gfx.measure(&time, 17.0, c.unit, Weight::Bold)?;
         let (aw, _) = c.gfx.measure(ampm, 10.0, c.unit, Weight::Bold)?;
         let (dw, dh) = c.gfx.measure(&date, 10.5, c.unit, Weight::Normal)?;
-        let total = tw + c.px(2.0) + aw;
-        let x = (c.width - total) / 2.0;
+        let total = (tw + c.px(2.0) + aw).max(dw);
+        let x = c.x;
         let y = (c.height - th - dh) / 2.0;
-        c.pen.text(&time, (x, y), 17.0, Weight::Bold, c.strong())?;
-        c.pen.text(ampm, (x + tw + c.px(2.0), y + th * 0.38), 10.0, Weight::Bold, c.faded())?;
-        c.pen.text(&date, ((c.width - dw) / 2.0, y + th), 10.5, Weight::Normal, c.faded())?;
+        let top_x = x + (total - (tw + c.px(2.0) + aw)) / 2.0;
+        c.pen.text(&time, (top_x, y), 17.0, Weight::Bold, c.strong())?;
+        c.pen.text(ampm, (top_x + tw + c.px(2.0), y + th * 0.38), 10.0, Weight::Bold, c.faded())?;
+        c.pen.text(&date, (x + (total - dw) / 2.0, y + th), 10.5, Weight::Normal, c.faded())?;
+        c.x += total;
         return Ok(());
     }
     let date = format!("{} {}", now.day(), MONTHS[now.month0() as usize]);
@@ -260,7 +307,7 @@ fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     let Some(d) = r.reloj.as_ref() else {
         return Ok(());
     };
-    let max_chars = (c.room() / c.px(5.6)).max(8.0) as usize;
+    let max_chars = 26;
     match (&d.calendar, &d.next) {
         (Calendar::NotConnected, _) => c.text("Conecta tu calendario", 11.0, Weight::Normal, c.faded()),
         (Calendar::Failed, _) => c.column(
@@ -356,7 +403,7 @@ fn sistema(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
         Some(t) => (t, f32::from(t) / 100.0, temp_color(t), "°"),
         None => (d.cpu, f32::from(d.cpu) / 100.0, BLUE, "%"),
     };
-    let left = if size == Size::Compact { (c.width - ring) / 2.0 } else { c.x - c.px(4.0) };
+    let left = if size == Size::Compact { c.x } else { c.x - c.px(4.0) };
     let center = (left + ring / 2.0, c.height / 2.0);
     let stroke = c.px(4.5);
     let radius = ring / 2.0 - stroke;
@@ -367,10 +414,11 @@ fn sistema(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     c.pen.text(&number, (center.0 - nw / 2.0, center.1 - nh / 2.0 - c.px(3.0)), 13.0, Weight::Bold, c.strong())?;
     let (lw, _) = c.gfx.measure("CPU", 7.5, c.unit, Weight::Bold)?;
     c.pen.text("CPU", (center.0 - lw / 2.0, center.1 + radius - c.px(6.0)), 7.5, Weight::Bold, c.faded())?;
+    c.x = left + ring;
     if size == Size::Compact {
         return Ok(());
     }
-    c.x = left + ring + c.px(10.0);
+    c.x += c.px(10.0);
     // CPU and RAM rows: label, bar, percent.
     let rows = [("CPU", d.cpu, BLUE), ("RAM", d.ram, GREEN)];
     let row_h = c.line(11.0, Weight::Bold)?;
@@ -378,7 +426,8 @@ fn sistema(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     let (label_w, _) = c.gfx.measure("RAM", 11.0, c.unit, Weight::Bold)?;
     let (pct_w, _) = c.gfx.measure("100%", 11.0, c.unit, Weight::Bold)?;
     let bar_x = c.x + label_w + c.px(8.0);
-    let bar_w = (c.width - c.px(12.0) - pct_w - c.px(8.0) - bar_x).max(c.px(20.0));
+    let bar_w = c.px(52.0);
+    let pct_x = bar_x + bar_w + c.px(8.0);
     for (index, (label, pct, color)) in rows.into_iter().enumerate() {
         let y = top + (row_h + c.px(4.0)) * index as f32;
         c.pen.text(label, (c.x, y), 11.0, Weight::Bold, c.faded())?;
@@ -391,8 +440,9 @@ fn sistema(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
         }
         let text = format!("{pct}%");
         let (tw, _) = c.gfx.measure(&text, 11.0, c.unit, Weight::Bold)?;
-        c.pen.text(&text, (c.width - c.px(12.0) - tw, y), 11.0, Weight::Bold, c.strong())?;
+        c.pen.text(&text, (pct_x + pct_w - tw, y), 11.0, Weight::Bold, c.strong())?;
     }
+    c.x = pct_x + pct_w;
     Ok(())
 }
 
@@ -497,9 +547,9 @@ fn ia(c: &mut Cell<'_, '_>, id: WidgetId, size: Size, r: &Readings) -> Result<()
     let (label_w, _) = c.gfx.measure("Semanal", 11.0, c.unit, Weight::Bold)?;
     let (reset_w, _) = c.gfx.measure("10h 59m", 10.5, c.unit, Weight::Normal)?;
     let (pct_w, _) = c.gfx.measure("100%", 11.0, c.unit, Weight::Bold)?;
-    let right = c.width - c.px(12.0);
     let bar_x = c.x + label_w + c.px(8.0);
-    let bar_w = (right - pct_w - c.px(8.0) - reset_w - c.px(8.0) - bar_x).max(c.px(20.0));
+    let bar_w = c.px(56.0);
+    let right = bar_x + bar_w + c.px(8.0) + reset_w + c.px(8.0) + pct_w;
     for (index, w) in rows.iter().enumerate() {
         let y = top + (row_h + c.px(4.0)) * index as f32;
         let label = match w.title().as_str() {
@@ -522,5 +572,6 @@ fn ia(c: &mut Cell<'_, '_>, id: WidgetId, size: Size, r: &Readings) -> Result<()
         let (tw, _) = c.gfx.measure(&pct, 11.0, c.unit, Weight::Bold)?;
         c.pen.text(&pct, (right - tw, y), 11.0, Weight::Bold, c.strong())?;
     }
+    c.x = right;
     Ok(())
 }
