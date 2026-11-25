@@ -533,6 +533,20 @@ pub struct MenuBar {
     /// Widgets on the bar, to repaint one alone when its reading changes:
     /// its visual, and the width it was drawn at.
     widget_visuals: Vec<(WidgetId, SpriteVisual, f32)>,
+    /// What the bar widgets showed when last painted; a new reading with the
+    /// same print (only the clock's seconds changed) does not repaint.
+    bar_print: String,
+}
+
+/// What the bar shows for its widgets, to tell whether a repaint is needed.
+fn bar_print(layout: &BarLayout, readings: &widgets::Readings) -> String {
+    layout
+        .left
+        .iter()
+        .chain(&layout.right)
+        .map(|id| id.bar_fingerprint(readings))
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
 }
 
 unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -1203,6 +1217,7 @@ impl MenuBar {
             _saver_watch: muelle_shell::power::SaverWatch::new(hwnd.0 as isize),
             audio: AudioWatch::new(hwnd.0 as isize, AUDIO_CHANGED),
             widget_visuals: Vec::new(),
+            bar_print: String::new(),
         };
         widgets::set_target(hwnd, WIDGETS_CHANGED);
         AUDIO_TICK_PENDING.store(false, Ordering::Relaxed);
@@ -1985,6 +2000,10 @@ impl MenuBar {
         if wanted != shown.len() {
             return self.rebuild(gfx);
         }
+        let print = bar_print(&look.bar_widgets, &readings);
+        if print == self.bar_print {
+            return Ok(());
+        }
         for (id, visual, width) in &self.widget_visuals {
             let Some(item) = widgets::render_bar(gfx, *id, &readings, scale, height, light)? else {
                 return self.rebuild(gfx);
@@ -1994,6 +2013,7 @@ impl MenuBar {
             }
             visual.SetBrush(&item.brush)?;
         }
+        self.bar_print = print;
         Ok(())
     }
 
@@ -2160,6 +2180,7 @@ impl MenuBar {
 
         self.widget_visuals.clear();
         let readings = widgets::readings();
+        self.bar_print = bar_print(&look.bar_widgets, &readings);
         let widget_height = px(WIDGET_HEIGHT);
         let slop = px(HIT_SLOP);
         for id in &look.bar_widgets.left {

@@ -153,6 +153,21 @@ impl WidgetId {
         Self::from_key(id.strip_prefix(ENTRY_PREFIX)?)
     }
 
+    /// Like `fingerprint`, but ignoring what the menu bar does not show
+    /// (the clock's seconds).
+    pub fn bar_fingerprint(self, readings: &Readings) -> String {
+        match self {
+            Self::Reloj => format!(
+                "{:?}",
+                readings
+                    .reloj
+                    .as_ref()
+                    .map(|d| RelojData { second: 0, ..d.clone() })
+            ),
+            _ => self.fingerprint(readings),
+        }
+    }
+
     /// Changes when what the widget shows changes.
     pub fn fingerprint(self, readings: &Readings) -> String {
         match self {
@@ -247,6 +262,8 @@ pub struct Event {
 pub struct RelojData {
     /// Date and time as the menu bar shows them ("mar 24 nov 19:39").
     pub clock: String,
+    /// Seconds of the current minute, so the dock time advances every second.
+    pub second: u32,
     /// Day of the month and weekday, for the dock tile.
     pub day: String,
     pub weekday: String,

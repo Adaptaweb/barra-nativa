@@ -1,6 +1,6 @@
 //! The clock with the date and the next calendar event, in one widget.
 //!
-//! The time is published on every minute. Events come from private iCal links
+//! The time is published every second. Events come from private iCal links
 //! (Google Calendar "secret address in iCal format", Outlook "publish
 //! calendar"), one per line in the credential `Barra/calendario.ics`. They are
 //! read every 15 minutes for the next 14 days.
@@ -259,27 +259,34 @@ pub(super) fn start() {
             let mut events: Vec<Event> = Vec::new();
             let mut next_fetch = Instant::now();
             let mut previous_links: Vec<String> = Vec::new();
+            let mut last_minute: Option<u32> = None;
             while RELOJ_ON.load(Ordering::Acquire) {
-                let links = links();
-                if links != previous_links {
-                    previous_links.clone_from(&links);
-                    next_fetch = Instant::now();
-                }
-                if Instant::now() >= next_fetch {
-                    if links.is_empty() {
-                        calendar = Calendar::NotConnected;
-                        events.clear();
-                        next_fetch = Instant::now() + Duration::from_secs(60);
-                    } else {
-                        match client.as_ref().and_then(|c| fetch(c, &links)) {
-                            Some(list) => {
-                                calendar = Calendar::Connected;
-                                events = list;
-                                next_fetch = Instant::now() + EVERY;
-                            }
-                            None => {
-                                calendar = Calendar::Failed;
-                                next_fetch = Instant::now() + RETRY;
+                // Credential Manager and the fetch check run only on the first
+                // turn and when the minute changes.
+                let minute = chrono::Timelike::minute(&Local::now());
+                if last_minute != Some(minute) {
+                    last_minute = Some(minute);
+                    let links = links();
+                    if links != previous_links {
+                        previous_links.clone_from(&links);
+                        next_fetch = Instant::now();
+                    }
+                    if Instant::now() >= next_fetch {
+                        if links.is_empty() {
+                            calendar = Calendar::NotConnected;
+                            events.clear();
+                            next_fetch = Instant::now() + Duration::from_secs(60);
+                        } else {
+                            match client.as_ref().and_then(|c| fetch(c, &links)) {
+                                Some(list) => {
+                                    calendar = Calendar::Connected;
+                                    events = list;
+                                    next_fetch = Instant::now() + EVERY;
+                                }
+                                None => {
+                                    calendar = Calendar::Failed;
+                                    next_fetch = Instant::now() + RETRY;
+                                }
                             }
                         }
                     }
@@ -288,6 +295,7 @@ pub(super) fn start() {
                 events.retain(|e| e.end > now);
                 let reading = RelojData {
                     clock: clock_24h(),
+                    second: chrono::Timelike::second(&Local::now()),
                     day: Local::now().format("%d").to_string().trim_start_matches('0').to_owned(),
                     weekday: weekday(),
                     calendar,
@@ -299,9 +307,9 @@ pub(super) fn start() {
                     r.reloj = Some(reading);
                     changed
                 });
-                // Wake on the next minute.
-                let seconds = 60 - u64::from(chrono::Timelike::second(&Local::now()));
-                thread::sleep(Duration::from_secs(seconds.clamp(1, 60)) + Duration::from_millis(50));
+                // Wake on the next second.
+                let subsec = u64::from(chrono::Timelike::nanosecond(&Local::now()) / 1_000_000 % 1000);
+                thread::sleep(Duration::from_millis(1000 - subsec + 20));
             }
         });
     if spawned.is_err() {

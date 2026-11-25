@@ -266,6 +266,31 @@ impl Cell<'_, '_> {
         Ok(())
     }
 
+    /// Width and height of the clock time (`HH:MM` big plus `:SS` small); the height is the big box's.
+    fn clock_measure(&self, now: &DateTime<Local>, big: f32, small: f32) -> Result<(f32, f32)> {
+        use chrono::Timelike;
+        let main = format!("{:02}:{:02}", now.hour(), now.minute());
+        let secs = format!(":{:02}", now.second());
+        let (mw, hb) = self.gfx.measure(&main, big, self.unit, Weight::Bold)?;
+        let (sw, _) = self.gfx.measure(&secs, small, self.unit, Weight::Bold)?;
+        Ok((mw + sw, hb))
+    }
+
+    /// Draws `HH:MM` big and `:SS` small and grey on the same baseline; returns the total width.
+    fn clock_draw(&self, now: &DateTime<Local>, x: f32, top: f32, big: f32, small: f32) -> Result<f32> {
+        use chrono::Timelike;
+        /// Share of a Segoe UI line box above the baseline (ascent 2210 / (ascent + descent) 2724).
+        const BASELINE: f32 = 0.81;
+        let main = format!("{:02}:{:02}", now.hour(), now.minute());
+        let secs = format!(":{:02}", now.second());
+        let (_, hb) = self.gfx.measure(&main, big, self.unit, Weight::Bold)?;
+        let (_, hs) = self.gfx.measure(&secs, small, self.unit, Weight::Bold)?;
+        let mw = self.pen.text(&main, (x, top), big, Weight::Bold, self.strong())?;
+        let y_small = top + (hb - hs) * BASELINE;
+        let sw = self.pen.text(&secs, (x + mw, y_small), small, Weight::Bold, self.faded())?;
+        Ok(mw + sw)
+    }
+
     fn faded(&self) -> Rgba {
         ink(self.light, 0.55)
     }
@@ -307,19 +332,18 @@ const WEEKDAYS: [&str; 7] = ["lunes", "martes", "miércoles", "jueves", "viernes
 const MONTHS: [&str; 12] = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];
 
 fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
-    use chrono::{Datelike, Timelike};
+    use chrono::Datelike;
     let now = Local::now();
-    let time = format!("{:02}:{:02}", now.hour(), now.minute());
     let weekday = WEEKDAYS[now.weekday().num_days_from_monday() as usize];
     if size == Size::Compact {
         let short: String = weekday.chars().take(3).collect();
         let date = format!("{short} {}", now.day());
-        let (tw, th) = c.gfx.measure(&time, 17.0, c.unit, Weight::Bold)?;
+        let (tw, th) = c.clock_measure(&now, 17.0, 10.5)?;
         let (dw, dh) = c.gfx.measure(&date, 10.5, c.unit, Weight::Normal)?;
         let total = tw.max(dw);
         let x = c.x;
         let y = (c.height - th - dh) / 2.0;
-        c.pen.text(&time, (x + (total - tw) / 2.0, y), 17.0, Weight::Bold, c.strong())?;
+        c.clock_draw(&now, x + (total - tw) / 2.0, y, 17.0, 10.5)?;
         c.pen.text(&date, (x + (total - dw) / 2.0, y + th), 10.5, Weight::Normal, c.faded())?;
         c.x += total;
         return Ok(());
@@ -332,7 +356,9 @@ fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
         12,
     )?;
     c.separator()?;
-    c.text(&time, 17.0, Weight::Bold, c.strong())?;
+    let (_, hb) = c.clock_measure(&now, 17.0, 11.0)?;
+    let width = c.clock_draw(&now, c.x, (c.height - hb) / 2.0, 17.0, 11.0)?;
+    c.x += width;
     if size != Size::Wide {
         return Ok(());
     }
