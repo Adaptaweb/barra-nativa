@@ -396,4 +396,56 @@ pub fn click(id: &str, button: Click) {
             let _ = PostMessageW(Some(target), entry.callback, wp, lp);
         }
     }
+    raise_popups(pid_of(target));
+}
+
+fn pid_of(hwnd: HWND) -> u32 {
+    let mut pid = 0;
+    // SAFETY: Read-only query.
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    pid
+}
+
+/// The dock and its panels stay on top of everything, so a menu or flyout an
+/// app opens from its tray icon would show behind them and could not be
+/// clicked. For a moment after the click, every menu (`#32768`) and every
+/// captionless popup of that app is lifted above them.
+fn raise_popups(pid: u32) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GWL_STYLE, GetWindowLongPtrW, IsWindowVisible, WS_CAPTION, WS_POPUP,
+    };
+    unsafe extern "system" fn each(hwnd: HWND, pid: LPARAM) -> BOOL {
+        // SAFETY: Read-only queries and a z-order change without activation.
+        unsafe {
+            if !IsWindowVisible(hwnd).as_bool() {
+                return BOOL(1);
+            }
+            let mut class = [0u16; 16];
+            let n = GetClassNameW(hwnd, &mut class) as usize;
+            let menu = String::from_utf16_lossy(&class[..n]) == "#32768";
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+            let popup = style & WS_POPUP.0 != 0 && style & WS_CAPTION.0 != WS_CAPTION.0;
+            if menu || (popup && pid_of(hwnd) == pid.0 as u32 && !is_own(hwnd)) {
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+        }
+        BOOL(1)
+    }
+    thread::spawn(move || {
+        for _ in 0..80 {
+            thread::sleep(Duration::from_millis(30));
+            // SAFETY: The callback only reads windows and reorders them.
+            unsafe {
+                let _ = EnumWindows(Some(each), LPARAM(pid as isize));
+            }
+        }
+    });
 }

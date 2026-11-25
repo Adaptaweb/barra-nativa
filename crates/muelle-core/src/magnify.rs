@@ -59,6 +59,9 @@ impl Magnified {
     }
 }
 
+/// How much a widget cell grows under the pointer (8%).
+const WIDE_ZOOM: f32 = 0.08;
+
 /// - `cursor`: horizontal cursor position relative to the resting dock's left edge.
 /// - `amount`: 0.0 = resting, 1.0 = full effect (animated on entry and exit).
 ///
@@ -66,15 +69,31 @@ impl Magnified {
 /// keeping the dock centered.
 #[must_use]
 pub fn magnify(layout: &Layout, cursor: f32, amount: f32, magnifier: &Magnifier) -> Magnified {
-    // Over a widget cell the dock stays still: no room opens around it.
-    let over_widget = layout.slots.iter().any(|slot| {
-        matches!(slot.kind, ItemKind::Wide(_))
-            && cursor >= slot.rect.x
-            && cursor < slot.rect.x + slot.rect.width
-    });
-    let amount = if over_widget { 0.0 } else { amount };
-    let strength = (magnifier.max_scale - 1.0) * amount;
     let range = magnifier.range.max(f32::EPSILON);
+    // Distance from the cursor to a slot (0 over it).
+    let gap_to = |rect: &Rect| (rect.x - cursor).max(cursor - (rect.x + rect.width)).max(0.0);
+    // Icons stretch the dock only near them: deep over a widget cell the dock
+    // is still, so no room opens around it. The fade is smooth, so moving
+    // from icons to widgets never jumps.
+    let nearest_icon = layout
+        .slots
+        .iter()
+        .filter(|slot| slot.kind == ItemKind::Icon)
+        .map(|slot| gap_to(&slot.rect))
+        .reduce(f32::min)
+        .unwrap_or(f32::INFINITY);
+    // Between two icons (their gap) counts as over them.
+    let icon_side = layout
+        .slots
+        .iter()
+        .find(|slot| slot.kind == ItemKind::Icon)
+        .map_or(0.0, |slot| slot.rect.width);
+    let near_icons = if nearest_icon.is_finite() {
+        falloff((nearest_icon - icon_side / 2.0).max(0.0) / range)
+    } else {
+        0.0
+    };
+    let strength = (magnifier.max_scale - 1.0) * amount * near_icons;
     let shift_of = |x: f32| strength * range * falloff_integral((x - cursor) / range);
 
     let (shift_left, shift_right) = (shift_of(0.0), shift_of(layout.width));
@@ -89,7 +108,12 @@ pub fn magnify(layout: &Layout, cursor: f32, amount: f32, magnifier: &Magnifier)
             let center = rest_center + shift_of(rest_center) + centering;
             let scale = match slot.kind {
                 ItemKind::Icon => 1.0 + strength * falloff((rest_center - cursor) / range),
-                ItemKind::Separator | ItemKind::Wide(_) => 1.0,
+                // A widget cell zooms a little in place under the pointer,
+                // fading over an icon's height around it.
+                ItemKind::Wide(_) => {
+                    1.0 + WIDE_ZOOM * amount * falloff(gap_to(&rest) / rest.height.max(1.0))
+                }
+                ItemKind::Separator => 1.0,
             };
             let (width, height) = (rest.width * scale, rest.height * scale);
             Rect {
