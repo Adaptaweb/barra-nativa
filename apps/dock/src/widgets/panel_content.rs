@@ -98,7 +98,15 @@ fn reset_note(reset: Option<DateTime<Utc>>) -> String {
 pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
     let mut b = Vec::new();
     match id {
-        WidgetId::Bandeja => {}
+        WidgetId::Bandeja => {
+            b.push(Block::Title("Segundo plano".into(), format!("{} apps", r.tray.len())));
+            if r.tray.is_empty() {
+                b.push(Block::Text("No hay programas con icono en la bandeja.".into(), true));
+            } else {
+                b.push(Block::Tray(r.tray.clone()));
+                b.push(Block::Text("Clic para abrir · clic derecho para su menú.".into(), true));
+            }
+        }
         WidgetId::Sistema => {
             b.push(Block::Title("Sistema".into(), String::new()));
             let Some(d) = r.sistema else {

@@ -66,6 +66,13 @@ impl Magnified {
 /// keeping the dock centered.
 #[must_use]
 pub fn magnify(layout: &Layout, cursor: f32, amount: f32, magnifier: &Magnifier) -> Magnified {
+    // Over a widget cell the dock stays still: no room opens around it.
+    let over_widget = layout.slots.iter().any(|slot| {
+        matches!(slot.kind, ItemKind::Wide(_))
+            && cursor >= slot.rect.x
+            && cursor < slot.rect.x + slot.rect.width
+    });
+    let amount = if over_widget { 0.0 } else { amount };
     let strength = (magnifier.max_scale - 1.0) * amount;
     let range = magnifier.range.max(f32::EPSILON);
     let shift_of = |x: f32| strength * range * falloff_integral((x - cursor) / range);
@@ -82,12 +89,7 @@ pub fn magnify(layout: &Layout, cursor: f32, amount: f32, magnifier: &Magnifier)
             let center = rest_center + shift_of(rest_center) + centering;
             let scale = match slot.kind {
                 ItemKind::Icon => 1.0 + strength * falloff((rest_center - cursor) / range),
-                // Wide widget cells grow a quarter as much: enough to show
-                // the hover, without pushing the dock apart.
-                ItemKind::Wide(_) => {
-                    1.0 + strength * 0.25 * falloff((rest_center - cursor) / range)
-                }
-                ItemKind::Separator => 1.0,
+                ItemKind::Separator | ItemKind::Wide(_) => 1.0,
             };
             let (width, height) = (rest.width * scale, rest.height * scale);
             Rect {

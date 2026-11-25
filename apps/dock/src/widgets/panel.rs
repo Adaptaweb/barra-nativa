@@ -25,6 +25,7 @@ use windows::{
                 IDC_ARROW, IDC_HAND, LoadCursorW, PostMessageW, RegisterClassW, SW_SHOW,
                 SWP_NOACTIVATE, SetCursor, SetForegroundWindow, SetWindowPos, ShowWindow,
                 WA_INACTIVE, WM_ACTIVATE, WM_APP, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+                WM_RBUTTONUP,
                 WM_SETCURSOR, WNDCLASSW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
                 WS_EX_TOPMOST, WS_POPUP,
             },
@@ -54,6 +55,8 @@ pub enum PanelAction {
     Open(String),
     HomeToggle(String),
     RefreshIa,
+    /// A tray icon: a left click here, a right click opens its menu.
+    Tray(String),
 }
 
 /// A Home Assistant button in the panel grid.
@@ -86,6 +89,8 @@ pub enum Block {
     /// Numbered setup steps.
     Steps(Vec<String>),
     Grid(Vec<Cell>),
+    /// Tray icons: picture and tooltip, five per row.
+    Tray(Vec<super::TrayItem>),
     /// Pill buttons: label, action, primary (filled in the accent color).
     Buttons(Vec<(String, PanelAction, bool)>),
     Gap(f32),
@@ -132,15 +137,7 @@ thread_local! {
 
 /// Opens the widget's panel at `anchor`, or closes it if it is open.
 pub fn toggle(gfx: &Gfx, id: WidgetId, anchor: POINT, placement: Placement) {
-    if id == WidgetId::Bandeja {
-        // Windows' own flyout of hidden tray icons, by the widget.
-        close();
-        muelle_shell::launcher::toggle_hidden_icons_at(
-            (anchor.x, anchor.y),
-            placement == Placement::Above,
-        );
-        return;
-    }
+
     let was_open = OPEN.with(|open| {
         open.try_borrow()
             .is_ok_and(|panel| panel.as_ref().is_some_and(|p| p.id == id))
@@ -345,6 +342,10 @@ fn block_height(gfx: &Gfx, block: &Block, scale: f32, inner: f32) -> Result<f32>
             rows * px(52.0) + (rows - 1.0).max(0.0) * px(8.0) + px(8.0)
         }
         Block::Buttons(_) => px(30.0) + px(8.0),
+        Block::Tray(items) => {
+            let rows = items.len().div_ceil(5).max(1) as f32;
+            rows * px(64.0) + px(4.0)
+        }
         Block::Gap(v) => px(*v),
     })
 }
@@ -479,6 +480,30 @@ fn draw(
                     x += w + px(8.0);
                 }
             }
+            Block::Tray(items) => {
+                let cell_w = inner / 5.0;
+                let cell_h = px(64.0);
+                let side = px(24.0);
+                for (index, item) in items.iter().enumerate() {
+                    let cx = left + (index % 5) as f32 * cell_w;
+                    let cy = y + (index / 5) as f32 * cell_h;
+                    pen.round_rect((cx + px(2.0), cy), (cell_w - px(4.0), cell_h - px(6.0)), px(10.0), ink(dark, 0.07))?;
+                    if let Some(image) = &item.image {
+                        pen.image(image, (cx + (cell_w - side) / 2.0, cy + px(8.0)), (side, side))?;
+                    }
+                    let name = item.icon.tip.lines().next().unwrap_or_default();
+                    let name = shorten(name, 10);
+                    let (nw, _) = gfx.measure(&name, 9.0, scale, Weight::Normal)?;
+                    pen.text(&name, (cx + (cell_w - nw) / 2.0, cy + px(38.0)), 9.0, Weight::Normal, ink(dark, 0.75))?;
+                    hits.push(Hit {
+                        left: cx,
+                        top: cy,
+                        right: cx + cell_w,
+                        bottom: cy + cell_h,
+                        action: PanelAction::Tray(item.icon.id.clone()),
+                    });
+                }
+            }
             Block::Gap(_) => {}
         }
         y += height;
@@ -505,6 +530,7 @@ fn perform(action: PanelAction) {
         }
         PanelAction::HomeToggle(id) => super::casa::toggle(id),
         PanelAction::RefreshIa => super::ia::wake(),
+        PanelAction::Tray(id) => muelle_shell::tray::click(&id, muelle_shell::tray::Click::Left),
     }
 }
 
@@ -528,11 +554,24 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM)
                     .and_then(|panel| panel.as_ref().and_then(|p| p.hit(x, y)))
             });
             if let Some(action) = action {
-                let opens_elsewhere = matches!(action, PanelAction::Open(_));
+                let opens_elsewhere = matches!(action, PanelAction::Open(_) | PanelAction::Tray(_));
                 perform(action);
                 if opens_elsewhere {
                     close();
                 }
+            }
+            return LRESULT(0);
+        }
+        WM_RBUTTONUP => {
+            let action = OPEN.with(|open| {
+                open.try_borrow()
+                    .ok()
+                    .and_then(|panel| panel.as_ref().and_then(|p| p.hit(x, y)))
+            });
+            if let Some(PanelAction::Tray(id)) = action {
+                // The app's own menu takes over: the panel steps aside.
+                close();
+                muelle_shell::tray::click(&id, muelle_shell::tray::Click::Right);
             }
             return LRESULT(0);
         }

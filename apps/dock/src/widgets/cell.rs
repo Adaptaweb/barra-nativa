@@ -98,7 +98,7 @@ pub fn render(
                 WidgetId::Clima => clima(&mut c, size, readings),
                 WidgetId::Sistema => sistema(&mut c, size, readings),
                 WidgetId::Casa => casa(&mut c, size, readings),
-                WidgetId::Bandeja => bandeja(&mut c),
+                WidgetId::Bandeja => bandeja(&mut c, readings),
                 WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini => {
                     ia(&mut c, id, size, readings)
                 }
@@ -130,8 +130,23 @@ pub fn render(
     Ok((cell.brush, changed))
 }
 
-fn bandeja(c: &mut Cell<'_, '_>) -> Result<()> {
-    // The chevron of the Windows notification area.
+/// Most tray icons shown in the dock; the rest are in the panel.
+const TRAY_SHOWN: usize = 10;
+
+fn bandeja(c: &mut Cell<'_, '_>, r: &Readings) -> Result<()> {
+    // The apps in the background, in a row, as the Windows taskbar shows them.
+    let side = (c.height * 0.4).round();
+    for item in r.tray.iter().filter(|t| t.image.is_some()).take(TRAY_SHOWN) {
+        if let Some(image) = &item.image {
+            c.pen.image(image, (c.x, (c.height - side) / 2.0), (side, side))?;
+        }
+        c.x += side + c.px(9.0);
+    }
+    if r.tray.len() <= TRAY_SHOWN && !r.tray.is_empty() {
+        c.x -= c.px(5.0);
+        return Ok(());
+    }
+    // More than fit, or none read yet: the chevron opens the full list.
     let size = 15.0;
     let (w, h) = c.gfx.measure_icon('\u{E70E}', size, c.unit)?;
     c.x += c.px(4.0);

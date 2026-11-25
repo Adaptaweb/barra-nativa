@@ -16,7 +16,7 @@ use windows::{
         UI::{
             Shell::{ABM_GETSTATE, ABM_SETSTATE, ABS_AUTOHIDE, APPBARDATA, SHAppBarMessage},
             WindowsAndMessaging::{
-                FindWindowExW, FindWindowW, GWL_EXSTYLE, GetLayeredWindowAttributes,
+                FindWindowExW, GWL_EXSTYLE, GetLayeredWindowAttributes,
                 GetWindowLongPtrW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongPtrW,
                 WS_EX_LAYERED, WS_EX_TRANSPARENT,
             },
@@ -142,8 +142,14 @@ fn taskbars() -> Vec<HWND> {
     let mut found = Vec::new();
     // SAFETY: Read-only calls with valid static strings.
     unsafe {
-        if let Ok(hwnd) = FindWindowW(PRIMARY, None) {
-            found.push(hwnd);
+        // Skip this process's own tray window (see `tray`): it is not Explorer's.
+        let mut previous = None;
+        while let Ok(hwnd) = FindWindowExW(None, previous, PRIMARY, None) {
+            if !crate::tray::is_own(hwnd) {
+                found.push(hwnd);
+                break;
+            }
+            previous = Some(hwnd);
         }
         let mut previous = None;
         while let Ok(hwnd) = FindWindowExW(None, previous, SECONDARY, None) {

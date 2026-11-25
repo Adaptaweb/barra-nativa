@@ -154,7 +154,12 @@ impl WidgetId {
             Self::Clima => format!("{:?}", readings.clima),
             Self::Reloj => format!("{:?}", readings.reloj),
             Self::Casa => format!("{:?}", readings.casa),
-            Self::Bandeja => String::new(),
+            Self::Bandeja => readings
+                .tray
+                .iter()
+                .map(|t| format!("{}:{}", t.icon.id, t.icon.hicon))
+                .collect::<Vec<_>>()
+                .join(","),
             Self::Claude | Self::ChatGpt | Self::Gemini => {
                 let provider = self.provider().unwrap_or(Provider::Claude);
                 readings.ia.as_ref().map_or_else(String::new, |snapshot| {
@@ -183,7 +188,7 @@ impl WidgetId {
             Self::Reloj => (&RELOJ_ON, reloj::start),
             Self::Casa => (&CASA_ON, casa::start),
             Self::Claude | Self::ChatGpt | Self::Gemini => (&IA_ON, ia::start),
-            Self::Bandeja => (&BANDEJA_ON, || {}),
+            Self::Bandeja => (&BANDEJA_ON, start_tray),
         }
     }
 }
@@ -273,8 +278,23 @@ pub struct CasaData {
     pub buttons: Vec<HomeButton>,
 }
 
+/// A tray icon with its picture.
+#[derive(Clone, Debug)]
+pub struct TrayItem {
+    pub icon: muelle_shell::tray::TrayIcon,
+    pub image: Option<std::sync::Arc<muelle_shell::icons::IconImage>>,
+}
+
+impl PartialEq for TrayItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.icon == other.icon
+    }
+}
+
 #[derive(Clone, Default, PartialEq)]
 pub struct Readings {
+    /// Apps in the notification area.
+    pub tray: Vec<TrayItem>,
     pub sistema: Option<SistemaData>,
     pub clima: Option<ClimaData>,
     pub reloj: Option<RelojData>,
@@ -296,6 +316,7 @@ impl BarLayout {
 }
 
 static READINGS: Mutex<Readings> = Mutex::new(Readings {
+    tray: Vec::new(),
     sistema: None,
     clima: None,
     reloj: None,
@@ -388,10 +409,20 @@ pub fn dock_left() -> Vec<(WidgetId, Size)> {
 fn dock_zone(left: bool) -> Vec<(WidgetId, Size)> {
     settings()
         .map(|s| {
-            ids(if left { &s.dock_left } else { &s.dock })
+{
+            let mut list: Vec<(WidgetId, Size)> = ids(if left { &s.dock_left } else { &s.dock })
                 .into_iter()
                 .map(|id| (id, Size::from_key(s.dock_sizes.get(id.key()).map(String::as_str))))
-                .collect()
+                .collect();
+            // The tray icons always close the dock, at its far right.
+            if let Some(index) = list.iter().position(|(id, _)| *id == WidgetId::Bandeja) {
+                let tray = list.remove(index);
+                if !left {
+                    list.push(tray);
+                }
+            }
+            list
+        }
         })
         .unwrap_or_default()
 }
@@ -474,7 +505,15 @@ pub fn open_debug_panel(gfx: &crate::gfx::Gfx) {
     let Some(id) = std::env::var("BARRA_PANEL").ok().and_then(|k| WidgetId::from_key(&k)) else {
         return;
     };
-    let Some(monitor) = muelle_shell::system::primary_monitor() else {
+    // On the display BARRA_MONITOR points at, if set (see `dock_monitor`).
+    let chosen = std::env::var("BARRA_MONITOR").ok().and_then(|v| {
+        let (x, y) = v.split_once(',')?;
+        muelle_shell::system::monitor_at(windows::Win32::Foundation::POINT {
+            x: x.trim().parse().ok()?,
+            y: y.trim().parse().ok()?,
+        })
+    });
+    let Some(monitor) = chosen.or_else(muelle_shell::system::primary_monitor) else {
         return;
     };
     let anchor = windows::Win32::Foundation::POINT {
@@ -487,4 +526,30 @@ pub fn open_debug_panel(gfx: &crate::gfx::Gfx) {
 /// Asks for another pass of the dock layout (a cell's width changed).
 pub fn nudge() {
     publish(|_| true);
+}
+
+/// Starts this process's tray window (once) and keeps `readings.tray` current.
+fn start_tray() {
+    fn changed() {
+        let icons = muelle_shell::tray::icons();
+        let previous = READINGS.lock().map(|r| r.tray.clone()).unwrap_or_default();
+        let items: Vec<TrayItem> = icons
+            .into_iter()
+            .map(|icon| {
+                // Reuse the picture when the icon handle did not change.
+                let image = previous
+                    .iter()
+                    .find(|p| p.icon == icon)
+                    .and_then(|p| p.image.clone())
+                    .or_else(|| muelle_shell::tray::image(&icon).map(std::sync::Arc::new));
+                TrayItem { icon, image }
+            })
+            .collect();
+        publish(|r| {
+            let changed = r.tray != items;
+            r.tray = items;
+            changed
+        });
+    }
+    muelle_shell::tray::start(changed);
 }

@@ -69,7 +69,11 @@ uses far less RAM and CPU.
    content (measured on render, cached, in tenths of an icon); wide cells grow a quarter as
    much as icons under the cursor. Zones: `widgets.dockLeft` (before the apps) and
    `widgets.dock` (at the far end); the apps stay centred on the screen when it has room.
-   `bandeja` opens the Windows hidden tray icons flyout above the dock (no icon grid yet). Debug builds:
+   `bandeja` shows the tray icons (apps in the background) at the far right end of the dock,
+   always last; its panel lists them all (click, right click for the app's menu). Source:
+   `muelle_shell::tray`, an own `Shell_TrayWnd` that copies every Shell_NotifyIcon call and
+   forwards it to Explorer (ported from the Tauri Barra); `taskbar::taskbars` skips it.
+   The dock does not magnify while the pointer is over a widget cell. Debug builds:
    `BARRA_MONITOR=x,y` puts the dock on the display at that point (screenshots while the
    primary screen is busy with a full-screen app).
 7. [ ] One dock and top bar per monitor, with per-screen widgets and on/off.
