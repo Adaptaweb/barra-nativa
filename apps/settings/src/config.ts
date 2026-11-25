@@ -72,6 +72,8 @@ export interface WidgetSettings {
   weatherCity: string;
   homeUrl: string;
   homeItems: HomeItem[];
+  /** Size of each widget in the dock: compacto, mediano or ancho. */
+  dockSizes: Record<string, string>;
 }
 
 export const ICON_SIZE = { min: 32, max: 96 } as const;

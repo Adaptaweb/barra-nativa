@@ -725,3 +725,4 @@ textarea.text-field { width: 100%; resize: vertical; font-family: ui-monospace, 
 .text-field:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .secret-control { display: flex; flex-direction: column; gap: 8px; align-items: stretch; width: 100%; }
 .secret-control .push-group { justify-content: flex-end; }
+.select-control.size-control { min-width: 120px; }

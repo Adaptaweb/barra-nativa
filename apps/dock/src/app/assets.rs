@@ -89,7 +89,7 @@ impl App {
                     continue;
                 };
                 let readings = crate::widgets::readings();
-                let print = vec![widget.fingerprint(&readings)];
+                let print = vec![format!("{:?}{}", crate::widgets::dock_size(widget), widget.fingerprint(&readings))];
                 if self
                     .assets
                     .get(id)
@@ -97,7 +97,7 @@ impl App {
                 {
                     continue;
                 }
-                let icon = crate::widgets::render_tile(&self.gfx, widget, &readings, wanted, light)
+                let icon = crate::widgets::render_cell(&self.gfx, widget, &readings, wanted, light)
                     .inspect_err(|error| eprintln!("muelle: widget `{id}`: {error:#}"))
                     .ok()
                     .or_else(|| self.placeholder.clone());
@@ -216,7 +216,7 @@ impl App {
             let Some(widget) = crate::widgets::WidgetId::from_entry(id) else {
                 continue;
             };
-            let print = vec![widget.fingerprint(&readings)];
+            let print = vec![format!("{:?}{}", crate::widgets::dock_size(widget), widget.fingerprint(&readings))];
             if self
                 .assets
                 .get(id)
@@ -224,7 +224,7 @@ impl App {
             {
                 continue;
             }
-            let Ok(icon) = crate::widgets::render_tile(&self.gfx, widget, &readings, wanted, light)
+            let Ok(icon) = crate::widgets::render_cell(&self.gfx, widget, &readings, wanted, light)
             else {
                 continue;
             };

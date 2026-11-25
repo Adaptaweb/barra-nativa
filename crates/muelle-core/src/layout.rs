@@ -2,6 +2,9 @@
 pub enum ItemKind {
     Icon,
     Separator,
+    /// A Barra widget cell as tall as an icon and this many hundredths of
+    /// an icon wide. It does not grow under the cursor; it only moves.
+    Wide(u16),
 }
 
 /// Dock dimensions in caller-selected logical or physical pixels.
@@ -84,9 +87,16 @@ pub fn layout(items: &[ItemKind], metrics: &Metrics) -> Layout {
                     width: m.separator_width,
                     height: m.icon * 0.8,
                 },
+                ItemKind::Wide(hundredths) => Rect {
+                    x,
+                    y: m.padding,
+                    width: m.icon * f32::from(hundredths) / 100.0,
+                    height: m.icon,
+                },
             };
             x += match kind {
                 ItemKind::Icon => m.icon,
+                ItemKind::Wide(hundredths) => m.icon * f32::from(hundredths) / 100.0,
                 ItemKind::Separator => m.separator_width + 2.0 * m.separator_margin,
             } + m.gap;
             Slot { kind, rect }

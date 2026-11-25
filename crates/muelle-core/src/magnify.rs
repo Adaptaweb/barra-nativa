@@ -52,7 +52,7 @@ impl Magnified {
             .iter()
             .zip(&layout.slots)
             .position(|(rect, slot)| {
-                slot.kind == ItemKind::Icon
+                slot.kind != ItemKind::Separator
                     && x >= rect.x - gap / 2.0
                     && x < rect.x + rect.width + gap / 2.0
             })
@@ -82,7 +82,7 @@ pub fn magnify(layout: &Layout, cursor: f32, amount: f32, magnifier: &Magnifier)
             let center = rest_center + shift_of(rest_center) + centering;
             let scale = match slot.kind {
                 ItemKind::Icon => 1.0 + strength * falloff((rest_center - cursor) / range),
-                ItemKind::Separator => 1.0,
+                ItemKind::Separator | ItemKind::Wide(_) => 1.0,
             };
             let (width, height) = (rest.width * scale, rest.height * scale);
             Rect {

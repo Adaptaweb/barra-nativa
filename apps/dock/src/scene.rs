@@ -664,8 +664,8 @@ impl Scene {
                 (ItemKind::Separator, _) => {
                     visual.SetBrush(&c.CreateColorBrushWithColor(theme.separator)?)?;
                 }
-                (ItemKind::Icon, Some(icon)) => visual.SetBrush(icon)?,
-                (ItemKind::Icon, None) => {}
+                (ItemKind::Icon | ItemKind::Wide(_), Some(icon)) => visual.SetBrush(icon)?,
+                (ItemKind::Icon | ItemKind::Wide(_), None) => {}
             }
             children.InsertAtTop(&visual)?;
             slots.push(visual);

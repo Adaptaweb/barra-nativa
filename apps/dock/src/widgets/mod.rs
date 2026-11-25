@@ -8,6 +8,7 @@
 //! just that widget. Nothing is polled on the UI thread.
 
 mod casa;
+mod cell;
 mod clima;
 mod draw;
 mod ia;
@@ -18,7 +19,8 @@ mod reloj;
 mod secrets;
 mod sistema;
 
-pub use draw::{render_bar, render_tile};
+pub use cell::Size;
+pub use draw::render_bar;
 pub use panel::{Placement, refresh as refresh_panel, toggle as toggle_panel};
 
 use crate::usage::{self, Provider};
@@ -196,6 +198,11 @@ pub struct ClimaData {
     /// WMO weather code.
     pub code: u8,
     pub day: bool,
+    /// Today's high and low.
+    pub max: i16,
+    pub min: i16,
+    /// The next hours: hour ("15"), WMO code and temperature.
+    pub hours: Vec<(String, u8, i16)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -356,9 +363,37 @@ pub fn bar_layout() -> BarLayout {
         .unwrap_or_default()
 }
 
-/// The widgets placed in the dock, in order.
-pub fn dock() -> Vec<WidgetId> {
-    settings().map(|s| ids(&s.dock)).unwrap_or_default()
+/// The widgets placed in the dock, in order, with their size.
+pub fn dock() -> Vec<(WidgetId, Size)> {
+    settings()
+        .map(|s| {
+            ids(&s.dock)
+                .into_iter()
+                .map(|id| (id, Size::from_key(s.dock_sizes.get(id.key()).map(String::as_str))))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The size of a widget in the dock.
+pub fn dock_size(id: WidgetId) -> Size {
+    dock().into_iter().find(|(w, _)| *w == id).map_or(Size::Medium, |(_, s)| s)
+}
+
+/// Cell width in the dock, in hundredths of an icon.
+pub fn dock_width(id: WidgetId, size: Size) -> u16 {
+    cell::width(id, size)
+}
+
+/// The dock cell for a widget, `height` pixels tall.
+pub fn render_cell(
+    gfx: &crate::gfx::Gfx,
+    id: WidgetId,
+    readings: &Readings,
+    height: u32,
+    light: bool,
+) -> anyhow::Result<windows::UI::Composition::CompositionSurfaceBrush> {
+    cell::render(gfx, id, dock_size(id), readings, height, light)
 }
 
 fn city() -> String {

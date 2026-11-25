@@ -3,13 +3,12 @@
 
 use super::draw::{BLUE, GREEN, ORANGE, RED, ink};
 use super::{Calendar, CasaData, Home, Readings, RelojData, WidgetId};
-use crate::gfx::{Gfx, LabelBrush, Pen, Rgba, Weight};
+use crate::gfx::{Gfx, LabelBrush, Rgba, Weight};
 use crate::usage::{self, ProviderUsage, State, Window};
 use anyhow::Result;
 use chrono::{DateTime, Local, TimeZone, Utc};
 
 const CALENDAR_RED: Rgba = [1.0, 0.231, 0.188, 1.0];
-const WHITE: Rgba = [1.0, 1.0, 1.0, 1.0];
 
 /// Menu bar look of the widgets that are not in `draw.rs`.
 pub(super) fn bar(
@@ -39,129 +38,6 @@ pub(super) fn bar(
         }
         WidgetId::Sistema | WidgetId::Clima => Ok(None),
     }
-}
-
-/// Dock tile of the widgets that are not in `draw.rs`, on a `side` square.
-pub(super) fn tile(
-    gfx: &Gfx,
-    pen: &Pen<'_>,
-    id: WidgetId,
-    readings: &Readings,
-    side: f32,
-    light: bool,
-) -> Result<()> {
-    let inset = side * 0.06;
-    let body = side - inset * 2.0;
-    let radius = body * 0.23;
-    let unit = side / 48.0;
-    let back: Rgba = if light {
-        [0.98, 0.98, 0.99, 1.0]
-    } else {
-        [0.13, 0.13, 0.15, 1.0]
-    };
-    match id {
-        WidgetId::Reloj => {
-            // A calendar page, as on macOS: weekday on top, the day below.
-            pen.round_rect((inset, inset), (body, body), radius, [1.0; 4])?;
-            let Some(d) = readings.reloj.as_ref() else {
-                return Ok(());
-            };
-            let (ww, _) = gfx.measure(&d.weekday, 7.5, unit, Weight::Bold)?;
-            pen.text(
-                &d.weekday,
-                ((side - ww) / 2.0, inset + body * 0.08),
-                7.5,
-                Weight::Bold,
-                CALENDAR_RED,
-            )?;
-            let (dw, dh) = gfx.measure(&d.day, 20.0, unit, Weight::Normal)?;
-            pen.text(
-                &d.day,
-                ((side - dw) / 2.0, inset + body * 0.52 - dh / 2.0),
-                20.0,
-                Weight::Normal,
-                [0.11, 0.11, 0.12, 1.0],
-            )?;
-            if let Some(next) = d.next.as_ref().filter(|e| is_today(e.start) && !e.all_day) {
-                let text = time_of(next.start);
-                let (tw, th) = gfx.measure(&text, 6.5, unit, Weight::Bold)?;
-                pen.text(
-                    &text,
-                    ((side - tw) / 2.0, inset + body - th - body * 0.05),
-                    6.5,
-                    Weight::Bold,
-                    CALENDAR_RED,
-                )?;
-            }
-        }
-        WidgetId::Casa => {
-            let lit = readings.casa.as_ref().is_some_and(|d| d.on > 0);
-            let back: Rgba = if lit {
-                [0.99, 0.76, 0.2, 1.0]
-            } else {
-                [0.2, 0.55, 0.5, 1.0]
-            };
-            pen.round_rect((inset, inset), (body, body), radius, back)?;
-            let (ew, _) = gfx.measure_emoji("🏠", 15.0, unit)?;
-            pen.emoji("🏠", ((side - ew) / 2.0, inset + body * 0.08), 15.0)?;
-            let Some(d) = readings.casa.as_ref() else {
-                return Ok(());
-            };
-            let text = match &d.state {
-                Home::Connected => format!("{} on", d.on),
-                Home::NotConnected => "Conectar".to_owned(),
-                Home::Failed(_) => "Sin conexión".to_owned(),
-            };
-            let size = if text.len() > 6 { 6.5 } else { 9.0 };
-            let (tw, th) = gfx.measure(&text, size, unit, Weight::Bold)?;
-            pen.text(
-                &text,
-                ((side - tw) / 2.0, inset + body - th - body * 0.08),
-                size,
-                Weight::Bold,
-                if lit { [0.2, 0.14, 0.0, 1.0] } else { WHITE },
-            )?;
-        }
-        WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini => {
-            pen.round_rect((inset, inset), (body, body), radius, back)?;
-            let Some(provider) = id.provider() else {
-                return Ok(());
-            };
-            let logo = body * 0.34;
-            if let Some(image) = usage::logo(provider) {
-                pen.image(image, (inset + body * 0.1, inset + body * 0.1), (logo, logo))?;
-            }
-            let Some(usage) = readings.ia.as_ref().map(|s| s.get(provider)) else {
-                return Ok(());
-            };
-            let (text, color) = match (usage.state, usage.windows.first()) {
-                (State::SignIn, _) => ("Entrar".to_owned(), ink(light, 0.7)),
-                (_, Some(w)) => (format!("{}%", w.used_percent), level(w.used_percent)),
-                _ => ("—".to_owned(), ink(light, 0.5)),
-            };
-            let size = if text.len() > 4 { 8.0 } else { 13.0 };
-            let (tw, th) = gfx.measure(&text, size, unit, Weight::Bold)?;
-            pen.text(
-                &text,
-                (inset + body - tw - body * 0.1, inset + body * 0.62 - th / 2.0),
-                size,
-                Weight::Bold,
-                color,
-            )?;
-            // The second window (weekly) as a thin bar along the bottom.
-            if let Some(w) = usage.windows.get(1) {
-                let bar_w = body * 0.7;
-                let bar_h = (body * 0.05).max(2.0);
-                let x = (side - bar_w) / 2.0;
-                let y = inset + body - bar_h - body * 0.09;
-                pen.round_rect((x, y), (bar_w, bar_h), bar_h / 2.0, ink(light, 0.18))?;
-                let filled = bar_w * f32::from(w.used_percent.min(100)) / 100.0;
-                pen.round_rect((x, y), (filled.max(bar_h), bar_h), bar_h / 2.0, level(w.used_percent))?;
-            }
-        }
-        WidgetId::Sistema | WidgetId::Clima => {}
-    }
-    Ok(())
 }
 
 fn level(percent: u8) -> Rgba {

@@ -83,7 +83,10 @@ impl App {
             entries.extend(
                 placed
                     .into_iter()
-                    .map(|widget| icon(&widget.entry_id(), Role::Widget, false)),
+                    .map(|(widget, size)| Entry {
+                        kind: ItemKind::Wide(crate::widgets::dock_width(widget, size)),
+                        ..icon(&widget.entry_id(), Role::Widget, false)
+                    }),
             );
             entries.push(separator());
         }

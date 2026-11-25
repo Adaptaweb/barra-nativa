@@ -151,6 +151,8 @@ pub struct Widgets {
     pub home_url: String,
     /// Home Assistant buttons the widget shows.
     pub home_items: Vec<HomeItem>,
+    /// Size of each widget in the dock: `compacto`, `mediano` (default) or `ancho`.
+    pub dock_sizes: std::collections::BTreeMap<String, String>,
 }
 
 /// A Home Assistant button: one or more entities toggled together.
@@ -174,6 +176,7 @@ impl Default for Widgets {
             weather_city: "Santiago".into(),
             home_url: String::new(),
             home_items: Vec::new(),
+            dock_sizes: std::collections::BTreeMap::new(),
         }
     }
 }

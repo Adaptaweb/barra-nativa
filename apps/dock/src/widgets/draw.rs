@@ -2,7 +2,6 @@
 
 use super::{ClimaData, Readings, SistemaData, WidgetId};
 use crate::gfx::{Gfx, LabelBrush, Rgba, Weight};
-use windows::UI::Composition::CompositionSurfaceBrush;
 use anyhow::Result;
 
 pub(super) const GREEN: Rgba = [0.204, 0.78, 0.349, 1.0];
@@ -141,95 +140,4 @@ fn clima(gfx: &Gfx, d: &ClimaData, scale: f32, height: f32, light: bool) -> Resu
         )?;
         Ok(())
     })
-}
-
-/// The widget as a square dock tile, `side` pixels, drawn like an app icon:
-/// a rounded square with the reading inside.
-pub fn render_tile(
-    gfx: &Gfx,
-    id: WidgetId,
-    readings: &Readings,
-    side: u32,
-    light: bool,
-) -> Result<CompositionSurfaceBrush> {
-    let side = side.max(16) as f32;
-    // Text sizes are relative to a 48 pixel tile.
-    let unit = side / 48.0;
-    let tile = gfx.paint((side, side), unit, |pen| {
-        let inset = side * 0.06;
-        let body = side - inset * 2.0;
-        let radius = body * 0.23;
-        match id {
-            WidgetId::Sistema => {
-                let back: Rgba = if light {
-                    [0.97, 0.97, 0.98, 1.0]
-                } else {
-                    [0.13, 0.13, 0.15, 1.0]
-                };
-                pen.round_rect((inset, inset), (body, body), radius, back)?;
-                let Some(d) = readings.sistema else {
-                    return Ok(());
-                };
-                let (value, fraction, color, caption) = match d.temp {
-                    Some(t) => (format!("{t}°"), f32::from(t) / 100.0, temp_color(t), "CPU"),
-                    None => (format!("{}%", d.cpu), f32::from(d.cpu) / 100.0, BLUE, "CPU"),
-                };
-                let center = (side / 2.0, side / 2.0);
-                let stroke = body * 0.085;
-                let ring = body * 0.36;
-                pen.arc(center, ring, stroke, (225.0, 270.0), ink(light, 0.22))?;
-                pen.arc(center, ring, stroke, (225.0, 270.0 * fraction.clamp(0.0, 1.0)), color)?;
-                let (vw, vh) = gfx.measure(&value, 11.0, unit, Weight::Bold)?;
-                pen.text(
-                    &value,
-                    (center.0 - vw / 2.0, center.1 - vh / 2.0 - unit),
-                    11.0,
-                    Weight::Bold,
-                    ink(light, 1.0),
-                )?;
-                let (cw, _) = gfx.measure(caption, 6.5, unit, Weight::Bold)?;
-                pen.text(
-                    caption,
-                    (center.0 - cw / 2.0, center.1 + ring * 0.55),
-                    6.5,
-                    Weight::Bold,
-                    ink(light, 0.6),
-                )?;
-                // Memory as a thin bar along the bottom edge.
-                let bar_w = body * 0.5;
-                let bar_h = (body * 0.05).max(2.0);
-                let bar_x = (side - bar_w) / 2.0;
-                let bar_y = inset + body - bar_h - body * 0.07;
-                pen.round_rect((bar_x, bar_y), (bar_w, bar_h), bar_h / 2.0, ink(light, 0.18))?;
-                let filled = bar_w * f32::from(d.ram.min(100)) / 100.0;
-                pen.round_rect((bar_x, bar_y), (filled.max(bar_h), bar_h), bar_h / 2.0, GREEN)?;
-            }
-            WidgetId::Clima => {
-                let day = readings.clima.as_ref().is_none_or(|d| d.day);
-                let back: Rgba = if day {
-                    [0.27, 0.6, 0.95, 1.0]
-                } else {
-                    [0.1, 0.16, 0.35, 1.0]
-                };
-                pen.round_rect((inset, inset), (body, body), radius, back)?;
-                let Some(d) = readings.clima.as_ref() else {
-                    return Ok(());
-                };
-                let icon = symbol(d.code, d.day);
-                pen.emoji(icon, (inset + body * 0.1, inset + body * 0.06), 13.0)?;
-                let text = format!("{}°", d.temp);
-                let (tw, th) = gfx.measure(&text, 16.0, unit, Weight::Medium)?;
-                pen.text(
-                    &text,
-                    (inset + body - tw - body * 0.08, inset + body - th - body * 0.04),
-                    16.0,
-                    Weight::Medium,
-                    [1.0, 1.0, 1.0, 1.0],
-                )?;
-            }
-            other => super::more::tile(gfx, pen, other, readings, side, light)?,
-        }
-        Ok(())
-    })?;
-    Ok(tile.brush)
 }

@@ -62,6 +62,11 @@ uses far less RAM and CPU.
    `src-tauri/src/barra.rs`): add / remove / reorder per zone, weather city, calendar links
    and Home Assistant token (Credential Manager), Home Assistant import. Build the front end
    with `npx -y pnpm@10 install` and `npx -y pnpm@10 build` (pnpm is not installed globally).
-   `VITE_SECTION=widgets` opens that section first. Pending: drag to reorder, widget sizes.
+   `VITE_SECTION=widgets` opens that section first. Pending: drag to reorder.
+   Dock widgets are wide transparent cells like the Tauri Barra's (`widgets/cell.rs`, layout
+   `ItemKind::Wide(hundredths of an icon)`, no magnification), sized compacto / mediano /
+   ancho from `widgets.dockSizes` (Settings › Widgets › Dock). Debug builds:
+   `BARRA_MONITOR=x,y` puts the dock on the display at that point (screenshots while the
+   primary screen is busy with a full-screen app).
 7. [ ] One dock and top bar per monitor, with per-screen widgets and on/off.
 8. [ ] Rebrand (name, icon, AppUserModelID, installer) before distributing to other PCs.

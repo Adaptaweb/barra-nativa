@@ -66,7 +66,7 @@ fn fetch(client: &Client, city: &str) -> Option<ClimaData> {
     let name = place["name"].as_str().unwrap_or(city).to_owned();
     let forecast: Value = client
         .get(format!(
-            "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code,is_day&timezone=auto"
+            "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&forecast_days=2&timezone=auto"
         ))
         .send()
         .ok()?
@@ -74,7 +74,29 @@ fn fetch(client: &Client, city: &str) -> Option<ClimaData> {
         .ok()
         .and_then(|body| serde_json::from_str(&body).ok())?;
     let now = forecast.get("current")?;
+    // Hourly lists start at local midnight; take the hours after this one.
+    let this_hour = now["time"].as_str().and_then(|t| t.get(..13)).unwrap_or_default();
+    let hourly = &forecast["hourly"];
+    let times = hourly["time"].as_array().cloned().unwrap_or_default();
+    let start = times
+        .iter()
+        .position(|t| t.as_str().is_some_and(|t| t.starts_with(this_hour)))
+        .unwrap_or(0);
+    let hours = (start + 1..(start + 7).min(times.len()))
+        .filter_map(|i| {
+            Some((
+                times[i].as_str()?.get(11..13)?.to_owned(),
+                hourly["weather_code"][i].as_u64().unwrap_or(0).min(255) as u8,
+                hourly["temperature_2m"][i].as_f64()?.round() as i16,
+            ))
+        })
+        .collect();
+    let daily = &forecast["daily"];
+    let temp_now = now["temperature_2m"].as_f64()?.round() as i16;
     Some(ClimaData {
+        max: daily["temperature_2m_max"][0].as_f64().map_or(temp_now, |v| v.round() as i16),
+        min: daily["temperature_2m_min"][0].as_f64().map_or(temp_now, |v| v.round() as i16),
+        hours,
         city: name,
         temp: now["temperature_2m"].as_f64()?.round() as i16,
         code: now["weather_code"].as_u64().unwrap_or(0).min(255) as u8,

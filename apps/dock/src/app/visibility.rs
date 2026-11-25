@@ -101,6 +101,16 @@ impl App {
     }
 
     pub(super) fn dock_monitor(&self) -> Option<Monitor> {
+        // Development aid: `BARRA_MONITOR=x,y` (debug builds) puts the dock on
+        // the display containing that point, to check it on a second screen.
+        if cfg!(debug_assertions)
+            && let Some((x, y)) = std::env::var("BARRA_MONITOR")
+                .ok()
+                .and_then(|v| v.split_once(',').map(|(x, y)| (x.trim().parse().ok(), y.trim().parse().ok())))
+                .and_then(|(x, y)| Some((x?, y?)))
+        {
+            return monitor_at(windows::Win32::Foundation::POINT { x, y }).or_else(primary_monitor);
+        }
         self.dock_display
             .filter(|_| self.config.hides_automatically())
             .and_then(monitor_at)

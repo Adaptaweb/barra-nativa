@@ -73,6 +73,20 @@ export function WidgetsSection({ config, update }: Props) {
                   {index === 0 ? <span className="row-hint">{hint}</span> : null}
                 </div>
                 <div className="row-control push-group">
+                  {zone === "dock" ? (
+                    <span className="select-wrap">
+                      <select
+                        className="select-control size-control"
+                        aria-label={`Tamaño de ${nameOf(key)}`}
+                        value={widgets.dockSizes?.[key] ?? "mediano"}
+                        onChange={(e) => save({ dockSizes: { ...widgets.dockSizes, [key]: e.target.value } })}
+                      >
+                        <option value="compacto">Compacto</option>
+                        <option value="mediano">Mediano</option>
+                        <option value="ancho">Ancho</option>
+                      </select>
+                    </span>
+                  ) : null}
                   <button type="button" className="push" aria-label="Subir" disabled={index === 0} onClick={() => move(zone, index, -1)}>↑</button>
                   <button type="button" className="push" aria-label="Bajar" disabled={index === widgets[zone].length - 1} onClick={() => move(zone, index, 1)}>↓</button>
                   <button type="button" className="push" aria-label={`Quitar ${nameOf(key)}`} onClick={() => remove(zone, index)}>Quitar</button>
