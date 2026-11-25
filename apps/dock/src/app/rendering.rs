@@ -507,6 +507,12 @@ impl App {
                 DockEdge::Right => Edge::Right,
             };
             appbar.reserve(side, reservation, strip);
+            if appbar.is_covered() {
+                // SAFETY: A timer on our own window.
+                unsafe {
+                    SetTimer(Some(super::lifecycle::main_window()), super::COVER_TIMER, super::COVER_DELAY_MS, None);
+                }
+            }
         }
         Ok(())
     }

@@ -582,6 +582,18 @@ pub(super) unsafe extern "system" fn wndproc(
                 Ok(())
             });
         }
+        WM_TIMER if w.0 == super::COVER_TIMER => {
+            // SAFETY: `hwnd` is this live window on its owning UI thread.
+            unsafe {
+                let _ = KillTimer(Some(hwnd), w.0);
+            }
+            with_app("reserva del dock", |app| {
+                if app.appbar.as_mut().is_some_and(muelle_shell::appbar::AppBar::others_changed) {
+                    app.refresh()?;
+                }
+                Ok(())
+            });
+        }
         WM_TIMER if [REFRESH_TIMER, SYNC_TIMER, TASKBAR_TIMER].contains(&w.0) => {
             // SAFETY: `hwnd` is this live window on its owning UI thread.
             unsafe {

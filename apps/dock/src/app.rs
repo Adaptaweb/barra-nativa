@@ -228,6 +228,10 @@ const ASSETS_DELAY_MS: u32 = 16;
 /// Non-activating windows cannot rely on capture outside their bounds.
 /// Armed only while dragging or holding a draggable icon.
 const DRAG_TIMER: usize = 16;
+/// While the dock relies on another bar's room on its edge (the hidden
+/// taskbar of another display, before it auto-hides), it checks again.
+const COVER_TIMER: usize = 17;
+const COVER_DELAY_MS: u32 = 3_000;
 const DRAG_POLL_MS: u32 = 16;
 
 /// Screen-edge strip that reveals a hidden dock, in physical pixels.

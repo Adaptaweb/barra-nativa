@@ -93,6 +93,12 @@ impl AppBar {
     /// Another bar moved or changed. When the dock relied on another bar's
     /// room (see `reserve`), that room may be gone: returns whether the dock
     /// must reserve again, and forgets the reservation so it does.
+    /// Whether the dock relies on another bar's room (see `reserve`).
+    #[must_use]
+    pub fn is_covered(&self) -> bool {
+        self.covered.is_some()
+    }
+
     pub fn others_changed(&mut self) -> bool {
         if self.covered.is_some() {
             self.reserved = None;
