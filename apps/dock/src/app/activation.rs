@@ -602,6 +602,12 @@ impl App {
             self.sync_badge_visuals()?;
             self.render()?;
         }
+        // Explorer can show a taskbar again on its own (a secondary display's
+        // taskbar is recreated, or the guard gave it back): hide it again.
+        // A few window lookups, only when the active window changes.
+        if self.taskbar_worker.is_none() && muelle_shell::taskbar::needs_visibility_repair() {
+            self.request_taskbar(false)?;
+        }
         Ok(())
     }
 

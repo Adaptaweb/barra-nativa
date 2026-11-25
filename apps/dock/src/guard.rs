@@ -7,19 +7,19 @@ use std::{env, os::windows::process::CommandExt, process::Command, time::Duratio
 
 use anyhow::{Context, Result};
 use muelle_shell::{
-    dock_link::DOCK_WINDOW_CLASS, power, system::set_window_transitions, taskbar,
+    power, system::set_window_transitions, taskbar,
     tracker::WindowTracker,
 };
 use windows::{
     Win32::{
-        Foundation::{HANDLE, LPARAM, WAIT_OBJECT_0, WAIT_TIMEOUT, WPARAM},
+        Foundation::{HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WAIT_TIMEOUT, WPARAM},
         System::Threading::{
             CreateEventW, EVENT_MODIFY_STATE, NORMAL_PRIORITY_CLASS, OpenEventW, OpenProcess,
             PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, SYNCHRONIZATION_SYNCHRONIZE, SetEvent,
             TerminateProcess, WaitForMultipleObjects, WaitForSingleObject,
         },
         UI::WindowsAndMessaging::{
-            FindWindowW, GetSystemMetrics, GetWindowThreadProcessId, PostMessageW, SM_SHUTTINGDOWN,
+            GetSystemMetrics, GetWindowThreadProcessId, PostMessageW, SM_SHUTTINGDOWN,
             SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, SendMessageTimeoutW, WM_CLOSE,
         },
     },
@@ -76,17 +76,30 @@ pub fn recover_existing() -> Result<()> {
     // A second launch may arrive before the first has created its HWND. Wait
     // briefly in this disposable process, never in the running dock's UI.
     for _ in 0..10 {
-        // SAFETY: Read-only lookup; no messages or pointers cross process boundaries.
-        if let Ok(window) = unsafe { FindWindowW(DOCK_WINDOW_CLASS, None) } {
-            let mut pid = 0;
-            unsafe {
-                GetWindowThreadProcessId(window, Some(&mut pid));
+        // With a dock per display, only the primary display's dock has a
+        // guard and a recovery channel; the other docks' windows are skipped.
+        let windows = muelle_shell::dock_link::dock_windows();
+        if !windows.is_empty() {
+            let mut last_error = None;
+            for window in windows {
+                let mut pid = 0;
+                // SAFETY: Read-only lookup; no messages or pointers cross process boundaries.
+                unsafe {
+                    GetWindowThreadProcessId(window, Some(&mut pid));
+                }
+                match request_restart(pid) {
+                    Ok(()) => {
+                        muelle_shell::log::line(
+                            "segunda apertura: se solicita recuperar la instancia existente",
+                        );
+                        return Ok(());
+                    }
+                    Err(error) => last_error = Some(error),
+                }
             }
-            request_restart(pid).context("no se pudo recuperar la instancia de Muelle")?;
-            muelle_shell::log::line(
-                "segunda apertura: se solicita recuperar la instancia existente",
-            );
-            return Ok(());
+            if let Some(error) = last_error {
+                return Err(error.context("no se pudo recuperar la instancia de Muelle"));
+            }
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -241,12 +254,8 @@ fn watch(pid: u32, process: HANDLE, recovery: HANDLE) -> Result<bool> {
 /// close first; a wedged renderer, destructor or Explorer worker has a deadline.
 fn stop_dock(pid: u32, process: HANDLE, timeout: u32) -> Result<bool> {
     unsafe {
-        if let Ok(window) = FindWindowW(DOCK_WINDOW_CLASS, None) {
-            let mut owner = 0;
-            GetWindowThreadProcessId(window, Some(&mut owner));
-            if owner == pid {
-                let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0));
-            }
+        if let Some(window) = dock_window_of(pid) {
+            let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
         match WaitForSingleObject(process, timeout) {
             WAIT_OBJECT_0 => Ok(true),
@@ -266,18 +275,24 @@ fn stop_dock(pid: u32, process: HANDLE, timeout: u32) -> Result<bool> {
     }
 }
 
+/// The dock window of process `pid`. With a dock per display there are
+/// several dock windows, and the first one found may be another display's.
+fn dock_window_of(pid: u32) -> Option<HWND> {
+    muelle_shell::dock_link::dock_windows().into_iter().find(|window| {
+        let mut owner = 0u32;
+        // SAFETY: Read-only query on a window handle that may already be gone.
+        unsafe { GetWindowThreadProcessId(*window, Some(&mut owner)) };
+        owner == pid
+    })
+}
+
 fn ui_responds(pid: u32) -> bool {
     // SAFETY: The scalar-only health message runs on the dock's UI thread.
     // The timeout bounds an unresponsive peer; no COM call crosses threads.
     unsafe {
-        let Ok(window) = FindWindowW(DOCK_WINDOW_CLASS, None) else {
+        let Some(window) = dock_window_of(pid) else {
             return false;
         };
-        let mut owner = 0u32;
-        GetWindowThreadProcessId(window, Some(&mut owner));
-        if owner != pid {
-            return false;
-        }
         SendMessageTimeoutW(
             window,
             crate::app::HEALTH_CHECK,
