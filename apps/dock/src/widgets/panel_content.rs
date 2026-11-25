@@ -3,6 +3,7 @@
 
 use super::panel::{Block, Cell, PanelAction};
 use super::{Home, Readings, TempSource, WidgetId};
+use crate::media::Control;
 use crate::usage::{Provider, State};
 use chrono::{DateTime, Local, Utc};
 
@@ -67,6 +68,28 @@ pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
         WidgetId::Control => {}
         // Opens the Windows notification center; never a panel of its own.
         WidgetId::Notificaciones => {}
+        WidgetId::Musica => {
+            b.push(Block::Title("Sonando ahora".into(), String::new()));
+            let Some(d) = r.musica.as_ref() else {
+                b.push(Block::Text("Nada sonando.".into(), true));
+                return b;
+            };
+            let title = if d.title.is_empty() { "Sin título" } else { d.title.as_str() };
+            b.push(Block::Text(title.to_owned(), false));
+            if !d.artist.is_empty() {
+                b.push(Block::Text(d.artist.clone(), true));
+            }
+            b.push(Block::Gap(4.0));
+            b.push(Block::Buttons(vec![
+                ("Anterior".into(), PanelAction::Media(Control::Previous), false),
+                (
+                    if d.playing { "Pausa" } else { "Reproducir" }.into(),
+                    PanelAction::Media(Control::PlayPause),
+                    true,
+                ),
+                ("Siguiente".into(), PanelAction::Media(Control::Next), false),
+            ]));
+        }
         WidgetId::Bandeja => {
             b.push(Block::Title("Segundo plano".into(), format!("{} apps", r.tray.len())));
             if r.tray.is_empty() {

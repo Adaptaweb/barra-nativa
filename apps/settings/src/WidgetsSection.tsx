@@ -38,6 +38,7 @@ const WIDGETS: { key: string; name: string; detail: string }[] = [
   { key: "gemini", name: "Gemini", detail: "Cuota de Gemini CLI o Antigravity." },
   { key: "control", name: "Centro de control", detail: "Red, volumen y batería; abre la configuración rápida de Windows." },
   { key: "notificaciones", name: "Notificaciones", detail: "Un botón de campana; abre el centro de notificaciones de Windows." },
+  { key: "musica", name: "Sonando ahora", detail: "La canción que suena, con su carátula, el progreso y los botones de anterior, pausa y siguiente." },
   { key: "bandeja", name: "Segundo plano", detail: "Los iconos ocultos de la bandeja de Windows (solo en el dock)." },
 ];
 

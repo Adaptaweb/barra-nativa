@@ -91,6 +91,19 @@ function dockCell(key: string, size: PreviewSize) {
       return <span className="wp-glyph">{""}</span>;
     case "notificaciones":
       return <span className="wp-glyph">{""}</span>;
+    case "musica":
+      return (
+        <span className="wp-music">
+          <span className="wp-cover" />
+          {compact ? null : <span className="wp-stack"><b>Midnight City</b><span className="wp-music-dim">M83</span></span>}
+          <span className="wp-glyphs">
+            {compact ? null : <span className="wp-glyph">{""}</span>}
+            <span className="wp-glyph">{""}</span>
+            {compact ? null : <span className="wp-glyph">{""}</span>}
+          </span>
+          {wide ? <span className="wp-music-bar"><span /></span> : null}
+        </span>
+      );
     default:
       return <span className="wp-dim">{key}</span>;
   }
@@ -107,6 +120,7 @@ function barCell(key: string) {
     case "gemini": return <span><b>✦</b> 12%</span>;
     case "control": return <span className="wp-glyphs"><span className="wp-glyph">{""}</span><span className="wp-glyph">{""}</span></span>;
     case "notificaciones": return <span className="wp-glyph">{""}</span>;
+    case "musica": return <span><span className="wp-glyph">{""}</span> Midnight City</span>;
     default: return null;
   }
 }

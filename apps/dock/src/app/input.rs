@@ -276,19 +276,26 @@ impl App {
             Role::Window => window_of(&id).and_then(|hwnd| self.activating(vec![hwnd])),
             Role::Shortcuts => self.folder_menu(id)?,
             Role::Folder | Role::Trash => Some(Outside::Open(id)),
-            Role::Widget => crate::widgets::WidgetId::from_entry(&id).map(|widget| {
-                let mut anchor = POINT::default();
-                // SAFETY: Reads the cursor into a local.
-                unsafe {
-                    let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut anchor);
+            Role::Widget => {
+                // A button inside the cell acts on its own and opens no panel.
+                if let Some(action) = self.hovered.and_then(|index| self.widget_action(index, &id)) {
+                    crate::widgets::run_action(action);
+                    return Ok(None);
                 }
-                anchor.y -= (40.0 * self.stage.as_ref().map_or(1.0, |stage| stage.scale)) as i32;
-                Outside::WidgetPanel {
-                    gfx: self.gfx.clone(),
-                    widget,
-                    anchor,
-                }
-            }),
+                crate::widgets::WidgetId::from_entry(&id).map(|widget| {
+                    let mut anchor = POINT::default();
+                    // SAFETY: Reads the cursor into a local.
+                    unsafe {
+                        let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut anchor);
+                    }
+                    anchor.y -= (40.0 * self.stage.as_ref().map_or(1.0, |stage| stage.scale)) as i32;
+                    Outside::WidgetPanel {
+                        gfx: self.gfx.clone(),
+                        widget,
+                        anchor,
+                    }
+                })
+            }
         })
     }
 

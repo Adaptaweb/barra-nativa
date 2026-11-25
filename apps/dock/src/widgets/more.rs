@@ -42,8 +42,28 @@ pub(super) fn bar(
             .map(|d| control_bar(gfx, d, scale, height, light))
             .transpose(),
         WidgetId::Notificaciones => notificaciones_bar(gfx, scale, height, light).map(Some),
+        WidgetId::Musica => readings
+            .musica
+            .as_ref()
+            .map(|d| musica_bar(gfx, d, scale, height, light))
+            .transpose(),
         WidgetId::Sistema | WidgetId::Clima | WidgetId::Bandeja => Ok(None),
     }
+}
+
+/// A note and the title of what is playing.
+fn musica_bar(gfx: &Gfx, d: &super::MusicaData, scale: f32, height: f32, light: bool) -> Result<LabelBrush> {
+    let size = 12.0;
+    let gap = (5.0 * scale).round();
+    let title = if d.title.is_empty() { &d.artist } else { &d.title };
+    let text = shorten(title, 28);
+    let (iw, ih) = gfx.measure_icon('\u{EC4F}', size, scale)?;
+    let (tw, th) = gfx.measure(&text, 12.0, scale, Weight::Normal)?;
+    gfx.paint((iw + gap + tw, height), scale, |pen| {
+        pen.icon('\u{EC4F}', (0.0, (height - ih) / 2.0), size, ink(light, 0.8))?;
+        pen.text(&text, (iw + gap, (height - th) / 2.0), 12.0, Weight::Normal, ink(light, 1.0))?;
+        Ok(())
+    })
 }
 
 /// Only the bell.

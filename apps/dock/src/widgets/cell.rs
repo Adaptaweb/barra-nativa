@@ -6,8 +6,10 @@
 
 use super::draw::{BLUE, GREEN, ORANGE, RED, ink, symbol};
 use super::clima::describe;
+use super::musica::NO_ARTWORK;
 use super::{Calendar, ClimaData, Home, Readings, WidgetId};
 use crate::gfx::{Gfx, Pen, Rgba, Weight};
+use crate::media::{self, Control};
 use crate::usage::{self, State};
 use anyhow::Result;
 use std::sync::Mutex;
@@ -23,6 +25,13 @@ const CALENDAR_COLORS: [Rgba; 4] = [
     [1.0, 0.624, 0.039, 1.0],
     [0.749, 0.353, 0.949, 1.0],
 ];
+
+/// What a click on a part of a cell does, instead of opening its panel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CellAction {
+    /// A transport button of the music widget.
+    Media(Control),
+}
 
 /// The size the user chose for a widget in the dock.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -70,9 +79,9 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
         (WidgetId::Notificaciones, _) => 100,
         (WidgetId::Control, Size::Compact) => 120,
         (WidgetId::Control, _) => 200,
-        (WidgetId::Reloj, Size::Compact) => 150,
-        (WidgetId::Reloj, Size::Medium | Size::Estado) => 330,
-        (WidgetId::Reloj, Size::Wide) => 640,
+        (WidgetId::Reloj, Size::Compact) => 190,
+        (WidgetId::Reloj, Size::Medium | Size::Estado) => 410,
+        (WidgetId::Reloj, Size::Wide) => 800,
         (WidgetId::Clima, Size::Compact) => 160,
         (WidgetId::Clima, Size::Medium) => 300,
         (WidgetId::Clima, Size::Wide) => 480,
@@ -81,6 +90,9 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
         (WidgetId::Sistema, Size::Medium | Size::Wide | Size::Estado) => 370,
         (WidgetId::Casa, Size::Compact) => 140,
         (WidgetId::Casa, Size::Medium | Size::Wide | Size::Estado) => 250,
+        (WidgetId::Musica, Size::Compact) => 130,
+        (WidgetId::Musica, Size::Medium | Size::Estado) => 330,
+        (WidgetId::Musica, Size::Wide) => 420,
         (WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini, Size::Compact) => 170,
         (WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini, _) => 500,
     }
@@ -88,9 +100,12 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
 
 static WIDTHS: Mutex<Vec<((WidgetId, Size), u16)>> = Mutex::new(Vec::new());
 
+/// Click zones of a cell: left and right edge in cell pixels, and what a click there does.
+pub type Zones = Vec<(f32, f32, CellAction)>;
+
 /// Draws the cell `height` pixels tall, as wide as its content. The width it
 /// needed is remembered for the dock layout (see `width`); returns whether it
-/// changed.
+/// changed, and the parts of the cell a click acts on (x from, x to, action).
 pub fn render(
     gfx: &Gfx,
     id: WidgetId,
@@ -98,13 +113,13 @@ pub fn render(
     readings: &Readings,
     height: u32,
     light: bool,
-) -> Result<(CompositionSurfaceBrush, bool)> {
+) -> Result<(CompositionSurfaceBrush, bool, Zones)> {
     let size = size.for_widget(id);
     let height = height.max(16) as f32;
     // Text sizes are relative to a 48 pixel tall cell, as in the Barra dock.
     let unit = height / 48.0;
     let pad = (height * 0.14).round();
-    let draw = |width: f32, end: &mut f32| {
+    let draw = |width: f32, end: &mut f32, zones: &mut Zones| {
         gfx.paint((width, height), unit, |pen| {
             let mut c = Cell {
                 pen,
@@ -114,6 +129,7 @@ pub fn render(
                 height,
                 light,
                 x: pad,
+                zones: Vec::new(),
             };
             match id {
                 WidgetId::Reloj => reloj(&mut c, size, readings),
@@ -123,21 +139,24 @@ pub fn render(
                 WidgetId::Bandeja => bandeja(&mut c, readings),
                 WidgetId::Control => control(&mut c, size, readings),
                 WidgetId::Notificaciones => notificaciones(&mut c),
+                WidgetId::Musica => musica(&mut c, size, readings),
                 WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini => {
                     ia(&mut c, id, size, readings)
                 }
             }?;
             *end = c.x;
+            *zones = c.zones;
             Ok(())
         })
     };
     // First on a roomy surface to learn the width, then at that width.
     let mut end = 0.0;
-    draw(height * 9.0, &mut end)?;
+    draw(height * 9.0, &mut end, &mut Vec::new())?;
     // In steps of a tenth of an icon, so small changes do not move the dock.
     let hundredths = ((((end + pad) / height) * 10.0).ceil() * 10.0).clamp(60.0, 900.0) as u16;
     let width = (height * f32::from(hundredths) / 100.0).round();
-    let cell = draw(width, &mut end)?;
+    let mut zones = Vec::new();
+    let cell = draw(width, &mut end, &mut zones)?;
     let changed = WIDTHS.lock().is_ok_and(|mut widths| {
         match widths.iter_mut().find(|(key, _)| *key == (id, size)) {
             Some((_, old)) if *old == hundredths => false,
@@ -151,7 +170,7 @@ pub fn render(
             }
         }
     });
-    Ok((cell.brush, changed))
+    Ok((cell.brush, changed, zones))
 }
 
 fn bandeja(c: &mut Cell<'_, '_>, _r: &Readings) -> Result<()> {
@@ -236,6 +255,8 @@ struct Cell<'a, 'b> {
     height: f32,
     light: bool,
     x: f32,
+    /// Where a click does something of its own: x from, x to, what.
+    zones: Zones,
 }
 
 impl Cell<'_, '_> {
@@ -312,8 +333,8 @@ impl Cell<'_, '_> {
         use chrono::Timelike;
         let main = format!("{:02}:{:02}", now.hour(), now.minute());
         let secs = format!(":{:02}", now.second());
-        let (mw, hb) = self.gfx.measure(&main, big, self.unit, Weight::Bold)?;
-        let (sw, _) = self.gfx.measure(&secs, small, self.unit, Weight::Bold)?;
+        let (mw, hb) = self.gfx.measure(&main, big, self.unit, Weight::Heavy)?;
+        let (sw, _) = self.gfx.measure(&secs, small, self.unit, Weight::Heavy)?;
         Ok((mw + sw, hb))
     }
 
@@ -324,11 +345,11 @@ impl Cell<'_, '_> {
         const BASELINE: f32 = 0.81;
         let main = format!("{:02}:{:02}", now.hour(), now.minute());
         let secs = format!(":{:02}", now.second());
-        let (_, hb) = self.gfx.measure(&main, big, self.unit, Weight::Bold)?;
-        let (_, hs) = self.gfx.measure(&secs, small, self.unit, Weight::Bold)?;
-        let mw = self.pen.text(&main, (x, top), big, Weight::Bold, self.strong())?;
+        let (_, hb) = self.gfx.measure(&main, big, self.unit, Weight::Heavy)?;
+        let (_, hs) = self.gfx.measure(&secs, small, self.unit, Weight::Heavy)?;
+        let mw = self.pen.text(&main, (x, top), big, Weight::Heavy, self.strong())?;
         let y_small = top + (hb - hs) * BASELINE;
-        let sw = self.pen.text(&secs, (x + mw, y_small), small, Weight::Bold, self.faded())?;
+        let sw = self.pen.text(&secs, (x + mw, y_small), small, Weight::Heavy, self.faded())?;
         Ok(mw + sw)
     }
 
@@ -379,12 +400,12 @@ fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     if size == Size::Compact {
         let short: String = weekday.chars().take(3).collect();
         let date = format!("{short} {}", now.day());
-        let (tw, th) = c.clock_measure(&now, 20.0, 12.0)?;
+        let (tw, th) = c.clock_measure(&now, 24.0, 14.0)?;
         let (dw, dh) = c.gfx.measure(&date, 10.5, c.unit, Weight::Normal)?;
         let total = tw.max(dw);
         let x = c.x;
         let y = (c.height - th - dh) / 2.0;
-        c.clock_draw(&now, x + (total - tw) / 2.0, y, 20.0, 12.0)?;
+        c.clock_draw(&now, x + (total - tw) / 2.0, y, 24.0, 14.0)?;
         c.pen.text(&date, (x + (total - dw) / 2.0, y + th), 10.5, Weight::Normal, c.faded())?;
         c.x += total;
         return Ok(());
@@ -397,8 +418,8 @@ fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
         12,
     )?;
     c.separator()?;
-    let (_, hb) = c.clock_measure(&now, 24.0, 14.0)?;
-    let width = c.clock_draw(&now, c.x, (c.height - hb) / 2.0, 24.0, 14.0)?;
+    let (_, hb) = c.clock_measure(&now, 30.0, 17.0)?;
+    let width = c.clock_draw(&now, c.x, (c.height - hb) / 2.0, 30.0, 17.0)?;
     c.x += width;
     if size != Size::Wide {
         return Ok(());
@@ -765,5 +786,128 @@ fn ia(c: &mut Cell<'_, '_>, id: WidgetId, size: Size, r: &Readings) -> Result<()
         c.pen.text(&pct, (right - tw, y), 11.0, Weight::Bold, c.strong())?;
     }
     c.x = right;
+    Ok(())
+}
+
+const WHITE: Rgba = [1.0, 1.0, 1.0, 1.0];
+const WHITE_DIM: Rgba = [1.0, 1.0, 1.0, 0.7];
+const WHITE_OFF: Rgba = [1.0, 1.0, 1.0, 0.4];
+
+/// `text` cut with an ellipsis so it is at most `max` pixels wide.
+fn fit(c: &Cell<'_, '_>, text: &str, size: f32, weight: Weight, max: f32) -> Result<String> {
+    if text.is_empty() || c.gfx.measure(text, size, c.unit, weight)?.0 <= max {
+        return Ok(text.to_owned());
+    }
+    let chars: Vec<char> = text.chars().collect();
+    // The most characters that still fit with the ellipsis.
+    let (mut low, mut high) = (0, chars.len());
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        let cut: String = chars[..mid].iter().chain(&['…']).collect();
+        if c.gfx.measure(&cut, size, c.unit, weight)?.0 <= max {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    Ok(chars[..low].iter().chain(&['…']).collect())
+}
+
+/// "3:07", or "1:02:03" from an hour on.
+fn track_time(seconds: u32) -> String {
+    let (h, m, s) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+}
+
+/// "Sonando ahora": the artwork, what plays, the progress and the transport
+/// buttons, on a card of the artwork's colour.
+fn musica(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
+    let left = c.x;
+    // The width is fixed per size (`width`), whatever the text says.
+    let total = c.height * f32::from(width(WidgetId::Musica, size)) / 100.0;
+    let right = total - left;
+    let d = r.musica.as_ref();
+    c.pen.round_rect(
+        (0.0, 0.0),
+        (total, c.height),
+        c.height * 0.22,
+        d.map_or(NO_ARTWORK, |d| d.color),
+    )?;
+    let compact = size == Size::Compact;
+    let wide = size == Size::Wide;
+    // The artwork, the text and the buttons use this much height; the
+    // progress row takes the rest.
+    let top_h = if wide { c.height * 0.70 } else { c.height };
+    let side = (c.height * 0.62).round();
+    if let Some(art) = d.and_then(|d| d.art.as_deref()).or(media::square_fallback()) {
+        c.pen.image(art, (left, ((top_h - side) / 2.0).round()), (side, side))?;
+    }
+
+    // Buttons, from the right edge.
+    let playing = d.is_some_and(|d| d.playing);
+    let all = [
+        ('\u{E892}', Control::Previous, d.is_some_and(|d| d.can_prev)),
+        (if playing { '\u{E769}' } else { '\u{E768}' }, Control::PlayPause, d.is_some_and(|d| d.can_toggle)),
+        ('\u{E893}', Control::Next, d.is_some_and(|d| d.can_next)),
+    ];
+    let shown = if compact { &all[1..2] } else { &all[..] };
+    let slot = c.px(if compact { 22.0 } else { 19.0 });
+    let buttons_x = right - slot * shown.len() as f32;
+    for (index, (glyph, control, enabled)) in shown.iter().enumerate() {
+        let from = buttons_x + slot * index as f32;
+        let (gw, gh) = c.gfx.measure_icon(*glyph, 14.0, c.unit)?;
+        let color = if *enabled { WHITE } else { WHITE_OFF };
+        c.pen.icon(*glyph, (from + (slot - gw) / 2.0, (top_h - gh) / 2.0), 14.0, color)?;
+        if *enabled {
+            c.zones.push((from, from + slot, CellAction::Media(*control)));
+        }
+    }
+
+    if !compact {
+        // Title and artist between the artwork and the buttons.
+        let text_x = left + side + c.px(8.0);
+        let room = (buttons_x - c.px(6.0) - text_x).max(0.0);
+        let (title, artist) = match d {
+            Some(d) if d.title.is_empty() => ("Sin título", d.artist.as_str()),
+            Some(d) => (d.title.as_str(), d.artist.as_str()),
+            None => ("Nada sonando", ""),
+        };
+        let title = fit(c, title, 12.0, Weight::Bold, room)?;
+        let artist = fit(c, artist, 10.5, Weight::Normal, room)?;
+        let (_, th) = c.gfx.measure("Ág", 12.0, c.unit, Weight::Bold)?;
+        let (_, ah) = c.gfx.measure("Ág", 10.5, c.unit, Weight::Normal)?;
+        let y = (top_h - th - ah) / 2.0;
+        c.pen.text(&title, (text_x, y), 12.0, Weight::Bold, WHITE)?;
+        c.pen.text(&artist, (text_x, y + th), 10.5, Weight::Normal, WHITE_DIM)?;
+    }
+
+    if wide {
+        // Elapsed time, the bar and the time left, under everything.
+        let (duration, position) = d.map_or((0, 0), |d| (d.duration_s, d.position_s.min(d.duration_s)));
+        let bar_h = c.px(3.0).max(2.0);
+        let middle = top_h + (c.height - top_h) / 2.0;
+        let (mut bar_x, mut bar_end) = (left, right);
+        if duration > 0 {
+            let widest = if duration >= 3600 { "-8:88:88" } else { "-88:88" };
+            let (slot_w, th) = c.gfx.measure(widest, 9.0, c.unit, Weight::Normal)?;
+            let elapsed = track_time(position);
+            let remaining = format!("-{}", track_time(duration - position));
+            let (rw, _) = c.gfx.measure(&remaining, 9.0, c.unit, Weight::Normal)?;
+            let y = middle - th / 2.0;
+            c.pen.text(&elapsed, (left, y), 9.0, Weight::Normal, WHITE_DIM)?;
+            c.pen.text(&remaining, (right - rw, y), 9.0, Weight::Normal, WHITE_DIM)?;
+            bar_x = left + slot_w + c.px(6.0);
+            bar_end = right - slot_w - c.px(6.0);
+        }
+        let bar_w = (bar_end - bar_x).max(0.0);
+        let bar_y = middle - bar_h / 2.0;
+        c.pen.round_rect((bar_x, bar_y), (bar_w, bar_h), bar_h / 2.0, [1.0, 1.0, 1.0, 0.25])?;
+        let filled = if duration > 0 { bar_w * position as f32 / duration as f32 } else { 0.0 };
+        if filled > 0.5 {
+            c.pen.round_rect((bar_x, bar_y), (filled.max(bar_h), bar_h), bar_h / 2.0, [1.0, 1.0, 1.0, 0.9])?;
+        }
+    }
+    // The cell's width is the one asked for; just under it so it does not round up.
+    c.x = total - left - 0.5;
     Ok(())
 }

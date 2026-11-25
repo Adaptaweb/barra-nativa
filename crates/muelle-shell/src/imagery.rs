@@ -86,6 +86,34 @@ pub fn circular(image: IconImage) -> IconImage {
     }
 }
 
+/// Center crop to a square with antialiased rounded corners. `corner` is the
+/// radius as a share of the side (0.5 is a circle).
+#[must_use]
+pub fn rounded(image: IconImage, corner: f32) -> IconImage {
+    let side = image.width.min(image.height);
+    let (left, top) = ((image.width - side) / 2, (image.height - side) / 2);
+    let mut bgra = Vec::with_capacity((side * side * 4) as usize);
+    let half = side as f32 / 2.0;
+    let radius = (side as f32 * corner).clamp(0.0, half);
+    for y in 0..side {
+        for x in 0..side {
+            let offset = (((y + top) * image.width + x + left) * 4) as usize;
+            // Distance outside the rounded square, from the centre of the pixel.
+            let dx = ((x as f32 + 0.5 - half).abs() - (half - radius)).max(0.0);
+            let dy = ((y as f32 + 0.5 - half).abs() - (half - radius)).max(0.0);
+            let coverage = (radius - dx.hypot(dy) + 0.5).clamp(0.0, 1.0);
+            for channel in &image.bgra[offset..offset + 4] {
+                bgra.push((f32::from(*channel) * coverage).round() as u8);
+            }
+        }
+    }
+    IconImage {
+        width: side,
+        height: side,
+        bgra,
+    }
+}
+
 /// Read the current monitor's wallpaper once on a blocking worker. Only the
 /// small decoded preview leaves this function; its local path is not exposed.
 #[must_use]

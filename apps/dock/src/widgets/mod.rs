@@ -16,13 +16,14 @@ mod draw;
 mod google;
 mod ia;
 mod more;
+mod musica;
 mod panel;
 mod panel_content;
 mod reloj;
 mod secrets;
 mod sistema;
 
-pub use cell::Size;
+pub use cell::{CellAction, Size, Zones};
 pub use draw::render_bar;
 pub use panel::{Placement, refresh as refresh_panel, toggle as toggle_panel};
 
@@ -61,13 +62,16 @@ pub enum WidgetId {
     Control,
     /// A bell button; opens the Windows notification center.
     Notificaciones,
+    /// What is playing, with the artwork's colour and the transport buttons.
+    Musica,
 }
 
 impl WidgetId {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Bandeja,
         Self::Control,
         Self::Notificaciones,
+        Self::Musica,
         Self::Sistema,
         Self::Clima,
         Self::Reloj,
@@ -94,6 +98,7 @@ impl WidgetId {
             Self::Bandeja => "bandeja",
             Self::Control => "control",
             Self::Notificaciones => "notificaciones",
+            Self::Musica => "musica",
         }
     }
 
@@ -110,6 +115,7 @@ impl WidgetId {
             Self::Bandeja => "Segundo plano",
             Self::Control => "Centro de control",
             Self::Notificaciones => "Notificaciones",
+            Self::Musica => "Sonando ahora",
         }
     }
 
@@ -148,7 +154,7 @@ impl WidgetId {
             Self::Claude => "https://claude.ai/settings/usage".to_owned(),
             Self::ChatGpt => "https://chatgpt.com/codex/settings/usage".to_owned(),
             Self::Gemini => "https://aistudio.google.com/".to_owned(),
-            Self::Bandeja | Self::Control | Self::Notificaciones => String::new(),
+            Self::Bandeja | Self::Control | Self::Notificaciones | Self::Musica => String::new(),
         }
     }
 
@@ -171,6 +177,14 @@ impl WidgetId {
                     .as_ref()
                     .map(|d| RelojData { second: 0, ..d.clone() })
             ),
+            // The bar shows the title only, not the position.
+            Self::Musica => format!(
+                "{:?}",
+                readings
+                    .musica
+                    .as_ref()
+                    .map(|d| MusicaData { position_s: 0, ..d.clone() })
+            ),
             _ => self.fingerprint(readings),
         }
     }
@@ -185,6 +199,7 @@ impl WidgetId {
             // The dock shows only its chevron; the icons are in the panel.
             Self::Bandeja | Self::Notificaciones => String::new(),
             Self::Control => format!("{:?}", readings.control),
+            Self::Musica => format!("{:?}", readings.musica),
             Self::Claude | Self::ChatGpt | Self::Gemini => {
                 let provider = self.provider().unwrap_or(Provider::Claude);
                 readings.ia.as_ref().map_or_else(String::new, |snapshot| {
@@ -203,6 +218,7 @@ impl WidgetId {
             Self::Casa => readings.casa.is_some(),
             Self::Bandeja | Self::Control | Self::Notificaciones => true,
             Self::Claude | Self::ChatGpt | Self::Gemini => readings.ia.is_some(),
+            Self::Musica => readings.musica.is_some(),
         }
     }
 
@@ -217,6 +233,7 @@ impl WidgetId {
             Self::Control => (&CONTROL_ON, control::start),
             // Nothing to read: a shape flag with no source thread (`configure` sets it).
             Self::Notificaciones => (&NOTIFICACIONES_ON, no_source),
+            Self::Musica => (&MUSICA_ON, musica::start),
         }
     }
 }
@@ -349,6 +366,38 @@ pub struct CasaData {
     pub buttons: Vec<HomeButton>,
 }
 
+/// What is playing now. `art` is a rounded square.
+#[derive(Clone, PartialEq)]
+pub struct MusicaData {
+    pub title: String,
+    pub artist: String,
+    pub playing: bool,
+    pub can_prev: bool,
+    pub can_toggle: bool,
+    pub can_next: bool,
+    pub art: Option<std::sync::Arc<muelle_shell::icons::IconImage>>,
+    /// The card colour: the artwork's, darkened for white text.
+    pub color: [f32; 4],
+    /// Zero when the player gives no timeline.
+    pub duration_s: u32,
+    pub position_s: u32,
+}
+
+impl std::fmt::Debug for MusicaData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The picture is told apart by address, not dumped.
+        f.debug_struct("MusicaData")
+            .field("title", &self.title)
+            .field("artist", &self.artist)
+            .field("playing", &self.playing)
+            .field("can", &(self.can_prev, self.can_toggle, self.can_next))
+            .field("art", &self.art.as_ref().map(std::sync::Arc::as_ptr))
+            .field("color", &self.color)
+            .field("time", &(self.position_s, self.duration_s))
+            .finish()
+    }
+}
+
 /// A tray icon with its picture.
 #[derive(Clone, Debug)]
 pub struct TrayItem {
@@ -374,6 +423,8 @@ pub struct Readings {
     pub casa: Option<CasaData>,
     pub ia: Option<usage::Snapshot>,
     pub control: Option<ControlData>,
+    /// What is playing; `None` without a media session.
+    pub musica: Option<MusicaData>,
 }
 
 /// What the quick settings button shows.
@@ -407,6 +458,7 @@ static READINGS: Mutex<Readings> = Mutex::new(Readings {
     casa: None,
     ia: None,
     control: None,
+    musica: None,
 });
 static SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
 static TARGET: AtomicIsize = AtomicIsize::new(0);
@@ -419,6 +471,7 @@ static IA_ON: AtomicBool = AtomicBool::new(false);
 static BANDEJA_ON: AtomicBool = AtomicBool::new(false);
 static CONTROL_ON: AtomicBool = AtomicBool::new(false);
 static NOTIFICACIONES_ON: AtomicBool = AtomicBool::new(false);
+static MUSICA_ON: AtomicBool = AtomicBool::new(false);
 
 /// The bell has no data source to start.
 fn no_source() {}
@@ -568,15 +621,27 @@ pub fn dock_width(id: WidgetId, size: Size) -> u16 {
 }
 
 /// The dock cell for a widget, `height` pixels tall, and whether its width
-/// changed (the dock must then be laid out again).
+/// changed (the dock must then be laid out again), and the parts of the cell a
+/// click acts on: from x, to x (pixels of the cell) and what they do.
 pub fn render_cell(
     gfx: &crate::gfx::Gfx,
     id: WidgetId,
     readings: &Readings,
     height: u32,
     light: bool,
-) -> anyhow::Result<(windows::UI::Composition::CompositionSurfaceBrush, bool)> {
+) -> anyhow::Result<(
+    windows::UI::Composition::CompositionSurfaceBrush,
+    bool,
+    Zones,
+)> {
     cell::render(gfx, id, dock_size(id), readings, height, light)
+}
+
+/// Does what a click on a zone of a cell asks for.
+pub fn run_action(action: CellAction) {
+    match action {
+        CellAction::Media(control) => musica::control(control),
+    }
 }
 
 fn city() -> String {

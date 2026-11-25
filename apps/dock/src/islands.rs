@@ -6,7 +6,7 @@
 
 use crate::gfx::Gfx;
 use crate::scene::Theme;
-use crate::widgets::{self, Placement, WidgetId};
+use crate::widgets::{self, CellAction, Placement, WidgetId};
 use anyhow::Result;
 use muelle_shell::system::Monitor;
 use std::{cell::RefCell, sync::OnceLock};
@@ -73,6 +73,8 @@ struct Island {
     root: ContainerVisual,
     /// Each widget and where it is, in window pixels: left, width.
     cells: Vec<(WidgetId, f32, f32)>,
+    /// Per cell, the parts a click acts on: x from, x to (in the cell), what.
+    zones: Vec<widgets::Zones>,
     sprites: Vec<windows::UI::Composition::SpriteVisual>,
     left: i32,
     top: i32,
@@ -153,13 +155,15 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
     let light = frame.theme.light;
     // Cells first: they decide the width.
     let mut cells = Vec::new();
+    let mut zones = Vec::new();
     let gap = (frame.padding * 0.6).round();
     let mut x = frame.padding;
     let mut brushes = Vec::new();
     for id in list {
-        let (brush, _) = widgets::render_cell(gfx, *id, &readings, cell_height(frame) as u32, light)?;
+        let (brush, _, cell_zones) = widgets::render_cell(gfx, *id, &readings, cell_height(frame) as u32, light)?;
         let width = (cell_height(frame) * f32::from(widgets::dock_width(*id, widgets::dock_size(*id))) / 100.0).round();
         cells.push((*id, x, width));
+        zones.push(cell_zones);
         brushes.push(brush);
         x += width + gap;
     }
@@ -200,6 +204,7 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
         _target: target,
         root,
         cells,
+        zones,
         sprites,
         left,
         top,
@@ -231,6 +236,20 @@ impl Island {
             .iter()
             .find(|(_, left, width)| x >= *left && x < left + width)
             .map(|(id, left, width)| (*id, left + width / 2.0))
+    }
+
+    /// What a click at `x` does of its own, if it is on a button of a cell.
+    fn action(&self, x: f32) -> Option<CellAction> {
+        let index = self
+            .cells
+            .iter()
+            .position(|(_, left, width)| x >= *left && x < left + width)?;
+        let inside = x - self.cells[index].1;
+        self.zones
+            .get(index)?
+            .iter()
+            .find(|(from, to, _)| inside >= *from && inside < *to)
+            .map(|(_, _, action)| *action)
     }
 }
 
@@ -297,9 +316,14 @@ pub fn repaint() {
         };
         let readings = widgets::readings();
         let mut resized = false;
-        'all: for island in &state.islands {
-            for ((id, _, width), sprite) in island.cells.iter().zip(&island.sprites) {
-                let Ok((brush, _)) =
+        'all: for island in &mut state.islands {
+            for (((id, _, width), sprite), zones) in island
+                .cells
+                .iter()
+                .zip(&island.sprites)
+                .zip(island.zones.iter_mut())
+            {
+                let Ok((brush, _, cell_zones)) =
                     widgets::render_cell(&gfx, *id, &readings, cell_height(&frame) as u32, frame.theme.light)
                 else {
                     continue;
@@ -309,6 +333,7 @@ pub fn repaint() {
                     resized = true;
                     break 'all;
                 }
+                *zones = cell_zones;
                 let _ = sprite.SetBrush(&brush);
             }
         }
@@ -345,6 +370,17 @@ unsafe extern "system" fn island_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
     };
     match msg {
         WM_LBUTTONUP => {
+            // A button inside a cell acts on its own and does not open the panel.
+            let action = STATE.with(|state| {
+                state
+                    .try_borrow()
+                    .ok()
+                    .and_then(|state| state.islands.iter().find(|i| i.hwnd == hwnd)?.action(x))
+            });
+            if let Some(action) = action {
+                widgets::run_action(action);
+                return LRESULT(0);
+            }
             if let Some((gfx, id, center, top, _)) = found() {
                 widgets::toggle_panel(&gfx, id, POINT { x: center, y: top }, Placement::Above);
             }

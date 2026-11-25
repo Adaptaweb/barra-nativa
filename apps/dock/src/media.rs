@@ -86,7 +86,7 @@ fn timeline_age(updated: i64, now: SystemTime) -> Duration {
     Duration::from_secs_f64(ticks as f64 / 10_000_000.0)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Control {
     Previous,
     PlayPause,
@@ -156,7 +156,26 @@ pub fn artwork(track: &Track) -> Option<&IconImage> {
     })
 }
 
-fn read_artwork(thumbnail: IRandomAccessStreamReference) -> Option<Arc<IconImage>> {
+/// The bundled fallback as a rounded square, for the dock's music widget.
+pub fn square_fallback() -> Option<&'static IconImage> {
+    static FALLBACK: OnceLock<Option<IconImage>> = OnceLock::new();
+    FALLBACK
+        .get_or_init(|| {
+            imagery::decode(
+                include_bytes!("../../../assets/media-fallback.png"),
+                128,
+                1_000_000,
+            )
+            .map(|image| imagery::rounded(image, SQUARE_CORNER))
+        })
+        .as_ref()
+}
+
+/// Corner radius of the square artwork, as a share of its side.
+const SQUARE_CORNER: f32 = 0.2;
+
+/// `round`: cropped to a circle (the menu bar); otherwise a rounded square.
+fn read_artwork(thumbnail: IRandomAccessStreamReference, round: bool) -> Option<Arc<IconImage>> {
     let stream =
         complete_with_timeout(thumbnail.OpenReadAsync().ok()?, Duration::from_millis(400))?;
     let size = stream.Size().ok()?;
@@ -175,7 +194,13 @@ fn read_artwork(thumbnail: IRandomAccessStreamReference) -> Option<Arc<IconImage
     let mut bytes = vec![0; size as usize];
     reader.ReadBytes(&mut bytes).ok()?;
     imagery::decode(&bytes, 128, 16_000_000)
-        .map(imagery::circular)
+        .map(|image| {
+            if round {
+                imagery::circular(image)
+            } else {
+                imagery::rounded(image, SQUARE_CORNER)
+            }
+        })
         .map(Arc::new)
 }
 
@@ -183,6 +208,8 @@ fn read_artwork(thumbnail: IRandomAccessStreamReference) -> Option<Arc<IconImage
 struct Events {
     wake: SyncSender<()>,
     dirty: Arc<AtomicU8>,
+    /// Artwork cropped to a circle (the menu bar) rather than a rounded square.
+    round: bool,
 }
 
 impl Events {
@@ -211,6 +238,7 @@ impl Watch {
             events: Events {
                 wake,
                 dirty: Arc::new(AtomicU8::new(0)),
+                round: true,
             },
             commands,
             progress: Arc::new(AtomicBool::new(false)),
@@ -218,6 +246,15 @@ impl Watch {
     }
 
     pub fn start(hwnd: HWND, message: u32) -> Option<Self> {
+        Self::start_with(hwnd, message, true)
+    }
+
+    /// Like `start`, with the artwork as a rounded square instead of a circle.
+    pub fn start_square(hwnd: HWND, message: u32) -> Option<Self> {
+        Self::start_with(hwnd, message, false)
+    }
+
+    fn start_with(hwnd: HWND, message: u32, round: bool) -> Option<Self> {
         let window = Arc::new(AtomicIsize::new(hwnd.0 as isize));
         let state = Arc::new(Mutex::new(None));
         let progress = Arc::new(AtomicBool::new(false));
@@ -226,6 +263,7 @@ impl Watch {
         let events = Events {
             wake,
             dirty: Arc::new(AtomicU8::new(0)),
+            round,
         };
         {
             let (window, state, events) = (window.clone(), state.clone(), events.clone());
@@ -316,6 +354,7 @@ struct Current {
     title: String,
     artist: String,
     artwork: Option<Arc<IconImage>>,
+    round: bool,
 }
 
 impl Current {
@@ -342,6 +381,7 @@ impl Current {
             title: String::new(),
             artist: String::new(),
             artwork: None,
+            round: events.round,
         }
     }
 
@@ -365,7 +405,10 @@ impl Current {
                 .Artist()
                 .map(|value| value.to_string_lossy())
                 .unwrap_or_default();
-            self.artwork = properties.Thumbnail().ok().and_then(read_artwork);
+            self.artwork = properties
+                .Thumbnail()
+                .ok()
+                .and_then(|thumbnail| read_artwork(thumbnail, self.round));
         }
     }
 
@@ -647,6 +690,7 @@ mod native_probe {
             events: Events {
                 wake,
                 dirty: Arc::new(AtomicU8::new(0)),
+                round: true,
             },
             commands,
             progress: Arc::new(AtomicBool::new(false)),
@@ -694,7 +738,7 @@ mod native_probe {
                     .ok()?;
                 complete(writer.StoreAsync().ok()?)?;
                 let reference = RandomAccessStreamReference::CreateFromStream(&stream).ok()?;
-                let image = read_artwork(reference.cast().ok()?)?;
+                let image = read_artwork(reference.cast().ok()?, true)?;
                 assert!(image.width > 0 && image.width <= 128 && image.width == image.height);
                 Some(())
             };
@@ -712,6 +756,7 @@ mod native_probe {
                 let events = Events {
                     wake,
                     dirty: Arc::new(AtomicU8::new(0)),
+                    round: true,
                 };
                 let mut current = Current::new(session, &events);
                 current.update_track();

@@ -105,6 +105,8 @@ pub enum PanelAction {
     /// System: install LibreHardwareMonitor with winget, or start it.
     InstallLhm,
     StartLhm,
+    /// Music: previous, play or pause, next.
+    Media(crate::media::Control),
 }
 
 /// A Home Assistant button in the panel grid.
@@ -626,6 +628,7 @@ fn perform(action: PanelAction) {
         PanelAction::CalClose => close(),
         PanelAction::InstallLhm => super::sistema::install_lhm(),
         PanelAction::StartLhm => super::sistema::start_lhm(),
+        PanelAction::Media(control) => super::musica::control(control),
     }
 }
 

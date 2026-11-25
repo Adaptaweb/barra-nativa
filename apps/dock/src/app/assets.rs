@@ -11,7 +11,42 @@ use super::{
     shorten, window_of,
 };
 
+/// The parts of a widget cell a click acts on, as shares of its width: the
+/// dock magnifies cells, so pixels would not hold.
+fn shares(
+    widget: crate::widgets::WidgetId,
+    wanted: u32,
+    zones: Vec<(f32, f32, crate::widgets::CellAction)>,
+) -> Vec<(f32, f32, crate::widgets::CellAction)> {
+    let hundredths = crate::widgets::dock_width(widget, crate::widgets::dock_size(widget));
+    let width = (wanted as f32 * f32::from(hundredths) / 100.0).max(1.0);
+    zones
+        .into_iter()
+        .map(|(from, to, action)| (from / width, to / width, action))
+        .collect()
+}
+
 impl App {
+    /// The action of the button under the pointer in the widget cell `index`
+    /// (`id`), if the pointer is on one.
+    pub(super) fn widget_action(&self, index: usize, id: &str) -> Option<crate::widgets::CellAction> {
+        let stage = self.stage.as_ref()?;
+        let state = muelle_core::magnify::magnify(
+            &stage.layout,
+            self.cursor,
+            self.amount.value,
+            &stage.magnifier,
+        );
+        let rect = state.rects.get(index)?;
+        let share = (self.cursor - rect.x) / rect.width;
+        self.assets
+            .get(id)?
+            .zones
+            .iter()
+            .find(|(from, to, _)| share >= *from && share < *to)
+            .map(|(_, _, action)| *action)
+    }
+
     /// `wanted` is the pixel side icons are drawn at: their magnified size.
     pub(super) fn prepare_assets(&mut self, wanted: u32, scale: f32, light: bool, edge: DockEdge) {
         if self.assets_for != (scale, light, wanted, edge) {
@@ -80,6 +115,7 @@ impl App {
                         icon,
                         label,
                         drawn_for: entry.members.clone(),
+                        zones: Vec::new(),
                     },
                 );
                 continue;
@@ -100,11 +136,14 @@ impl App {
                 let rendered = crate::widgets::render_cell(&self.gfx, widget, &readings, wanted, light)
                     .inspect_err(|error| eprintln!("muelle: widget `{id}`: {error:#}"))
                     .ok();
-                if rendered.as_ref().is_some_and(|(_, changed)| *changed) {
+                if rendered.as_ref().is_some_and(|(_, changed, _)| *changed) {
                     // Laid out with an estimated width: lay out again.
                     crate::widgets::nudge();
                 }
-                let icon = rendered.map(|(brush, _)| brush).or_else(|| self.placeholder.clone());
+                let (icon, zones) = match rendered {
+                    Some((brush, _, zones)) => (Some(brush), shares(widget, wanted, zones)),
+                    None => (self.placeholder.clone(), Vec::new()),
+                };
                 let label = self.gfx.label_brush(widget.name(), scale, light, edge).ok();
                 self.assets.insert(
                     id.clone(),
@@ -112,6 +151,7 @@ impl App {
                         icon,
                         label,
                         drawn_for: print,
+                        zones,
                     },
                 );
                 continue;
@@ -142,6 +182,7 @@ impl App {
                         icon: None,
                         label,
                         drawn_for: Vec::new(),
+                        zones: Vec::new(),
                     },
                 );
                 continue;
@@ -155,6 +196,7 @@ impl App {
                         icon,
                         label,
                         drawn_for: Vec::new(),
+                        zones: Vec::new(),
                     },
                 );
                 continue;
@@ -181,6 +223,7 @@ impl App {
                     icon,
                     label,
                     drawn_for: Vec::new(),
+                    zones: Vec::new(),
                 },
             );
         }
@@ -228,7 +271,7 @@ impl App {
             {
                 continue;
             }
-            let Ok((icon, resized)) =
+            let Ok((icon, resized, zones)) =
                 crate::widgets::render_cell(&self.gfx, widget, &readings, wanted, light)
             else {
                 continue;
@@ -251,6 +294,7 @@ impl App {
                     icon: Some(icon),
                     label,
                     drawn_for: print,
+                    zones: shares(widget, wanted, zones),
                 },
             );
         }

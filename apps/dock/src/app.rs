@@ -475,6 +475,8 @@ struct Asset {
     label: Option<LabelBrush>,
     /// A group's apps when its tile was drawn; empty for anything else.
     drawn_for: Vec<String>,
+    /// A widget's buttons: x from and to as shares of the cell, and what they do.
+    zones: Vec<(f32, f32, crate::widgets::CellAction)>,
 }
 
 struct Press {

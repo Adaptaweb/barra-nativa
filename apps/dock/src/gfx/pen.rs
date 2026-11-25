@@ -16,8 +16,8 @@ use windows::{
         },
         DirectWrite::{
             DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT,
-            DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_TEXT_METRICS, DWRITE_WORD_WRAPPING_NO_WRAP, IDWriteFactory, IDWriteTextLayout,
+            DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_METRICS, DWRITE_WORD_WRAPPING_NO_WRAP, IDWriteFactory, IDWriteTextLayout,
         },
     },
     core::{PCWSTR, w},
@@ -30,6 +30,7 @@ pub enum Weight {
     Normal,
     Medium,
     Bold,
+    Heavy,
 }
 
 impl Weight {
@@ -38,6 +39,7 @@ impl Weight {
             Self::Normal => DWRITE_FONT_WEIGHT_NORMAL,
             Self::Medium => DWRITE_FONT_WEIGHT_MEDIUM,
             Self::Bold => DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            Self::Heavy => DWRITE_FONT_WEIGHT_BOLD,
         }
     }
 }
