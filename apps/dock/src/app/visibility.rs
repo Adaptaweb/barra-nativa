@@ -6,7 +6,7 @@ use anyhow::Result;
 use muelle_config::DockPosition;
 use muelle_core::{frame::DockEdge, layout::Rect, spring::Spring};
 use muelle_shell::{
-    appbar::ABN_FULLSCREENAPP,
+    appbar::{ABN_FULLSCREENAPP, ABN_POSCHANGED, ABN_STATECHANGE},
     system::{Monitor, monitor_at, monitor_rects, primary_monitor},
     taskbar, tracker,
 };
@@ -376,6 +376,13 @@ impl App {
             // Windows notifications may be missing or unreliable, so use them
             // only as a signal to recheck the state.
             ABN_FULLSCREENAPP => self.update_fullscreen(),
+            // Another bar changed: if the dock relied on its room (the other
+            // display's taskbar), reserve the dock's own strip again.
+            ABN_POSCHANGED | ABN_STATECHANGE
+                if self.appbar.as_mut().is_some_and(muelle_shell::appbar::AppBar::others_changed) =>
+            {
+                self.refresh()
+            }
             // The dock's own reservation can trigger this. The strip changes
             // only with the screen or dock size, already handled by `refresh`.
             _ => Ok(()),

@@ -11,7 +11,7 @@
 use std::{
     sync::{
         Mutex, OnceLock,
-        atomic::{AtomicIsize, Ordering},
+        atomic::{AtomicIsize, AtomicUsize, Ordering},
         mpsc::{Sender, channel},
     },
     thread,
@@ -25,7 +25,7 @@ use windows::{
         UI::WindowsAndMessaging::{
             AllowSetForegroundWindow, CreateWindowExW, DefWindowProcW, DispatchMessageW,
             EnumWindows, GetClassNameW, GetCursorPos, GetMessageW, GetWindowThreadProcessId,
-            HICON, HWND_BROADCAST, HWND_TOPMOST, IsWindow, MSG, PostMessageW, RegisterClassW,
+            HICON, HWND_BOTTOM, HWND_BROADCAST, HWND_TOPMOST, IsWindow, MSG, PostMessageW, RegisterClassW,
             RegisterWindowMessageW, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
             SendMessageTimeoutW, SetWindowPos, TranslateMessage, WM_COPYDATA, WM_LBUTTONDBLCLK,
             WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_USER, WNDCLASSW,
@@ -313,6 +313,10 @@ pub fn start(changed: fn()) {
             // Stay first among the Shell_TrayWnd windows apps look for.
             thread::spawn(move || {
                 loop {
+                    if YIELDING.load(Ordering::Acquire) > 0 {
+                        thread::sleep(Duration::from_millis(200));
+                        continue;
+                    }
                     let _ = SetWindowPos(
                         HWND(raised as _),
                         Some(HWND_TOPMOST),
@@ -336,6 +340,33 @@ pub fn start(changed: fn()) {
         }
     });
 }
+
+/// While this process's own tray window exists, `FindWindow("Shell_TrayWnd")`
+/// finds it first, so this process's AppBar calls reach Explorer through it
+/// and Explorer ignores this process's reservation (the dock's work area on
+/// the primary display). Runs `call` with Explorer's taskbar first.
+pub fn with_explorer_first<T>(call: impl FnOnce() -> T) -> T {
+    let own = OWN.load(Ordering::Acquire);
+    if own == 0 {
+        return call();
+    }
+    let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+    YIELDING.fetch_add(1, Ordering::AcqRel);
+    // SAFETY: Z-order changes on this process's own window.
+    unsafe {
+        let _ = SetWindowPos(HWND(own as _), Some(HWND_BOTTOM), 0, 0, 0, 0, flags);
+    }
+    let result = call();
+    // SAFETY: As above.
+    unsafe {
+        let _ = SetWindowPos(HWND(own as _), Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
+    }
+    YIELDING.fetch_sub(1, Ordering::AcqRel);
+    result
+}
+
+/// AppBar calls in progress (see `with_explorer_first`): the tray stays below.
+static YIELDING: AtomicUsize = AtomicUsize::new(0);
 
 /// Whether `hwnd` is this process's own tray window, which must never be
 /// taken for Explorer's.

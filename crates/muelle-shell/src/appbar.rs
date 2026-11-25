@@ -14,6 +14,10 @@ use windows::Win32::{
 };
 
 pub const ABN_FULLSCREENAPP: usize = 2;
+/// Another AppBar changed its auto-hide or always-on-top state.
+pub const ABN_STATECHANGE: usize = 0;
+/// Another AppBar moved or changed size.
+pub const ABN_POSCHANGED: usize = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Edge {
@@ -57,6 +61,17 @@ fn keep_thickness(edge: Edge, mut rect: RECT, thickness: i32) -> RECT {
     rect
 }
 
+/// How deep other bars already reserve along `edge`: the system pushed
+/// `offered` this far in from `wanted`.
+fn already_reserved(edge: Edge, offered: RECT, wanted: RECT) -> i32 {
+    match edge {
+        Edge::Top => offered.top - wanted.top,
+        Edge::Bottom => wanted.bottom - offered.bottom,
+        Edge::Left => offered.left - wanted.left,
+        Edge::Right => wanted.right - offered.right,
+    }
+}
+
 /// The system granted the strip: right edge, right depth. Along the edge it
 /// may be shorter (a side bar ends at the menu bar on top), which is fine;
 /// demanding the full length would retry, and notify, forever.
@@ -70,9 +85,22 @@ fn granted(edge: Edge, got: RECT, wanted: RECT) -> bool {
 pub struct AppBar {
     hwnd: HWND,
     reserved: Option<RECT>,
+    /// Where another bar already left room for the dock (see `reserve`).
+    covered: Option<RECT>,
 }
 
 impl AppBar {
+    /// Another bar moved or changed. When the dock relied on another bar's
+    /// room (see `reserve`), that room may be gone: returns whether the dock
+    /// must reserve again, and forgets the reservation so it does.
+    pub fn others_changed(&mut self) -> bool {
+        if self.covered.is_some() {
+            self.reserved = None;
+            return true;
+        }
+        false
+    }
+
     /// Registers `hwnd` as an AppBar. Notifications are sent to that window
     /// using `callback`, with the notification code in `wParam`.
     #[must_use]
@@ -84,10 +112,12 @@ impl AppBar {
             ..Default::default()
         };
         // SAFETY: `data` is a valid APPBARDATA with its size initialized.
-        let registered = unsafe { SHAppBarMessage(ABM_NEW, &mut data) } != 0;
+        let registered =
+            crate::tray::with_explorer_first(|| unsafe { SHAppBarMessage(ABM_NEW, &mut data) }) != 0;
         registered.then_some(Self {
             hwnd,
             reserved: None,
+            covered: None,
         })
     }
 
@@ -114,16 +144,32 @@ impl AppBar {
             ..Default::default()
         };
         // SAFETY: `data` has its size initialized and remains valid for both synchronous calls.
-        unsafe {
+        let previous = self.covered;
+        let covered = crate::tray::with_explorer_first(|| unsafe {
             SHAppBarMessage(ABM_QUERYPOS, &mut data);
+            // A bar on the same edge that already reserves as much as the
+            // dock needs (the invisible taskbar of another display, which
+            // Windows 11 keeps from auto-hiding) leaves room for it: adding
+            // the dock's strip on top would double the gap.
+            if already_reserved(edge, data.rc, wanted) >= thickness {
+                data.rc = keep_thickness(edge, data.rc, 0);
+                // Setting the same empty strip again would only notify the
+                // other bars, which notify back.
+                if previous != Some(data.rc) {
+                    SHAppBarMessage(ABM_SETPOS, &mut data);
+                }
+                return true;
+            }
             // Another bar on the same edge (the Windows taskbar, before it is
             // hidden) pushes the strip inward, so preserve its thickness.
             data.rc = keep_thickness(edge, data.rc, thickness);
             SHAppBarMessage(ABM_SETPOS, &mut data);
-        }
+            false
+        });
         // Treat the reservation as complete only if the system granted the
         // requested area; otherwise, retry on the next call.
-        self.reserved = granted(edge, data.rc, wanted).then_some(wanted);
+        self.covered = covered.then_some(data.rc);
+        self.reserved = (covered || granted(edge, data.rc, wanted)).then_some(wanted);
     }
 }
 
@@ -135,7 +181,7 @@ impl Drop for AppBar {
             ..Default::default()
         };
         // SAFETY: `data` has its size initialized and remains valid for the synchronous call.
-        unsafe { SHAppBarMessage(ABM_REMOVE, &mut data) };
+        crate::tray::with_explorer_first(|| unsafe { SHAppBarMessage(ABM_REMOVE, &mut data) });
     }
 }
 

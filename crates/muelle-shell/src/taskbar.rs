@@ -71,7 +71,12 @@ fn take_over_taskbars(bars: &[HWND], file: &std::path::Path) -> bool {
         return false;
     }
     if !file.exists() {
-        let original = if autohide_enabled() { "1" } else { "0" };
+        // Windows 11 keeps auto-hide per display: the primary taskbar's, then
+        // the other displays' (all the same; Settings has one switch).
+        let flag = |on: bool| if on { '1' } else { '0' };
+        let primary = bars.first().is_some_and(|&bar| autohide_of(bar));
+        let others = bars.iter().skip(1).any(|&bar| autohide_of(bar));
+        let original: String = [flag(primary), flag(others)].into_iter().collect();
         let saved = file
             .parent()
             .map_or(Ok(()), fs::create_dir_all)
@@ -85,8 +90,14 @@ fn take_over_taskbars(bars: &[HWND], file: &std::path::Path) -> bool {
             return false;
         }
     }
-    if !autohide_enabled() {
-        set_autohide(true);
+    // A taskbar that does not auto-hide keeps its strip reserved even while
+    // invisible: maximized windows and the dock then leave a gap above it.
+    // The query may answer with the primary taskbar's state for every
+    // taskbar, so the other displays' are set without asking.
+    for (index, &bar) in bars.iter().enumerate() {
+        if index > 0 || !autohide_of(bar) {
+            set_autohide_of(bar, true);
+        }
     }
     let mut hidden = true;
     for &hwnd in bars {
@@ -122,10 +133,16 @@ pub fn give_back() {
         }
         return;
     };
-    for hwnd in taskbars() {
+    let bars = taskbars();
+    for &hwnd in &bars {
         set_ghost(hwnd, false);
     }
-    set_autohide(original.trim() == "1");
+    let mut flags = original.trim().chars().map(|c| c == '1');
+    let primary = flags.next().unwrap_or(false);
+    let others = flags.next().unwrap_or(primary);
+    for (index, &bar) in bars.iter().enumerate() {
+        set_autohide_of(bar, if index == 0 { primary } else { others });
+    }
     let _ = fs::remove_file(file);
 }
 
@@ -160,26 +177,28 @@ fn taskbars() -> Vec<HWND> {
     found
 }
 
-fn appbar_data() -> APPBARDATA {
+fn appbar_data(bar: HWND) -> APPBARDATA {
     APPBARDATA {
         cbSize: size_of::<APPBARDATA>() as u32,
-        hWnd: taskbars().first().copied().unwrap_or_default(),
+        hWnd: bar,
         ..Default::default()
     }
 }
 
-fn autohide_enabled() -> bool {
-    let mut data = appbar_data();
+/// Auto-hide of one taskbar: Windows 11 keeps it per display.
+fn autohide_of(bar: HWND) -> bool {
+    let mut data = appbar_data(bar);
     // SAFETY: `data` is a valid APPBARDATA with its size initialized.
-    let state = unsafe { SHAppBarMessage(ABM_GETSTATE, &mut data) };
+    let state =
+        crate::tray::with_explorer_first(|| unsafe { SHAppBarMessage(ABM_GETSTATE, &mut data) });
     state as u32 & ABS_AUTOHIDE != 0
 }
 
-fn set_autohide(enabled: bool) {
-    let mut data = appbar_data();
+fn set_autohide_of(bar: HWND, enabled: bool) {
+    let mut data = appbar_data(bar);
     data.lParam = LPARAM(if enabled { ABS_AUTOHIDE as isize } else { 0 });
     // SAFETY: Same as above.
-    unsafe { SHAppBarMessage(ABM_SETSTATE, &mut data) };
+    crate::tray::with_explorer_first(|| unsafe { SHAppBarMessage(ABM_SETSTATE, &mut data) });
 }
 
 fn set_ghost(hwnd: HWND, ghost: bool) -> bool {
