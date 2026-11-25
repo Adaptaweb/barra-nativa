@@ -107,6 +107,9 @@ pub enum PanelAction {
     StartLhm,
     /// Music: previous, play or pause, next.
     Media(crate::media::Control),
+    /// Audio: make a device (by id) the default, mute or unmute the microphone.
+    SetAudioDevice(String),
+    ToggleMic,
 }
 
 /// A Home Assistant button in the panel grid.
@@ -228,7 +231,7 @@ pub fn refresh() {
     OPEN.with(|open| {
         if let Ok(mut slot) = open.try_borrow_mut()
             && let Some(panel) = slot.as_mut()
-            && !(panel.id == WidgetId::Reloj && panel.print() == panel.print)
+            && !panel.unchanged()
             && let Err(error) = panel.paint()
         {
             eprintln!("muelle: panel: {error:#}");
@@ -360,13 +363,21 @@ impl Panel {
         Ok(())
     }
 
+    /// True when the panel has a print and it has not changed since the last paint.
+    fn unchanged(&self) -> bool {
+        let now = self.print();
+        !now.is_empty() && now == self.print
+    }
+
     /// What the panel shows, as text: equal prints paint the same. Empty for
     /// panels that repaint on every publication.
     fn print(&self) -> String {
-        if self.id != WidgetId::Reloj {
-            return String::new();
-        }
         let readings = super::readings();
+        match self.id {
+            WidgetId::Reloj => {}
+            WidgetId::Audio => return format!("{:?}", readings.audio),
+            _ => return String::new(),
+        }
         let resets: Vec<_> = readings.ia.iter().flat_map(|ia| {
             crate::usage::Provider::ALL
                 .into_iter()
@@ -629,6 +640,8 @@ fn perform(action: PanelAction) {
         PanelAction::InstallLhm => super::sistema::install_lhm(),
         PanelAction::StartLhm => super::sistema::start_lhm(),
         PanelAction::Media(control) => super::musica::control(control),
+        PanelAction::SetAudioDevice(id) => super::audio::set_default(id),
+        PanelAction::ToggleMic => super::audio::toggle_mic(),
     }
 }
 

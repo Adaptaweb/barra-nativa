@@ -90,6 +90,39 @@ pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
                 ("Siguiente".into(), PanelAction::Media(Control::Next), false),
             ]));
         }
+        WidgetId::Audio => {
+            b.push(Block::Title("Audio".into(), String::new()));
+            // The audio thread reads the lists; the panel never enumerates.
+            let empty = Vec::new();
+            for (heading, devices) in [
+                ("Salida", r.audio.as_ref().map_or(&empty, |d| &d.outputs)),
+                ("Entrada", r.audio.as_ref().map_or(&empty, |d| &d.inputs)),
+            ] {
+                b.push(Block::Section(heading.into()));
+                if devices.is_empty() {
+                    b.push(Block::Text("No hay dispositivos.".into(), true));
+                    continue;
+                }
+                b.push(Block::Grid(
+                    devices
+                        .iter()
+                        .map(|(id, name, default)| Cell {
+                            title: name.clone(),
+                            detail: if *default { "Predeterminado" } else { "" }.to_owned(),
+                            on: *default,
+                            action: Some(PanelAction::SetAudioDevice(id.clone())),
+                        })
+                        .collect(),
+                ));
+            }
+            b.push(Block::Gap(4.0));
+            let muted = r.audio.as_ref().and_then(|d| d.mic_muted);
+            b.push(Block::Buttons(vec![(
+                if muted == Some(true) { "Activar micrófono" } else { "Silenciar micrófono" }.into(),
+                PanelAction::ToggleMic,
+                muted != Some(true),
+            )]));
+        }
         WidgetId::Bandeja => {
             b.push(Block::Title("Segundo plano".into(), format!("{} apps", r.tray.len())));
             if r.tray.is_empty() {

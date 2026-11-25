@@ -15,6 +15,7 @@ windows-core.workspace = true
 windows = { workspace = true, features = [
     "Foundation",
     "Networking_Connectivity",
+    "Win32_Devices_FunctionDiscovery",
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Graphics_Dwm",

@@ -7,6 +7,7 @@
 //! to the menu bar when the reading changes, so the bar and the dock repaint
 //! just that widget. Nothing is polled on the UI thread.
 
+mod audio;
 mod calendario;
 mod casa;
 mod cell;
@@ -64,14 +65,17 @@ pub enum WidgetId {
     Notificaciones,
     /// What is playing, with the artwork's colour and the transport buttons.
     Musica,
+    /// Microphone mute button and the output/input chooser.
+    Audio,
 }
 
 impl WidgetId {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Bandeja,
         Self::Control,
         Self::Notificaciones,
         Self::Musica,
+        Self::Audio,
         Self::Sistema,
         Self::Clima,
         Self::Reloj,
@@ -99,6 +103,7 @@ impl WidgetId {
             Self::Control => "control",
             Self::Notificaciones => "notificaciones",
             Self::Musica => "musica",
+            Self::Audio => "audio",
         }
     }
 
@@ -116,6 +121,7 @@ impl WidgetId {
             Self::Control => "Centro de control",
             Self::Notificaciones => "Notificaciones",
             Self::Musica => "Sonando ahora",
+            Self::Audio => "Micrófono y salida",
         }
     }
 
@@ -154,7 +160,9 @@ impl WidgetId {
             Self::Claude => "https://claude.ai/settings/usage".to_owned(),
             Self::ChatGpt => "https://chatgpt.com/codex/settings/usage".to_owned(),
             Self::Gemini => "https://aistudio.google.com/".to_owned(),
-            Self::Bandeja | Self::Control | Self::Notificaciones | Self::Musica => String::new(),
+            Self::Bandeja | Self::Control | Self::Notificaciones | Self::Musica | Self::Audio => {
+                String::new()
+            }
         }
     }
 
@@ -200,6 +208,7 @@ impl WidgetId {
             Self::Bandeja | Self::Notificaciones => String::new(),
             Self::Control => format!("{:?}", readings.control),
             Self::Musica => format!("{:?}", readings.musica),
+            Self::Audio => format!("{:?}", readings.audio),
             Self::Claude | Self::ChatGpt | Self::Gemini => {
                 let provider = self.provider().unwrap_or(Provider::Claude);
                 readings.ia.as_ref().map_or_else(String::new, |snapshot| {
@@ -219,6 +228,7 @@ impl WidgetId {
             Self::Bandeja | Self::Control | Self::Notificaciones => true,
             Self::Claude | Self::ChatGpt | Self::Gemini => readings.ia.is_some(),
             Self::Musica => readings.musica.is_some(),
+            Self::Audio => readings.audio.is_some(),
         }
     }
 
@@ -234,6 +244,7 @@ impl WidgetId {
             // Nothing to read: a shape flag with no source thread (`configure` sets it).
             Self::Notificaciones => (&NOTIFICACIONES_ON, no_source),
             Self::Musica => (&MUSICA_ON, musica::start),
+            Self::Audio => (&AUDIO_ON, audio::start),
         }
     }
 }
@@ -398,6 +409,21 @@ impl std::fmt::Debug for MusicaData {
     }
 }
 
+/// The default devices and the microphone state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioData {
+    /// `None` without a microphone.
+    pub mic_muted: Option<bool>,
+    /// Name of the default output.
+    pub output: String,
+    /// Name of the default input.
+    pub input: String,
+    /// Output devices: (id, name, is default).
+    pub outputs: Vec<(String, String, bool)>,
+    /// Input devices: (id, name, is default).
+    pub inputs: Vec<(String, String, bool)>,
+}
+
 /// A tray icon with its picture.
 #[derive(Clone, Debug)]
 pub struct TrayItem {
@@ -425,6 +451,8 @@ pub struct Readings {
     pub control: Option<ControlData>,
     /// What is playing; `None` without a media session.
     pub musica: Option<MusicaData>,
+    /// The default audio devices; `None` until the first read.
+    pub audio: Option<AudioData>,
 }
 
 /// What the quick settings button shows.
@@ -459,6 +487,7 @@ static READINGS: Mutex<Readings> = Mutex::new(Readings {
     ia: None,
     control: None,
     musica: None,
+    audio: None,
 });
 static SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
 static TARGET: AtomicIsize = AtomicIsize::new(0);
@@ -472,6 +501,7 @@ static BANDEJA_ON: AtomicBool = AtomicBool::new(false);
 static CONTROL_ON: AtomicBool = AtomicBool::new(false);
 static NOTIFICACIONES_ON: AtomicBool = AtomicBool::new(false);
 static MUSICA_ON: AtomicBool = AtomicBool::new(false);
+static AUDIO_ON: AtomicBool = AtomicBool::new(false);
 
 /// The bell has no data source to start.
 fn no_source() {}
@@ -641,6 +671,7 @@ pub fn render_cell(
 pub fn run_action(action: CellAction) {
     match action {
         CellAction::Media(control) => musica::control(control),
+        CellAction::ToggleMic => audio::toggle_mic(),
     }
 }
 

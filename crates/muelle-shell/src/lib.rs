@@ -1,5 +1,6 @@
 pub mod accessories;
 pub mod appbar;
+pub mod audio_devices;
 pub mod autostart;
 pub mod displays;
 pub mod dock_link;

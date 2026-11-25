@@ -39,6 +39,7 @@ const WIDGETS: { key: string; name: string; detail: string }[] = [
   { key: "control", name: "Centro de control", detail: "Red, volumen y batería; abre la configuración rápida de Windows." },
   { key: "notificaciones", name: "Notificaciones", detail: "Un botón de campana; abre el centro de notificaciones de Windows." },
   { key: "musica", name: "Sonando ahora", detail: "La canción que suena, con su carátula, el progreso y los botones de anterior, pausa y siguiente." },
+  { key: "audio", name: "Micrófono y salida", detail: "Dos botones: silencia el micrófono con un clic y elige la salida y la entrada de audio predeterminadas." },
   { key: "bandeja", name: "Segundo plano", detail: "Los iconos ocultos de la bandeja de Windows (solo en el dock)." },
 ];
 

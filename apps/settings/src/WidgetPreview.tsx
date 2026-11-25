@@ -104,6 +104,13 @@ function dockCell(key: string, size: PreviewSize) {
           {wide ? <span className="wp-music-bar"><span /></span> : null}
         </span>
       );
+    case "audio":
+      return (
+        <span className="wp-audio">
+          <span className="wp-glyph">{""}</span>
+          {compact ? null : <span className="wp-glyph">{""}</span>}
+        </span>
+      );
     default:
       return <span className="wp-dim">{key}</span>;
   }
@@ -121,6 +128,7 @@ function barCell(key: string) {
     case "control": return <span className="wp-glyphs"><span className="wp-glyph">{""}</span><span className="wp-glyph">{""}</span></span>;
     case "notificaciones": return <span className="wp-glyph">{""}</span>;
     case "musica": return <span><span className="wp-glyph">{""}</span> Midnight City</span>;
+    case "audio": return <span className="wp-glyph">{""}</span>;
     default: return null;
   }
 }

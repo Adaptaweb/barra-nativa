@@ -31,6 +31,8 @@ const CALENDAR_COLORS: [Rgba; 4] = [
 pub enum CellAction {
     /// A transport button of the music widget.
     Media(Control),
+    /// The microphone button of the audio widget.
+    ToggleMic,
 }
 
 /// The size the user chose for a widget in the dock.
@@ -93,6 +95,9 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
         (WidgetId::Musica, Size::Compact) => 130,
         (WidgetId::Musica, Size::Medium | Size::Estado) => 330,
         (WidgetId::Musica, Size::Wide) => 420,
+        (WidgetId::Audio, Size::Compact) => 100,
+        (WidgetId::Audio, Size::Medium | Size::Estado) => 190,
+        (WidgetId::Audio, Size::Wide) => 380,
         (WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini, Size::Compact) => 170,
         (WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini, _) => 500,
     }
@@ -140,6 +145,7 @@ pub fn render(
                 WidgetId::Control => control(&mut c, size, readings),
                 WidgetId::Notificaciones => notificaciones(&mut c),
                 WidgetId::Musica => musica(&mut c, size, readings),
+                WidgetId::Audio => audio(&mut c, size, readings),
                 WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini => {
                     ia(&mut c, id, size, readings)
                 }
@@ -817,6 +823,59 @@ fn fit(c: &Cell<'_, '_>, text: &str, size: f32, weight: Weight, max: f32) -> Res
 fn track_time(seconds: u32) -> String {
     let (h, m, s) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
     if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+}
+
+/// Two round buttons in a pill: the microphone (a click mutes it) and the
+/// headphones (a click opens the panel, the cell's default). Wide also names
+/// the current output.
+fn audio(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
+    let left = c.x;
+    // The width is fixed per size (`width`), whatever the text says.
+    let total = c.height * f32::from(width(WidgetId::Audio, size)) / 100.0;
+    let d = r.audio.as_ref();
+    let muted = d.and_then(|d| d.mic_muted) == Some(true);
+    let circle = (c.height * 0.7).round();
+    let inset = ((c.height * 0.84).round() - circle) / 2.0;
+    let gap = c.px(10.0);
+    let both = size != Size::Compact;
+    let pill_w = if both { circle * 2.0 + gap + inset * 2.0 } else { circle + inset * 2.0 };
+    let pill_h = circle + inset * 2.0;
+    let top = ((c.height - pill_h) / 2.0).round();
+    c.pen.round_rect((left, top), (pill_w, pill_h), pill_h * 0.3, ink(c.light, 0.10))?;
+
+    let glyph = 16.0;
+    let circle_top = top + inset;
+    let mic_x = left + inset;
+    let back = if muted { [0.85, 0.2, 0.2, 1.0] } else { ink(c.light, 0.14) };
+    c.pen.round_rect((mic_x, circle_top), (circle, circle), circle / 2.0, back)?;
+    let (mic, color) = if muted { ('\u{F781}', WHITE) } else { ('\u{E720}', c.strong()) };
+    let (gw, gh) = c.gfx.measure_icon(mic, glyph, c.unit)?;
+    c.pen.icon(mic, (mic_x + (circle - gw) / 2.0, circle_top + (circle - gh) / 2.0), glyph, color)?;
+    c.zones.push((mic_x, mic_x + circle, CellAction::ToggleMic));
+
+    if both {
+        let phones_x = mic_x + circle + gap;
+        c.pen.round_rect((phones_x, circle_top), (circle, circle), circle / 2.0, ink(c.light, 0.14))?;
+        let (gw, gh) = c.gfx.measure_icon('\u{E7F6}', glyph, c.unit)?;
+        c.pen.icon(
+            '\u{E7F6}',
+            (phones_x + (circle - gw) / 2.0, circle_top + (circle - gh) / 2.0),
+            glyph,
+            c.strong(),
+        )?;
+    }
+
+    if size == Size::Wide {
+        let text_x = left + pill_w + c.px(10.0);
+        let room = (total - left - text_x).max(0.0);
+        let name = d.map_or("", |d| d.output.as_str());
+        let name = fit(c, name, 11.0, Weight::Normal, room)?;
+        let (_, th) = c.gfx.measure("Ág", 11.0, c.unit, Weight::Normal)?;
+        c.pen.text(&name, (text_x, (c.height - th) / 2.0), 11.0, Weight::Normal, c.faded())?;
+    }
+    // The cell's width is the one asked for; just under it so it does not round up.
+    c.x = total - left - 0.5;
+    Ok(())
 }
 
 /// "Sonando ahora": the artwork, what plays, the progress and the transport
