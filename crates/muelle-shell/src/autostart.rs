@@ -44,7 +44,7 @@ use windows::{
     core::{BSTR, HSTRING, Interface, Owned, PCWSTR, PWSTR, w},
 };
 
-const RUN_VALUE: PCWSTR = w!("Muelle");
+const RUN_VALUE: PCWSTR = w!("Barra");
 const RUN_KEY: PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Run");
 const MUELLE_KEY: PCWSTR = w!(r"Software\Muelle");
 const MARKER_VALUE: PCWSTR = w!("Autostart");
@@ -357,7 +357,7 @@ fn run_approved() -> bool {
 }
 
 fn task_name(sid: &str) -> BSTR {
-    BSTR::from(format!("Muelle ({sid})"))
+    BSTR::from(format!("Barra ({sid})"))
 }
 
 fn legacy_task_name() -> BSTR {

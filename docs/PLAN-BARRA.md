@@ -90,4 +90,13 @@ uses far less RAM and CPU.
    when turned off. Displays are named by EDID maker and model ("Pantalla 2 · Samsung
    LC24RG50", `muelle_shell::displays`). Settings › Widgets › Pantallas: on/off per display
    and which display's widgets to edit. Muelle's own update check is off by default.
-8. [ ] Rebrand (name, icon, AppUserModelID, installer) before distributing to other PCs.
+8. [x] Rebrand to Barra: product name, Tauri identifier `dev.barra.dock` (the Tauri Barra
+   was `dev.barra.app`), new icon (`scripts/make_barra_icon.py`, `assets/brand/barra.ico`),
+   dock file description, autostart entry and task named Barra, every visible string.
+   No update server: the updater has no endpoints, the updates card and Muelle's GitHub
+   link are hidden, and the installer is built without updater artifacts. Internal names
+   stay (`muelle.exe`, `%APPDATA%\Muelle`, window classes, mutexes) so existing settings
+   keep working. Installer: build the release dock, copy it to
+   `apps/settings/src-tauri/binaries/muelle-x86_64-pc-windows-msvc.exe`, then
+   `npx -y pnpm@10 tauri build --config src-tauri/tauri.bundle.conf.json` in `apps/settings`;
+   the result is `target/release/bundle/nsis/Barra_<version>_x64-setup.exe` (unsigned).

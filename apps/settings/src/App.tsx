@@ -25,7 +25,6 @@ import {
   loadConfig,
   loadWallpaperPreview,
   openReleaseNotes,
-  openRepository,
   pickFolder,
   saveConfig,
   setAutostart,
@@ -34,6 +33,9 @@ import { Card, Row, Segmented, Select, Slider, SubRow, Toggle, VisualChoices } f
 import { DockDensityPreview, DockPreview, IslandPreview, SettingIcon, SpeedPreview, ThemePreview } from "./visuals";
 import { type SectionId, SectionIcon } from "./icons";
 import { UpdateBanner } from "./UpdateBanner";
+
+/** Barra is installed from its own installer; it has no update server. */
+const UPDATES = false;
 import { WallpaperGallery } from "./WallpaperGallery";
 import { WidgetsSection } from "./WidgetsSection";
 import { type Texts, LANGUAGE_OPTIONS, resolveLanguage, textsFor } from "./i18n";
@@ -80,7 +82,6 @@ export function App() {
   const [version, setVersion] = useState("");
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: "checking" });
   const [confirmingReset, setConfirmingReset] = useState(false);
-  const [projectError, setProjectError] = useState(false);
   const [wallpaper, setWallpaper] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
@@ -229,10 +230,6 @@ export function App() {
     if (info.notes) openReleaseNotes(info.notes).catch(() => {});
   }, []);
 
-  const showProject = useCallback(() => {
-    openRepository().then(() => setProjectError(false)).catch(() => setProjectError(true));
-  }, []);
-
   // Two clicks: the first arms the button, the second resets. Pinned and
   // recent apps stay; they belong to the user, not to the settings.
   const reset = useCallback(() => {
@@ -332,13 +329,7 @@ export function App() {
           ))}
         </nav>
         <footer className="sidebar-footer">
-          <button type="button" className="project-link" onClick={showProject}>
-            <SettingIcon name="star" size={20} />
-            <span><strong>{t.githubTitle}</strong><span>{t.githubStar}</span></span>
-            <SettingIcon name="external" size={12} />
-          </button>
-          {projectError ? <p className="project-error" role="alert">{t.githubError}</p> : null}
-          <div className="sidebar-version"><span>Muelle</span><span>{version ? `v${version}` : ""}</span></div>
+          <div className="sidebar-version"><span>Barra</span><span>{version ? `v${version}` : ""}</span></div>
         </footer>
       </aside>
 
@@ -651,6 +642,8 @@ export function App() {
                   />
                 </Row>
               </Card>
+              {/* Barra has no update server yet: new versions come as a new installer. */}
+              {UPDATES ? (
               <Card title={t.updates}>
                 <Row icon={<SettingIcon name="updates" />} label={t.checkUpdates} hint={t.checkUpdatesHint}>
                   <Toggle
@@ -683,6 +676,7 @@ export function App() {
                   )}
                 </Row>
               </Card>
+              ) : null}
               <Card>
                 <Row icon={<SettingIcon name="reset" />} label={t.reset} hint={confirmingReset ? t.resetConfirmHint : t.resetHint}>
                   <button
