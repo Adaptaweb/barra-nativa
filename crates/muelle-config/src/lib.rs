@@ -179,6 +179,9 @@ pub struct ScreenWidgets {
     pub island_left: Vec<String>,
     pub island_right: Vec<String>,
     pub dock_sizes: std::collections::BTreeMap<String, String>,
+    /// This display's dock icon size, or the primary display's when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_size: Option<u32>,
 }
 
 impl Default for ScreenWidgets {
@@ -192,6 +195,7 @@ impl Default for ScreenWidgets {
             island_left: Vec::new(),
             island_right: Vec::new(),
             dock_sizes: std::collections::BTreeMap::new(),
+            icon_size: None,
         }
     }
 }
@@ -376,6 +380,23 @@ impl Config {
     /// Either policy needs a reveal strip and leaves maximized windows the full work area.
     pub fn hides_automatically(&self) -> bool {
         self.auto_hide || self.smart_hide
+    }
+
+    /// The settings as the dock of display `device` uses them: a display
+    /// other than the primary one can have its own icon size, and the
+    /// magnified size keeps the same proportion to it.
+    #[must_use]
+    pub fn for_display(mut self, device: Option<&str>) -> Self {
+        let own = device
+            .and_then(|device| self.widgets.screens.get(device))
+            .and_then(|screen| screen.icon_size);
+        if let Some(size) = own {
+            let size = size.clamp(ICON_SIZE_RANGE.0, ICON_SIZE_RANGE.1);
+            let ratio = self.magnified_size as f32 / self.icon_size.max(1) as f32;
+            self.icon_size = size;
+            self.magnified_size = (size as f32 * ratio).round() as u32;
+        }
+        self.sanitized()
     }
 
     /// Brings out-of-range values (a hand-edited file) back into range.
@@ -990,6 +1011,28 @@ mod tests {
         save(&path, &Config::default()).ok();
         fs::write(&path, "esto no es json").ok();
         assert!(matches!(load(&path), Err(ConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn a_display_can_have_its_own_dock_size() {
+        let mut config = Config {
+            icon_size: 48,
+            magnified_size: 96,
+            ..Config::default()
+        };
+        config.widgets.screens.insert(
+            "DISPLAY2".into(),
+            ScreenWidgets {
+                icon_size: Some(36),
+                ..ScreenWidgets::default()
+            },
+        );
+        let own = config.clone().for_display(Some("DISPLAY2"));
+        assert_eq!((own.icon_size, own.magnified_size), (36, 72));
+        let primary = config.clone().for_display(None);
+        assert_eq!((primary.icon_size, primary.magnified_size), (48, 96));
+        let unset = config.for_display(Some("DISPLAY3"));
+        assert_eq!(unset.icon_size, 48);
     }
 
     #[test]

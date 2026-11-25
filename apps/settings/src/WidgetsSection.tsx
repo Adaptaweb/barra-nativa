@@ -12,12 +12,13 @@ import {
   type HomeItem,
   type ScreenWidgets,
   type WidgetSettings,
+  ICON_SIZE,
   importHome,
   listDisplays,
   secretSaved,
   setSecret,
 } from "./config";
-import { Card, Row, Toggle } from "./controls";
+import { Card, Row, Slider, Toggle } from "./controls";
 
 type Zone = "barLeft" | "barRight" | "islandLeft" | "dockLeft" | "dock" | "islandRight";
 
@@ -124,6 +125,34 @@ export function WidgetsSection({ config, update }: Props) {
               />
             </Row>
           ))}
+          {displays.filter((d) => !d.primary).map((d) => {
+            const own = widgets.screens?.[d.device]?.iconSize ?? null;
+            return (
+              <div key={`size-${d.device}`}>
+                <Row
+                  label={`Tamaño propio en ${d.label}`}
+                  hint={own === null ? `Usa el tamaño del dock principal (${config.iconSize} px).` : "Solo el dock de esta pantalla."}
+                >
+                  <Toggle
+                    label={`Tamaño propio en ${d.label}`}
+                    checked={own !== null}
+                    onChange={(on) => saveScreen(d.device, { iconSize: on ? config.iconSize : null })}
+                  />
+                </Row>
+                {own !== null ? (
+                  <Row label="Tamaño del dock">
+                    <Slider
+                      label={`Tamaño del dock en ${d.label}`}
+                      value={own}
+                      min={ICON_SIZE.min}
+                      max={ICON_SIZE.max}
+                      onChange={(iconSize) => saveScreen(d.device, { iconSize })}
+                    />
+                  </Row>
+                ) : null}
+              </div>
+            );
+          })}
           <Row label="Editar widgets de" hint="Cada pantalla tiene sus propios widgets.">
             <span className="select-wrap">
               <select

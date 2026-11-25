@@ -31,6 +31,15 @@ pub(super) fn explorer_id() -> String {
 /// Saved settings or, on first launch, the defaults with the apps pinned to
 /// the Windows taskbar.
 pub(super) fn load_config() -> Config {
+    for_this_display(load_saved_config())
+}
+
+/// This display's dock may have its own size (`widgets.screens`).
+fn for_this_display(config: Config) -> Config {
+    config.for_display(muelle_shell::displays::home_device())
+}
+
+fn load_saved_config() -> Config {
     let path = muelle_config::default_path();
     match muelle_config::load(&path) {
         Ok(Some(config)) => config,
@@ -168,7 +177,7 @@ impl App {
             groups: self.config.groups.clone(),
             recent: self.config.recent.clone(),
             taskbar_pins: self.config.taskbar_pins.clone(),
-            ..saved
+            ..for_this_display(saved)
         };
         if config == self.config {
             return Ok(());
