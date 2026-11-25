@@ -737,3 +737,29 @@ textarea.text-field { width: 100%; resize: vertical; font-family: ui-monospace, 
 .custom-remove:hover { background: rgba(220, 40, 40, 0.85); }
 .custom-grid .wallpaper-image { aspect-ratio: 16 / 9; }
 .custom-item .wallpaper-choice[data-chosen] .wallpaper-image { outline: 2px solid var(--accent, #0a84ff); outline-offset: 2px; }
+
+/* Widget previews (WidgetPreview.tsx) */
+.widget-preview-control { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.wp { display: inline-flex; align-items: center; gap: 10px; color: #fff; font-size: 12px; border-radius: 14px; background: linear-gradient(135deg, #1d3557, #3a2a5e 60%, #5a2a3c); padding: 10px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); }
+.wp-bar { border-radius: 6px; padding: 5px 12px; min-width: 220px; background: rgba(30, 30, 36, 0.92); }
+.wp-dock { padding: 8px 10px; border-radius: 18px; }
+.wp-app { width: 40px; height: 40px; border-radius: 10px; background: rgba(255, 255, 255, 0.18); flex: none; }
+.wp-cell { display: inline-flex; align-items: center; gap: 9px; height: 44px; padding: 0 6px; }
+.wp-stack { display: inline-flex; flex-direction: column; justify-content: center; line-height: 1.25; gap: 1px; }
+.wp-big { font-size: 17px; font-weight: 700; }
+.wp-dim { color: rgba(255, 255, 255, 0.6); font-size: 11px; }
+.wp-red { color: #ff453a; font-size: 9px; font-weight: 700; letter-spacing: 0.04em; }
+.wp-yellow { color: #ffd166; }
+.wp-sep { width: 1px; align-self: stretch; margin: 6px 0; background: rgba(255, 255, 255, 0.25); }
+.wp-emoji { font-size: 20px; }
+.wp-logo { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: #d97757; font-weight: 800; }
+.wp-ring { width: 40px; height: 40px; }
+.wp-ring-value { fill: #fff; font-size: 10px; font-weight: 700; }
+.wp-ring-label { fill: rgba(255, 255, 255, 0.6); font-size: 6px; font-weight: 700; }
+.wp-meter { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.wp-track { width: 52px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.18); overflow: hidden; }
+.wp-track > span { display: block; height: 100%; border-radius: 2px; }
+.wp-hours { display: inline-flex; gap: 10px; font-size: 10px; text-align: center; line-height: 1.3; }
+.wp-glyphs { display: inline-flex; align-items: center; gap: 9px; }
+.wp-glyph { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; font-size: 15px; }
+.wp-dot { display: inline-block; width: 8px; height: 8px; border-radius: 4px; vertical-align: middle; }

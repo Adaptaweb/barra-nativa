@@ -576,7 +576,7 @@ export function App() {
               </Card>
             </>
           ) : section === "widgets" ? (
-            <WidgetsSection config={config} update={update} />
+            <WidgetsSection config={config} update={update} part="dock" />
           ) : section === "menubar" ? (
             <>
               <Card>
@@ -632,6 +632,7 @@ export function App() {
                   />
                 </SubRow>
               </Card>
+              <WidgetsSection config={config} update={update} part="bar" />
             </>
           ) : (
             <>

@@ -1,8 +1,9 @@
 /**
- * Barra widgets: where each one goes (left or right of the menu bar, or the
- * dock), in which order, and what each needs (the weather city, the calendar
- * link, Home Assistant). Secrets go to the Windows Credential Manager and
- * never come back to this page; only whether one is saved.
+ * Barra widgets, in two places of Settings: the menu bar section edits the
+ * menu bar's widgets (`part="bar"`), the Widgets section the dock's and the
+ * islands' (`part="dock"`) and what widgets need (the weather city, the
+ * calendar link, Home Assistant). Secrets go to the Windows Credential
+ * Manager and never come back to this page; only whether one is saved.
  */
 
 import { useEffect, useState } from "react";
@@ -19,6 +20,7 @@ import {
   setSecret,
 } from "./config";
 import { Card, Row, Slider, Toggle } from "./controls";
+import { type PreviewSize, WidgetPreview } from "./WidgetPreview";
 
 type Zone = "barLeft" | "barRight" | "islandLeft" | "dockLeft" | "dock" | "islandRight";
 
@@ -59,9 +61,19 @@ const nameOf = (key: string) => WIDGETS.find((w) => w.key === key)?.name ?? key;
 interface Props {
   config: Config;
   update: (patch: Partial<Config>) => void;
+  /** Which widgets this page edits: the menu bar's or the dock's. */
+  part: "bar" | "dock";
 }
 
-export function WidgetsSection({ config, update }: Props) {
+const isBarZone = (zone: Zone) => zone === "barLeft" || zone === "barRight";
+
+export function WidgetsSection(props: Props) {
+  // A settings file from before widgets existed has none yet.
+  if (!props.config.widgets) return null;
+  return <WidgetsPage {...props} />;
+}
+
+function WidgetsPage({ config, update, part }: Props) {
   const widgets = config.widgets;
   const save = (patch: Partial<WidgetSettings>) => update({ widgets: { ...widgets, ...patch } });
   const [displays, setDisplays] = useState<DisplayInfo[]>([]);
@@ -109,7 +121,12 @@ export function WidgetsSection({ config, update }: Props) {
 
   return (
     <>
-      {displays.length > 1 ? (
+      {displays.length > 1 && part === "bar" ? (
+        <Card title="Pantalla">
+          <ScreenPicker displays={displays} value={editing ? editing.device : ""} onChange={setScreen} />
+        </Card>
+      ) : null}
+      {displays.length > 1 && part === "dock" ? (
         <Card title="Pantallas">
           {displays.map((d) => (
             <Row
@@ -153,23 +170,10 @@ export function WidgetsSection({ config, update }: Props) {
               </div>
             );
           })}
-          <Row label="Editar widgets de" hint="Cada pantalla tiene sus propios widgets.">
-            <span className="select-wrap">
-              <select
-                className="select-control"
-                aria-label="Pantalla a editar"
-                value={editing ? editing.device : ""}
-                onChange={(e) => setScreen(e.target.value)}
-              >
-                {displays.map((d) => (
-                  <option key={d.device} value={d.primary ? "" : d.device}>{d.label}</option>
-                ))}
-              </select>
-            </span>
-          </Row>
+          <ScreenPicker displays={displays} value={editing ? editing.device : ""} onChange={setScreen} />
         </Card>
       ) : null}
-      {ZONES.map(({ zone, title, hint }) => (
+      {ZONES.filter(({ zone }) => isBarZone(zone) === (part === "bar")).map(({ zone, title, hint }) => (
         <Card key={zone} title={title}>
           {(layout[zone] ?? []).length === 0 ? (
             <div className="row"><div className="row-text"><span className="row-hint">{hint} Sin widgets.</span></div></div>
@@ -206,6 +210,7 @@ export function WidgetsSection({ config, update }: Props) {
         </Card>
       ))}
 
+      {part === "dock" ? (<>
       <Card title="Clima">
         <Row label="Ciudad" hint="El nombre se busca en Open-Meteo; no hace falta cuenta.">
           <TextField
@@ -230,16 +235,35 @@ export function WidgetsSection({ config, update }: Props) {
           </div>
         </div>
       </Card>
+      </>) : null}
     </>
   );
 }
 
+function ScreenPicker({ displays, value, onChange }: { displays: DisplayInfo[]; value: string; onChange: (device: string) => void }) {
+  return (
+    <Row label="Editar widgets de" hint="Cada pantalla tiene sus propios widgets.">
+      <span className="select-wrap">
+        <select className="select-control" aria-label="Pantalla a editar" value={value} onChange={(e) => onChange(e.target.value)}>
+          {displays.map((d) => (
+            <option key={d.device} value={d.primary ? "" : d.device}>{d.label}</option>
+          ))}
+        </select>
+      </span>
+    </Row>
+  );
+}
+
 function AddRow({ zone, placed, onAdd }: { zone: Zone; placed: string[]; onAdd: (key: string) => void }) {
-  const free = WIDGETS.filter((w) => !placed.includes(w.key));
+  const bar = isBarZone(zone);
+  // The tray chevron lives only in the dock.
+  const free = WIDGETS.filter((w) => !placed.includes(w.key) && !(bar && w.key === "bandeja"));
   const [choice, setChoice] = useState("");
+  const [size, setSize] = useState<PreviewSize>("mediano");
   if (free.length === 0) return null;
   const selected = free.find((w) => w.key === choice);
   return (
+    <>
     <div className="row">
       <div className="row-text">
         <span className="row-label">Añadir widget</span>
@@ -272,6 +296,27 @@ function AddRow({ zone, placed, onAdd }: { zone: Zone; placed: string[]; onAdd: 
         </button>
       </div>
     </div>
+    {selected ? (
+      <div className="row row-stacked widget-preview-row">
+        <div className="row-text">
+          <span className="row-label">Vista previa</span>
+          <span className="row-hint">Así se ve {selected.name} {bar ? "en la barra superior" : "en el dock"}, con datos de ejemplo.</span>
+        </div>
+        <div className="row-control widget-preview-control">
+          <WidgetPreview widget={selected.key} place={bar ? "bar" : "dock"} size={size} />
+          {bar ? null : (
+            <span className="select-wrap">
+              <select className="select-control size-control" aria-label="Tamaño de la vista previa" value={size} onChange={(e) => setSize(e.target.value as PreviewSize)}>
+                <option value="compacto">Compacto</option>
+                <option value="mediano">Mediano</option>
+                <option value="ancho">Ancho</option>
+              </select>
+            </span>
+          )}
+        </div>
+      </div>
+    ) : null}
+    </>
   );
 }
 
