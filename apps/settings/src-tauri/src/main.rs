@@ -5,7 +5,9 @@
 //! day, while the user is away, to install a newer version if there is one.
 //! It exits as soon as it knows there is none.
 
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// A windowed app in every build: opened from the dock, a console window
+// would show behind Settings.
+#![windows_subsystem = "windows"]
 
 mod barra;
 mod wallpapers;

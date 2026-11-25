@@ -111,6 +111,10 @@ impl App {
         {
             return monitor_at(windows::Win32::Foundation::POINT { x, y }).or_else(primary_monitor);
         }
+        // With a dock on each display, each one stays on its own.
+        if crate::screens::pinned(&self.config.widgets) {
+            return muelle_shell::displays::home_monitor();
+        }
         self.dock_display
             .filter(|_| self.config.hides_automatically())
             .and_then(monitor_at)
@@ -121,7 +125,9 @@ impl App {
         if !self.config.hides_automatically() {
             self.dock_display = None;
         }
-        let mut screens = if self.config.hides_automatically() {
+        let mut screens = if self.config.hides_automatically()
+            && !crate::screens::pinned(&self.config.widgets)
+        {
             monitor_rects()
         } else {
             Vec::new()

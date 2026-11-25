@@ -67,6 +67,7 @@ fn enabled(widgets: &Widgets, device: &str) -> bool {
 /// Starts a dock for each other display that should have one and has none.
 /// Only the primary display's dock does this.
 pub fn sync(widgets: &Widgets) {
+    forget_pinned();
     if displays::is_secondary_process() || std::env::var_os("BARRA_MONITOR").is_some() {
         return;
     }
@@ -94,6 +95,31 @@ pub fn sync(widgets: &Widgets) {
     }
 }
 
+/// Whether this dock stays on its display instead of following the pointer
+/// to the display it rests on: always, when other displays have their own.
+pub fn pinned(widgets: &Widgets) -> bool {
+    if displays::is_secondary_process() {
+        return true;
+    }
+    let Ok(mut cached) = PINNED.lock() else {
+        return false;
+    };
+    *cached.get_or_insert_with(|| {
+        displays::list()
+            .iter()
+            .any(|d| !d.primary && enabled(widgets, &d.device))
+    })
+}
+
+/// `pinned`, worked out again after a settings or display change.
+static PINNED: Mutex<Option<bool>> = Mutex::new(None);
+
+fn forget_pinned() {
+    if let Ok(mut cached) = PINNED.lock() {
+        *cached = None;
+    }
+}
+
 /// Whether this display's dock was turned off in Settings.
 pub fn turned_off(widgets: &Widgets) -> bool {
     displays::home_device().is_some_and(|device| !enabled(widgets, device))
@@ -101,6 +127,7 @@ pub fn turned_off(widgets: &Widgets) -> bool {
 
 /// Displays were added, removed or rearranged.
 pub fn display_changed() {
+    forget_pinned();
     if let Ok(mut home) = HOME.lock() {
         *home = None;
     }
