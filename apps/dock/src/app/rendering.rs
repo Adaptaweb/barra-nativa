@@ -261,8 +261,15 @@ impl App {
             .filter(|(_, entry)| matches!(entry.role, Role::App | Role::Group | Role::Start))
             .flat_map(|(slot, _)| [slot.rect.x, slot.rect.x + slot.rect.width])
             .collect();
+        // Only widgets inside the dock make it lopsided; without them (the
+        // tray chevron aside) the whole dock is centred.
+        let widgets_inside = key.entries.iter().any(|entry| {
+            entry.role == Role::Widget
+                && entry.id.as_deref().and_then(crate::widgets::WidgetId::from_entry)
+                    != Some(crate::widgets::WidgetId::Bandeja)
+        });
         let apps_mid = match (apps.iter().copied().reduce(f32::min), apps.iter().copied().reduce(f32::max)) {
-            (Some(first), Some(last)) => (first + last) / 2.0,
+            (Some(first), Some(last)) if widgets_inside => (first + last) / 2.0,
             _ => dock.width / 2.0,
         };
         let along = |start: f32, room: f32| {

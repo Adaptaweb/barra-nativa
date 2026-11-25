@@ -203,7 +203,6 @@ impl App {
             self.sync()?;
         }
         self.sync_thumbnails();
-        crate::islands::refresh();
         crate::screens::sync(&self.config.widgets);
         if crate::screens::turned_off(&self.config.widgets) {
             crate::app::quit_this();
@@ -217,6 +216,8 @@ impl App {
             }
         }
         self.apply_menu_bar_setting();
+        // After the widget settings are applied (`apply_menu_bar_setting`).
+        crate::islands::refresh();
         self.update_menu_bar_app()?;
         self.calm_windows();
         self.refresh()?;
