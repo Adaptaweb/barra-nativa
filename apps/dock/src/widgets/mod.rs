@@ -348,6 +348,8 @@ pub fn configure(settings: &Settings) {
         .chain(ids(&settings.bar_right))
         .chain(ids(&settings.dock))
         .chain(ids(&settings.dock_left))
+        .chain(ids(&settings.island_left))
+        .chain(ids(&settings.island_right))
         .collect();
     let previous = SETTINGS
         .lock()
@@ -391,6 +393,8 @@ fn for_this_display(settings: &Settings) -> Settings {
         bar_right: own.bar_right,
         dock_left: own.dock_left,
         dock: own.dock,
+        island_left: own.island_left,
+        island_right: own.island_right,
         dock_sizes: own.dock_sizes,
         ..settings.clone()
     }
@@ -420,6 +424,18 @@ pub fn dock_left() -> Vec<(WidgetId, Size)> {
     dock_zone(true)
 }
 
+/// The widgets of a separate island (bottom left or right), in order.
+pub fn islands(left: bool) -> Vec<(WidgetId, Size)> {
+    settings()
+        .map(|s| {
+            ids(if left { &s.island_left } else { &s.island_right })
+                .into_iter()
+                .map(|id| (id, Size::from_key(s.dock_sizes.get(id.key()).map(String::as_str))))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn dock_zone(left: bool) -> Vec<(WidgetId, Size)> {
     settings()
         .map(|s| {
@@ -446,6 +462,8 @@ pub fn dock_size(id: WidgetId) -> Size {
     dock()
         .into_iter()
         .chain(dock_left())
+        .chain(islands(true))
+        .chain(islands(false))
         .find(|(w, _)| *w == id)
         .map_or(Size::Medium, |(_, s)| s)
 }

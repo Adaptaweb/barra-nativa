@@ -23,6 +23,7 @@ mod folder_menu;
 mod gfx;
 mod group_view;
 mod guard;
+mod islands;
 mod mascot;
 mod media;
 mod menu;

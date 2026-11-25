@@ -166,6 +166,7 @@ pub fn menu_bar_widgets_changed() {
         }
         app.widgets_changed()
     });
+    crate::islands::repaint();
     crate::widgets::refresh_panel();
 }
 

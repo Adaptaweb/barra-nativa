@@ -240,6 +240,18 @@ impl App {
         // Position relative to the screen, not the work area; the work area
         // already excludes the strip reserved by the dock.
         let margin = px(FLOAT_MARGIN);
+        crate::islands::update(
+            &self.gfx,
+            crate::islands::Frame {
+                monitor,
+                theme,
+                height: dock.height,
+                icon: metrics.icon,
+                padding: metrics.padding,
+                margin,
+                scale,
+            },
+        );
         // The apps stay centred on the screen, as in the Barra dock: widgets
         // on either side make the dock longer on that side only.
         let apps: Vec<f32> = dock
@@ -616,6 +628,8 @@ impl App {
         })?;
 
         let visible = !self.fullscreen;
+        // The islands hide with the dock: full screen, or slid away.
+        crate::islands::set_visible(visible && self.slide.value < 0.5);
         for (entry, rect) in self.entries.iter().zip(&state.rects) {
             if let Some(hwnd) = entry.id.as_deref().and_then(window_of) {
                 let box_ = stage.window_frame.rect(*rect);

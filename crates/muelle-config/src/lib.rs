@@ -146,6 +146,10 @@ pub struct Widgets {
     pub dock: Vec<String>,
     /// The left of the dock, before the apps.
     pub dock_left: Vec<String>,
+    /// A separate glass island at the bottom left of the display.
+    pub island_left: Vec<String>,
+    /// A separate glass island at the bottom right of the display.
+    pub island_right: Vec<String>,
     /// City for the weather widget.
     pub weather_city: String,
     /// Home Assistant address, e.g. `http://192.168.1.10:8123`. Its token
@@ -172,6 +176,8 @@ pub struct ScreenWidgets {
     pub bar_right: Vec<String>,
     pub dock_left: Vec<String>,
     pub dock: Vec<String>,
+    pub island_left: Vec<String>,
+    pub island_right: Vec<String>,
     pub dock_sizes: std::collections::BTreeMap<String, String>,
 }
 
@@ -183,6 +189,8 @@ impl Default for ScreenWidgets {
             bar_right: vec!["reloj".into()],
             dock_left: Vec::new(),
             dock: Vec::new(),
+            island_left: Vec::new(),
+            island_right: Vec::new(),
             dock_sizes: std::collections::BTreeMap::new(),
         }
     }
@@ -207,6 +215,8 @@ impl Default for Widgets {
             bar_right: vec!["clima".into(), "sistema".into()],
             dock: Vec::new(),
             dock_left: Vec::new(),
+            island_left: Vec::new(),
+            island_right: Vec::new(),
             weather_city: "Santiago".into(),
             home_url: String::new(),
             home_items: Vec::new(),

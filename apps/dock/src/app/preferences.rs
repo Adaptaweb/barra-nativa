@@ -203,6 +203,7 @@ impl App {
             self.sync()?;
         }
         self.sync_thumbnails();
+        crate::islands::refresh();
         crate::screens::sync(&self.config.widgets);
         if crate::screens::turned_off(&self.config.widgets) {
             crate::app::quit_this();

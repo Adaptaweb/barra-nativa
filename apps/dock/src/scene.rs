@@ -168,6 +168,29 @@ impl Theme {
         }
     }
 
+    /// A fixed-size surface exactly like the dock's own glass.
+    pub fn surface(
+        &self,
+        gfx: &Gfx,
+        size: Vector2,
+        radius: f32,
+        scale: f32,
+    ) -> Result<ContainerVisual> {
+        let stroke = scale.max(1.0);
+        let material = GlassSurface::build(gfx, *self, radius, stroke)?;
+        material.glass.SetSize(size)?;
+        material.outline.SetSize(size)?;
+        material.rim.SetSize(size)?;
+        material
+            .rim_geometry
+            .SetSize(v2(size.X - stroke, size.Y - stroke))?;
+        let root = gfx.compositor.CreateContainerVisual()?;
+        root.SetSize(size)?;
+        root.Children()?.InsertAtTop(&material.glass)?;
+        root.Children()?.InsertAtTop(&material.rim)?;
+        Ok(root)
+    }
+
     /// A fixed-size panel using the dock's backdrop, tint, sheen and rim.
     pub fn panel(
         &self,

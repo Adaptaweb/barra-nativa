@@ -69,6 +69,11 @@ uses far less RAM and CPU.
    content (measured on render, cached, in tenths of an icon); wide cells grow a quarter as
    much as icons under the cursor. Zones: `widgets.dockLeft` (before the apps) and
    `widgets.dock` (at the far end); the apps stay centred on the screen when it has room.
+   Islands (`apps/dock/src/islands.rs`): `widgets.islandLeft` / `islandRight` (and per display
+   in `screens`) are separate glass pills at the bottom left and right, like the dock (same
+   glass, height, corners), hidden with it, opening panels above. Widgets can still go inside
+   the dock (`dockLeft`, `dock`). Settings note: after `pnpm build`, touch
+   `apps/settings/src-tauri/src/main.rs` so cargo embeds the new front end.
    `bandeja` is a chevron at the far right end of the dock, always last; its panel (bubble)
    holds all the tray icons (click, right click for the app's menu). Panels stay open while
    used and close on a click outside them (polled every 50 ms; app menus count as inside). Source:

@@ -70,6 +70,8 @@ export interface WidgetSettings {
   barRight: string[];
   dock: string[];
   dockLeft: string[];
+  islandLeft: string[];
+  islandRight: string[];
   weatherCity: string;
   homeUrl: string;
   homeItems: HomeItem[];
@@ -86,6 +88,8 @@ export interface ScreenWidgets {
   barRight: string[];
   dockLeft: string[];
   dock: string[];
+  islandLeft: string[];
+  islandRight: string[];
   dockSizes: Record<string, string>;
 }
 

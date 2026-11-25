@@ -19,7 +19,7 @@ import {
 } from "./config";
 import { Card, Row, Toggle } from "./controls";
 
-type Zone = "barLeft" | "barRight" | "dockLeft" | "dock";
+type Zone = "barLeft" | "barRight" | "islandLeft" | "dockLeft" | "dock" | "islandRight";
 
 const WIDGETS: { key: string; name: string; detail: string }[] = [
   { key: "reloj", name: "Reloj y calendario", detail: "Fecha, hora y tu próximo evento. Reemplaza el reloj de la barra." },
@@ -35,8 +35,10 @@ const WIDGETS: { key: string; name: string; detail: string }[] = [
 const ZONES: { zone: Zone; title: string; hint: string }[] = [
   { zone: "barLeft", title: "Barra superior · izquierda", hint: "Después del nombre de la app activa." },
   { zone: "barRight", title: "Barra superior · derecha", hint: "Antes de los iconos de estado." },
-  { zone: "dockLeft", title: "Dock · izquierda", hint: "Antes de tus apps; las apps quedan centradas." },
-  { zone: "dock", title: "Dock · derecha", hint: "Al final del dock, después de las carpetas." },
+  { zone: "islandLeft", title: "Isla izquierda", hint: "Una burbuja aparte abajo a la izquierda; el dock queda solo con tus apps." },
+  { zone: "dockLeft", title: "Dentro del dock · izquierda", hint: "Antes de tus apps; las apps quedan centradas." },
+  { zone: "dock", title: "Dentro del dock · derecha", hint: "Al final del dock, después de las carpetas." },
+  { zone: "islandRight", title: "Isla derecha", hint: "Una burbuja aparte abajo a la derecha." },
 ];
 
 const DEFAULT_SCREEN: ScreenWidgets = {
@@ -45,6 +47,8 @@ const DEFAULT_SCREEN: ScreenWidgets = {
   barRight: ["reloj"],
   dockLeft: [],
   dock: [],
+  islandLeft: [],
+  islandRight: [],
   dockSizes: {},
 };
 
@@ -67,7 +71,16 @@ export function WidgetsSection({ config, update }: Props) {
   // The primary display uses the top-level fields; the others their own entry.
   const layout: ScreenWidgets = editing
     ? { ...DEFAULT_SCREEN, ...(widgets.screens?.[editing.device] ?? {}) }
-    : { enabled: true, barLeft: widgets.barLeft, barRight: widgets.barRight, dockLeft: widgets.dockLeft, dock: widgets.dock, dockSizes: widgets.dockSizes };
+    : {
+        enabled: true,
+        barLeft: widgets.barLeft,
+        barRight: widgets.barRight,
+        dockLeft: widgets.dockLeft,
+        dock: widgets.dock,
+        islandLeft: widgets.islandLeft,
+        islandRight: widgets.islandRight,
+        dockSizes: widgets.dockSizes,
+      };
   const saveScreen = (device: string, patch: Partial<ScreenWidgets>) =>
     save({
       screens: {
@@ -138,7 +151,7 @@ export function WidgetsSection({ config, update }: Props) {
                   {index === 0 ? <span className="row-hint">{hint}</span> : null}
                 </div>
                 <div className="row-control push-group">
-                  {zone === "dock" || zone === "dockLeft" ? (
+                  {zone !== "barLeft" && zone !== "barRight" ? (
                     <span className="select-wrap">
                       <select
                         className="select-control size-control"
