@@ -14,6 +14,9 @@ import {
   type ScreenWidgets,
   type WidgetSettings,
   ICON_SIZE,
+  googleConnect,
+  googleDisconnect,
+  googleStatus,
   importHome,
   listDisplays,
   secretSaved,
@@ -414,11 +417,81 @@ function SecretRow({ label, hint, secretKey, placeholder, multiline }: {
   );
 }
 
+/** Google Calendar connection: OAuth client JSON, plus connect / disconnect with status. */
+function GoogleRow() {
+  const [connected, setConnected] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    googleStatus().then(setConnected).catch(() => setConnected(false));
+  }, []);
+  const connect = () => {
+    setBusy(true);
+    setMessage("Esperando al navegador…");
+    googleConnect()
+      .then(() => {
+        setConnected(true);
+        setMessage("Conectado. El calendario se actualizará en un minuto.");
+      })
+      .catch((error) => setMessage(String(error)))
+      .finally(() => setBusy(false));
+  };
+  const disconnect = () => {
+    googleDisconnect()
+      .then(() => {
+        setConnected(false);
+        setMessage("");
+      })
+      .catch((error) => setMessage(String(error)));
+  };
+  return (
+    <>
+      <div className="row">
+        <div className="row-text">
+          <span className="row-hint">
+            Conecta tu cuenta de Google para ver el título, la hora y el lugar de cada reunión. Necesitas un
+            cliente OAuth de tipo «Aplicación de escritorio» con la API de Google Calendar activada; pega aquí
+            el contenido de su archivo JSON.
+          </span>
+        </div>
+      </div>
+      <SecretRow
+        label="Cliente OAuth (JSON)"
+        hint="Se guarda solo en este PC."
+        secretKey="google.cliente"
+        placeholder='{"installed":{"client_id":"…","client_secret":"…"}}'
+        multiline
+      />
+      <div className="row">
+        <div className="row-text">
+          <span className="row-label">
+            Google · {connected === null ? "…" : connected ? "conectado" : "sin conectar"}
+          </span>
+          {message ? <span className="row-hint">{message}</span> : null}
+        </div>
+        <div className="row-control">
+          <div className="push-group">
+            {connected ? (
+              <button type="button" className="push" onClick={disconnect}>Desconectar</button>
+            ) : (
+              <button type="button" className="push push-primary" disabled={busy || connected === null} onClick={connect}>
+                {busy ? "Esperando al navegador…" : "Conectar con Google"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function CalendarCard() {
   return (
     <Card title="Calendario">
+      <GoogleRow />
       <div className="row">
         <div className="row-text">
+          <span className="row-label">O usa enlaces iCal (solo si no conectas Google):</span>
           <span className="row-hint">
             En Google Calendar: Configuración › tu calendario › «Integrar el calendario» › copia la
             «Dirección secreta en formato iCal». En Outlook: «Publicar calendario» › enlace ICS. Puedes poner

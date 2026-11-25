@@ -90,7 +90,7 @@ pub async fn list_custom_wallpapers() -> Result<Vec<CustomWallpaper>, String> {
             .filter(|e| e.path().is_file() && extension(&e.path()).is_some())
             .map(|e| (e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), e.path()))
             .collect();
-        files.sort_by(|a, b| b.0.cmp(&a.0));
+        files.sort_by_key(|f| std::cmp::Reverse(f.0));
         Ok(files.iter().filter_map(|(_, p)| describe(p)).collect())
     })
     .await

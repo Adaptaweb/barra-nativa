@@ -19,9 +19,9 @@ use windows::{
 };
 
 /// Only these secrets can be read or written from Settings.
-const KEYS: [&str; 2] = ["calendario.ics", "casa.token"];
+const KEYS: [&str; 4] = ["calendario.ics", "casa.token", "google.cliente", "google.token"];
 
-fn checked(key: &str) -> Result<HSTRING, String> {
+pub(crate) fn checked(key: &str) -> Result<HSTRING, String> {
     if KEYS.contains(&key) {
         Ok(HSTRING::from(format!("Barra/{key}")))
     } else {
@@ -29,7 +29,7 @@ fn checked(key: &str) -> Result<HSTRING, String> {
     }
 }
 
-fn read(name: &HSTRING) -> Option<String> {
+pub(crate) fn read(name: &HSTRING) -> Option<String> {
     // SAFETY: CredReadW fills `credential` on success; it is read and freed once.
     unsafe {
         let mut credential: *mut CREDENTIALW = std::ptr::null_mut();
@@ -43,7 +43,7 @@ fn read(name: &HSTRING) -> Option<String> {
     }
 }
 
-fn write(name: &HSTRING, value: &str) -> Result<(), String> {
+pub(crate) fn write(name: &HSTRING, value: &str) -> Result<(), String> {
     let mut blob = value.as_bytes().to_vec();
     let user = HSTRING::from("barra");
     let credential = CREDENTIALW {
@@ -73,13 +73,18 @@ pub fn set_secret(key: String, value: String) -> Result<(), String> {
     let name = checked(&key)?;
     let value = value.trim();
     if value.is_empty() {
-        // SAFETY: Deleting our own credential by name.
-        unsafe {
-            let _ = CredDeleteW(PCWSTR(name.as_ptr()), CRED_TYPE_GENERIC, None);
-        }
+        delete(&name);
         return Ok(());
     }
     write(&name, value)
+}
+
+/// Deletes a credential by name; a missing one is not an error.
+pub(crate) fn delete(name: &HSTRING) {
+    // SAFETY: Deleting our own credential by name.
+    unsafe {
+        let _ = CredDeleteW(PCWSTR(name.as_ptr()), CRED_TYPE_GENERIC, None);
+    }
 }
 
 #[derive(Serialize)]

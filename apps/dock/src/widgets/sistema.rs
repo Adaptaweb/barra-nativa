@@ -142,7 +142,7 @@ pub(super) fn start() {
                     _ => 0,
                 };
                 previous = now;
-                if round % 3 == 0 {
+                if round.is_multiple_of(3) {
                     temp = client.as_ref().and_then(temperature);
                 }
                 round = round.wrapping_add(1);

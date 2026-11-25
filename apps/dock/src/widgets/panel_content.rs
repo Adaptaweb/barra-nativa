@@ -2,9 +2,9 @@
 //! panel explains how to set it up, step by step.
 
 use super::panel::{Block, Cell, PanelAction};
-use super::{Calendar, Home, Readings, WidgetId};
+use super::{Home, Readings, WidgetId};
 use crate::usage::{Provider, State};
-use chrono::{DateTime, Local, TimeZone, Utc};
+use chrono::{DateTime, Local, Utc};
 
 const GREEN: [f32; 4] = [0.204, 0.78, 0.349, 1.0];
 const ORANGE: [f32; 4] = [1.0, 0.624, 0.039, 1.0];
@@ -23,25 +23,7 @@ fn open(label: &str, target: &str, primary: bool) -> (String, PanelAction, bool)
     (label.to_owned(), PanelAction::Open(target.to_owned()), primary)
 }
 
-fn local(seconds: i64) -> Option<DateTime<Local>> {
-    Local.timestamp_opt(seconds, 0).single()
-}
-
 const WEEKDAYS: [&str; 7] = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"];
-const MONTHS: [&str; 12] = [
-    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
-    "octubre", "noviembre", "diciembre",
-];
-
-fn long_date(t: DateTime<Local>) -> String {
-    use chrono::Datelike;
-    format!(
-        "{}, {} de {}",
-        WEEKDAYS[t.weekday().num_days_from_monday() as usize],
-        t.day(),
-        MONTHS[t.month0() as usize]
-    )
-}
 
 /// "Hoy", "Mañana" or "jue 27" for the day of an event.
 fn day_label(t: DateTime<Local>) -> String {
@@ -160,73 +142,8 @@ pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
             ));
             b.push(Block::Buttons(vec![open("Abrir El Tiempo", "msnweather:", true)]));
         }
-        WidgetId::Reloj => {
-            let now = Local::now();
-            b.push(Block::Title(long_date(now), String::new()));
-            b.push(Block::Big(None, now.format("%H:%M").to_string()));
-            let Some(d) = r.reloj.as_ref() else {
-                return b;
-            };
-            match d.calendar {
-                Calendar::NotConnected => {
-                    b.push(Block::Section("Conecta tu calendario".into()));
-                    b.push(Block::Steps(vec![
-                        "En Google Calendar abre Configuración y elige tu calendario a la izquierda.".into(),
-                        "En «Integrar el calendario» copia la «Dirección secreta en formato iCal».".into(),
-                        "Pégala en Configuración › Widgets › Calendario. En Outlook usa «Publicar calendario» y copia el enlace ICS.".into(),
-                    ]));
-                    b.push(Block::Buttons(vec![open(
-                        "Abrir Google Calendar",
-                        "https://calendar.google.com/calendar/r/settings",
-                        true,
-                    )]));
-                }
-                Calendar::Failed => {
-                    b.push(Block::Text(
-                        "No se pudo leer tu calendario: el enlace guardado ya no es válido (Google lo cambia si se restablece la dirección secreta) o no hay conexión.".into(),
-                        false,
-                    ));
-                    b.push(Block::Steps(vec![
-                        "En Google Calendar abre Configuración y elige tu calendario.".into(),
-                        "En «Integrar el calendario» copia otra vez la «Dirección secreta en formato iCal».".into(),
-                        "Pégala en Configuración › Widgets › Calendario.".into(),
-                    ]));
-                    b.push(Block::Buttons(vec![open(
-                        "Abrir Google Calendar",
-                        "https://calendar.google.com/calendar/r/settings",
-                        true,
-                    )]));
-                }
-                Calendar::Loading => b.push(Block::Text("Leyendo el calendario…".into(), true)),
-                Calendar::Connected if d.upcoming.is_empty() => {
-                    b.push(Block::Section("Próximos eventos".into()));
-                    b.push(Block::Text("Nada en los próximos 14 días.".into(), true));
-                }
-                Calendar::Connected => {
-                    b.push(Block::Section("Próximos eventos".into()));
-                    let now = Utc::now().timestamp();
-                    for event in &d.upcoming {
-                        let Some(start) = local(event.start) else {
-                            continue;
-                        };
-                        let when = if event.start <= now {
-                            "Ahora".to_owned()
-                        } else if event.all_day {
-                            day_label(start)
-                        } else {
-                            format!("{} {}", day_label(start), start.format("%H:%M"))
-                        };
-                        let title: String = event.title.chars().take(30).collect();
-                        b.push(Block::Event(when, title));
-                    }
-                }
-            }
-            b.push(Block::Gap(4.0));
-            b.push(Block::Buttons(vec![
-                open("Google Calendar", "https://calendar.google.com/", false),
-                open("Notificaciones", "ms-actioncenter:", false),
-            ]));
-        }
+        // Drawn by calendario.rs.
+        WidgetId::Reloj => {}
         WidgetId::Casa => {
             let Some(d) = r.casa.as_ref() else {
                 b.push(Block::Title("Casa".into(), String::new()));

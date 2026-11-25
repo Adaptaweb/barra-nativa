@@ -4,7 +4,7 @@
 //! Esc is pressed, or when its widget is clicked again. While open it
 //! follows the readings, so a light switched on shows at once.
 
-use super::{WidgetId, panel_content};
+use super::{WidgetId, calendario, panel_content};
 use crate::gfx::{Gfx, Rgba, Weight};
 use crate::menu::{apply_popup_frame, draw_popup_background};
 use anyhow::Result;
@@ -97,6 +97,11 @@ pub enum PanelAction {
     RefreshIa,
     /// A tray icon: a left click here, a right click opens its menu.
     Tray(String),
+    /// Calendar: move the month, go to today, pick a day, close.
+    CalShift(i32),
+    CalToday,
+    CalDay(chrono::NaiveDate),
+    CalClose,
 }
 
 /// A Home Assistant button in the panel grid.
@@ -124,8 +129,6 @@ pub enum Block {
         color: Rgba,
         note: String,
     },
-    /// A colored dot, a time and a title.
-    Event(String, String),
     /// Numbered setup steps.
     Steps(Vec<String>),
     Grid(Vec<Cell>),
@@ -136,10 +139,9 @@ pub enum Block {
     Gap(f32),
 }
 
-const ACCENT: Rgba = [0.039, 0.518, 1.0, 1.0];
-const RED: Rgba = [1.0, 0.231, 0.188, 1.0];
+pub(super) const ACCENT: Rgba = [0.039, 0.518, 1.0, 1.0];
 
-fn ink(dark: bool, alpha: f32) -> Rgba {
+pub(super) fn ink(dark: bool, alpha: f32) -> Rgba {
     if dark {
         [1.0, 1.0, 1.0, alpha * 0.94]
     } else {
@@ -147,12 +149,13 @@ fn ink(dark: bool, alpha: f32) -> Rgba {
     }
 }
 
-struct Hit {
-    left: f32,
-    top: f32,
-    right: f32,
-    bottom: f32,
-    action: PanelAction,
+/// A clickable area in physical pixels.
+pub(super) struct Hit {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub action: PanelAction,
 }
 
 struct Panel {
@@ -166,6 +169,10 @@ struct Panel {
     scale: f32,
     dark: bool,
     hits: Vec<Hit>,
+    /// The month calendar's month and selected day (clock panel only).
+    view: calendario::View,
+    /// Fingerprint of what was last painted; empty means always repaint.
+    print: String,
 }
 
 thread_local! {
@@ -211,6 +218,7 @@ pub fn refresh() {
     OPEN.with(|open| {
         if let Ok(mut slot) = open.try_borrow_mut()
             && let Some(panel) = slot.as_mut()
+            && !(panel.id == WidgetId::Reloj && panel.print() == panel.print)
             && let Err(error) = panel.paint()
         {
             eprintln!("muelle: panel: {error:#}");
@@ -289,6 +297,8 @@ fn open(gfx: &Gfx, id: WidgetId, anchor: POINT, placement: Placement) -> Result<
         scale,
         dark,
         hits: Vec::new(),
+        view: calendario::View::today(),
+        print: String::new(),
     };
     panel.paint()?;
     // SAFETY: Showing our own window and giving it the focus, so losing the
@@ -303,15 +313,26 @@ fn open(gfx: &Gfx, id: WidgetId, anchor: POINT, placement: Placement) -> Result<
 
 impl Panel {
     fn paint(&mut self) -> Result<()> {
-        let blocks = panel_content::blocks(self.id, &super::readings());
+        let readings = super::readings();
         let px = |v: f32| (v * self.scale).round();
-        let width = px(WIDTH);
-        let inner = width - px(PAD) * 2.0;
-        let height = measure(&self.gfx, &blocks, self.scale, inner)? + px(PAD) * 2.0;
         let mut hits = Vec::new();
-        let content = self.gfx.paint((width, height), self.scale, |pen| {
-            draw(pen, &self.gfx, &blocks, self.scale, self.dark, inner, &mut hits)
-        })?;
+        let (width, height, content) = if self.id == WidgetId::Reloj {
+            let width = px(calendario::WIDTH);
+            let height = px(calendario::height(&self.view));
+            let content = self.gfx.paint((width, height), self.scale, |pen| {
+                calendario::draw(pen, &self.gfx, &self.view, &readings, self.dark, self.scale, &mut hits)
+            })?;
+            (width, height, content)
+        } else {
+            let blocks = panel_content::blocks(self.id, &readings);
+            let width = px(WIDTH);
+            let inner = width - px(PAD) * 2.0;
+            let height = measure(&self.gfx, &blocks, self.scale, inner)? + px(PAD) * 2.0;
+            let content = self.gfx.paint((width, height), self.scale, |pen| {
+                draw(pen, &self.gfx, &blocks, self.scale, self.dark, inner, &mut hits)
+            })?;
+            (width, height, content)
+        };
         let c = &self.gfx.compositor;
         let children = self.root.Children()?;
         children.RemoveAll()?;
@@ -325,7 +346,30 @@ impl Panel {
         children.InsertAtTop(&sprite)?;
         self.hits = hits;
         self.place(width as i32, height as i32);
+        self.print = self.print();
         Ok(())
+    }
+
+    /// What the panel shows, as text: equal prints paint the same. Empty for
+    /// panels that repaint on every publication.
+    fn print(&self) -> String {
+        if self.id != WidgetId::Reloj {
+            return String::new();
+        }
+        let readings = super::readings();
+        let resets: Vec<_> = readings.ia.iter().flat_map(|ia| {
+            crate::usage::Provider::ALL
+                .into_iter()
+                .flat_map(move |p| ia.get(p).windows.iter().map(|w| w.resets_at))
+        }).collect();
+        format!(
+            "{:?}|{:?}|{:?}|{}|{:?}",
+            readings.agenda,
+            readings.reloj.as_ref().map(|r| r.calendar),
+            resets,
+            chrono::Local::now().date_naive(),
+            (self.view.month, self.view.selected)
+        )
     }
 
     fn place(&self, width: i32, height: i32) {
@@ -375,7 +419,6 @@ fn block_height(gfx: &Gfx, block: &Block, scale: f32, inner: f32) -> Result<f32>
         Block::Text(text, _) => gfx.measure_paragraph(text, 11.5, scale, inner)? + px(8.0),
         Block::Big(..) => line_height(gfx, 30.0, scale)? + px(6.0),
         Block::Meter { .. } => line_height(gfx, 12.0, scale)? * 2.0 + px(12.0),
-        Block::Event(..) => line_height(gfx, 12.0, scale)? + px(8.0),
         Block::Steps(steps) => {
             let mut h = 0.0;
             for step in steps {
@@ -458,14 +501,6 @@ fn draw(
                 if !note.is_empty() {
                     pen.text(note, (left, bar_y + bar_h + px(2.0)), 10.0, Weight::Normal, ink(dark, 0.55))?;
                 }
-            }
-            Block::Event(time, title) => {
-                let lh = line_height(gfx, 12.0, scale)?;
-                let dot = px(7.0);
-                pen.round_rect((left, y + (lh - dot) / 2.0), (dot, dot), dot / 2.0, RED)?;
-                let x = left + dot + px(8.0);
-                let tw = pen.text(time, (x, y), 12.0, Weight::Medium, ink(dark, 0.7))?;
-                pen.text(title, (x + tw.max(px(78.0)) + px(6.0), y), 12.0, Weight::Normal, ink(dark, 1.0))?;
             }
             Block::Steps(steps) => {
                 let mut sy = y;
@@ -577,7 +612,25 @@ fn perform(action: PanelAction) {
         PanelAction::HomeToggle(id) => super::casa::toggle(id),
         PanelAction::RefreshIa => super::ia::wake(),
         PanelAction::Tray(id) => muelle_shell::tray::click(&id, muelle_shell::tray::Click::Left),
+        PanelAction::CalShift(n) => change_view(|view| view.shift(n)),
+        PanelAction::CalToday => change_view(|view| *view = calendario::View::today()),
+        PanelAction::CalDay(day) => change_view(|view| view.select(day)),
+        PanelAction::CalClose => close(),
     }
+}
+
+/// Changes the calendar view of the open panel and repaints it.
+fn change_view(change: impl FnOnce(&mut calendario::View)) {
+    OPEN.with(|open| {
+        if let Ok(mut slot) = open.try_borrow_mut()
+            && let Some(panel) = slot.as_mut()
+        {
+            change(&mut panel.view);
+            if let Err(error) = panel.paint() {
+                eprintln!("muelle: panel: {error:#}");
+            }
+        }
+    });
 }
 
 unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {

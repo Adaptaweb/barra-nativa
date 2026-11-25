@@ -218,7 +218,6 @@ impl Cell<'_, '_> {
     }
 
     /// Two lines stacked and centred, `top` over `bottom`; advances by the wider.
-    #[expect(clippy::too_many_arguments, reason = "Two styled lines")]
     fn column(
         &mut self,
         top: (&str, f32, Weight, Rgba),

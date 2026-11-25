@@ -7,11 +7,13 @@
 //! to the menu bar when the reading changes, so the bar and the dock repaint
 //! just that widget. Nothing is polled on the UI thread.
 
+mod calendario;
 mod casa;
 mod cell;
 mod clima;
 mod control;
 mod draw;
+mod google;
 mod ia;
 mod more;
 mod panel;
@@ -258,6 +260,29 @@ pub struct Event {
     pub all_day: bool,
 }
 
+/// An event of the month agenda, with the details the month panel shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgendaEvent {
+    pub title: String,
+    /// Unix seconds. For all-day events `end` is exclusive.
+    pub start: i64,
+    pub end: i64,
+    pub all_day: bool,
+    pub location: String,
+    /// Video call or event page; empty when there is none.
+    pub link: String,
+    /// Name of the calendar the event belongs to.
+    pub calendar: String,
+    /// Calendar colour as 0xRRGGBB; 0 when unknown.
+    pub color: u32,
+}
+
+/// Events of the previous, current and next month.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Agenda {
+    pub events: Vec<AgendaEvent>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelojData {
     /// Date and time as the menu bar shows them ("mar 24 nov 19:39").
@@ -269,8 +294,6 @@ pub struct RelojData {
     pub weekday: String,
     pub calendar: Calendar,
     pub next: Option<Event>,
-    /// The next events, soonest first, for the panel.
-    pub upcoming: Vec<Event>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -319,6 +342,8 @@ pub struct Readings {
     pub sistema: Option<SistemaData>,
     pub clima: Option<ClimaData>,
     pub reloj: Option<RelojData>,
+    /// Calendar events of three months, for the month panel.
+    pub agenda: Option<Agenda>,
     pub casa: Option<CasaData>,
     pub ia: Option<usage::Snapshot>,
     pub control: Option<ControlData>,
@@ -351,6 +376,7 @@ static READINGS: Mutex<Readings> = Mutex::new(Readings {
     sistema: None,
     clima: None,
     reloj: None,
+    agenda: None,
     casa: None,
     ia: None,
     control: None,

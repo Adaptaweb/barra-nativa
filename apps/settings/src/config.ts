@@ -177,5 +177,9 @@ export const installUpdate = () => invoke<void>("install_update");
 export const secretSaved = (key: string) => invoke<boolean>("secret_saved", { key });
 /** Saves a Barra secret in the Credential Manager, or removes it when empty. */
 export const setSecret = (key: string, value: string) => invoke<void>("set_secret", { key, value });
+/** Google Calendar: opens the browser to sign in and waits for the result. */
+export const googleConnect = () => invoke<void>("google_connect");
+export const googleStatus = () => invoke<boolean>("google_status");
+export const googleDisconnect = () => invoke<void>("google_disconnect");
 export const importHome = () =>
   invoke<{ url: string; items: HomeItem[]; source: string }>("import_home");

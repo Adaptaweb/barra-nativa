@@ -2304,11 +2304,14 @@ name = "muelle-settings"
 version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
+ "getrandom 0.3.4",
  "muelle-config",
  "muelle-shell",
  "png",
+ "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",

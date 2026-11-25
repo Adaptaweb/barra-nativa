@@ -11,6 +11,7 @@
 
 mod barra;
 mod custom_wallpapers;
+mod google;
 mod wallpapers;
 
 use std::{env, io, path::PathBuf, process::Command, sync::Mutex, time::Duration};
@@ -383,7 +384,10 @@ fn main() {
             barra::secret_saved,
             barra::set_secret,
             barra::import_home,
-            barra::list_displays
+            barra::list_displays,
+            google::google_connect,
+            google::google_status,
+            google::google_disconnect
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {
