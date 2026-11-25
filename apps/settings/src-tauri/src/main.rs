@@ -7,6 +7,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod barra;
 mod wallpapers;
 
 use std::{env, io, path::PathBuf, process::Command, sync::Mutex, time::Duration};
@@ -348,7 +349,10 @@ fn main() {
             open_repository,
             wallpaper_preview,
             wallpapers::wallpaper_selection,
-            wallpapers::apply_wallpaper
+            wallpapers::apply_wallpaper,
+            barra::secret_saved,
+            barra::set_secret,
+            barra::import_home
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {

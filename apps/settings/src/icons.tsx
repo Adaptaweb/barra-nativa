@@ -6,13 +6,14 @@
 
 import type { ReactNode } from "react";
 
-export type SectionId = "appearance" | "dock" | "windows" | "menubar" | "system";
+export type SectionId = "appearance" | "dock" | "windows" | "menubar" | "widgets" | "system";
 
 const TILES: Record<SectionId, [string, string]> = {
   appearance: ["#5c5c62", "#1c1c1e"],
   dock: ["#4aa3ff", "#0a6cf0"],
   windows: ["#b57bff", "#7d3ff0"],
   menubar: ["#ff9f45", "#f0640a"],
+  widgets: ["#34d399", "#059669"],
   system: ["#a1a1a6", "#6e6e73"],
 };
 
@@ -47,6 +48,15 @@ const GLYPHS: Record<SectionId, ReactNode> = {
       <rect x="4" y="5" width="16" height="14" rx="2" fill="#fff" opacity="0.55" />
       <rect x="4" y="5" width="16" height="3.6" rx="1.6" fill="#fff" />
       <circle cx="16.8" cy="6.8" r="0.9" fill="#f0640a" />
+    </>
+  ),
+  // Four tiles of different sizes, as widgets.
+  widgets: (
+    <>
+      <rect x="4.5" y="4.5" width="8" height="8" rx="2" fill="#fff" />
+      <rect x="14" y="4.5" width="5.5" height="5.5" rx="1.6" fill="#fff" opacity="0.6" />
+      <rect x="14" y="11.5" width="5.5" height="8" rx="1.6" fill="#fff" />
+      <rect x="4.5" y="14" width="8" height="5.5" rx="1.6" fill="#fff" opacity="0.6" />
     </>
   ),
   // A gear.

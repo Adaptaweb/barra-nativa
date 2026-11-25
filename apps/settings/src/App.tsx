@@ -35,6 +35,7 @@ import { DockDensityPreview, DockPreview, IslandPreview, SettingIcon, SpeedPrevi
 import { type SectionId, SectionIcon } from "./icons";
 import { UpdateBanner } from "./UpdateBanner";
 import { WallpaperGallery } from "./WallpaperGallery";
+import { WidgetsSection } from "./WidgetsSection";
 import { type Texts, LANGUAGE_OPTIONS, resolveLanguage, textsFor } from "./i18n";
 
 type UpdateState =
@@ -71,7 +72,10 @@ export function App() {
   const [windowsPreferences, setWindowsPreferences] = useState<WindowsPreferences | null>(null);
   // Keep the animation notice from flashing while the initial system read is pending.
   const animations = windowsPreferences?.animations ?? true;
-  const [section, setSection] = useState<SectionId>("dock");
+  // VITE_SECTION opens another section first (development screenshots).
+  const [section, setSection] = useState<SectionId>(
+    (import.meta.env?.VITE_SECTION as SectionId | undefined) ?? "dock",
+  );
   const [failed, setFailed] = useState(false);
   const [version, setVersion] = useState("");
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: "checking" });
@@ -562,6 +566,8 @@ export function App() {
                 </Row>
               </Card>
             </>
+          ) : section === "widgets" ? (
+            <WidgetsSection config={config} update={update} />
           ) : section === "menubar" ? (
             <>
               <Card>
@@ -711,7 +717,7 @@ function updateHint(t: Texts, state: UpdateState, version: string): string {
   }
 }
 
-const SECTIONS: readonly SectionId[] = ["appearance", "dock", "windows", "menubar", "system"];
+const SECTIONS: readonly SectionId[] = ["appearance", "dock", "windows", "menubar", "widgets", "system"];
 
 const THEMES: readonly Appearance[] = ["auto", "light", "dark", "frosted", "clear", "aurora"];
 
@@ -738,6 +744,8 @@ const windowTheme = (theme: Appearance) =>
 
 function sectionTitle(t: Texts, section: SectionId): string {
   switch (section) {
+    case "widgets":
+      return "Widgets";
     case "appearance":
       return t.appearance;
     case "dock":

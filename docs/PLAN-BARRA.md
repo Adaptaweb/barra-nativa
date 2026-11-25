@@ -48,10 +48,18 @@ uses far less RAM and CPU.
    child process every 5 min). Secrets are read from the Credential Manager entries the
    Tauri Barra saved (`Barra/calendario.ics`, `Barra/casa.token`).
    The projects widget is set aside for now (user's decision, 2026-11-24).
-   Next: a panel (flyout) per widget on click (Home Assistant toggles, calendar list and
-   "connect a calendar" steps, AI details), and drag to reorder.
+   Panels: done (`widgets/panel.rs` window + `panel_content.rs`). A click on a widget in the
+   bar or the dock opens a frosted panel built from blocks; Home Assistant buttons toggle;
+   calendar lists the next events or explains how to (re)connect; AI shows each window with
+   its reset. Debug builds: `BARRA_PANEL=casa` opens a panel at start for screenshots.
+   Note: a process started from the PowerShell tool sees a different %APPDATA% (sandbox);
+   launch Muelle from bash to use the real config.
    Claude shows "Abre Claude Code" while the CLI's OAuth token in `~/.claude` is expired.
 5. [ ] Draw each widget natively (designs from the Tauri Barra and the user's references).
-6. [ ] Settings app: widget editor (zones, order, sizes) in `apps/settings`.
+6. [x] Settings app: "Widgets" section (`apps/settings/src/WidgetsSection.tsx`, commands in
+   `src-tauri/src/barra.rs`): add / remove / reorder per zone, weather city, calendar links
+   and Home Assistant token (Credential Manager), Home Assistant import. Build the front end
+   with `npx -y pnpm@10 install` and `npx -y pnpm@10 build` (pnpm is not installed globally).
+   `VITE_SECTION=widgets` opens that section first. Pending: drag to reorder, widget sizes.
 7. [ ] One dock and top bar per monitor, with per-screen widgets and on/off.
 8. [ ] Rebrand (name, icon, AppUserModelID, installer) before distributing to other PCs.

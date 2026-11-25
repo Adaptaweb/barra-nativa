@@ -50,6 +50,26 @@ export interface Config {
   appearance: Appearance;
   /** The folder shown at the right of the dock, whose contents open as a menu. */
   shortcutsFolder: string | null;
+  /** Barra widgets. */
+  widgets: WidgetSettings;
+}
+
+/** Mirrors `muelle_config::HomeItem`. */
+export interface HomeItem {
+  id: string;
+  name: string;
+  kind: string;
+  entities: string[];
+}
+
+/** Mirrors `muelle_config::Widgets`. */
+export interface WidgetSettings {
+  barLeft: string[];
+  barRight: string[];
+  dock: string[];
+  weatherCity: string;
+  homeUrl: string;
+  homeItems: HomeItem[];
 }
 
 export const ICON_SIZE = { min: 32, max: 96 } as const;
@@ -106,3 +126,10 @@ export const applyWallpaper = async (id: number, preview: string) => {
   wallpaperSelectionRequest = undefined;
 };
 export const installUpdate = () => invoke<void>("install_update");
+
+/** Whether a Barra secret is saved; its value never comes back. */
+export const secretSaved = (key: string) => invoke<boolean>("secret_saved", { key });
+/** Saves a Barra secret in the Credential Manager, or removes it when empty. */
+export const setSecret = (key: string, value: string) => invoke<void>("set_secret", { key, value });
+export const importHome = () =>
+  invoke<{ url: string; items: HomeItem[]; source: string }>("import_home");

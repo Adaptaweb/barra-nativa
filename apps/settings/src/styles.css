@@ -718,3 +718,10 @@ input:focus-visible {
 .traffic, .toggle, .slider, .preview-screen, .preview-density { direction: ltr; }
 .window[dir="rtl"] .visual-legend { float: right; }
 .window[dir="rtl"] .row-hint { line-height: 1.6; }
+
+/* Barra widgets section */
+.text-field { width: 260px; max-width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--segment); color: var(--text); font: inherit; }
+textarea.text-field { width: 100%; resize: vertical; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 12px; }
+.text-field:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.secret-control { display: flex; flex-direction: column; gap: 8px; align-items: stretch; width: 100%; }
+.secret-control .push-group { justify-content: flex-end; }
