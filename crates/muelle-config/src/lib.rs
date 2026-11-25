@@ -132,8 +132,9 @@ pub struct Config {
     /// stay on screen; the Start menu and the Windows key work either way.
     pub hide_windows_taskbar: bool,
     /// A video (MP4) played as the desktop background behind the icons, on
-    /// every display; the Windows wallpaper shows when it is unset.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// every display; the Windows wallpaper shows when it is unset. Always
+    /// written (as null when unset): `update_preferences` only takes keys the
+    /// file already has.
     pub video_wallpaper: Option<String>,
 }
 
@@ -1016,6 +1017,22 @@ mod tests {
         save(&path, &Config::default()).ok();
         fs::write(&path, "esto no es json").ok();
         assert!(matches!(load(&path), Err(ConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn settings_can_set_a_video_wallpaper_that_was_never_set() -> Result<(), ConfigError> {
+        let folder = std::env::temp_dir().join(format!("barra-video-{}", std::process::id()));
+        let path = folder.join("config.json");
+        save(&path, &Config::default())?;
+        let mut patch = serde_json::Map::new();
+        patch.insert("videoWallpaper".into(), serde_json::Value::from("video.mp4"));
+        let saved = update_preferences(&path, patch)?;
+        assert_eq!(saved.video_wallpaper.as_deref(), Some("video.mp4"));
+        let mut patch = serde_json::Map::new();
+        patch.insert("videoWallpaper".into(), serde_json::Value::Null);
+        assert_eq!(update_preferences(&path, patch)?.video_wallpaper, None);
+        let _ = fs::remove_dir_all(folder);
+        Ok(())
     }
 
     #[test]
