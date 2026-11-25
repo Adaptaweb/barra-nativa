@@ -6,7 +6,7 @@
 
 import type { ReactNode } from "react";
 
-export type SectionId = "appearance" | "dock" | "windows" | "menubar" | "widgets" | "system";
+export type SectionId = "appearance" | "dock" | "windows" | "menubar" | "widgets" | "services" | "system";
 
 const TILES: Record<SectionId, [string, string]> = {
   appearance: ["#5c5c62", "#1c1c1e"],
@@ -14,6 +14,7 @@ const TILES: Record<SectionId, [string, string]> = {
   windows: ["#b57bff", "#7d3ff0"],
   menubar: ["#ff9f45", "#f0640a"],
   widgets: ["#34d399", "#059669"],
+  services: ["#38bdf8", "#0284c7"],
   system: ["#a1a1a6", "#6e6e73"],
 };
 
@@ -57,6 +58,13 @@ const GLYPHS: Record<SectionId, ReactNode> = {
       <rect x="14" y="4.5" width="5.5" height="5.5" rx="1.6" fill="#fff" opacity="0.6" />
       <rect x="14" y="11.5" width="5.5" height="8" rx="1.6" fill="#fff" />
       <rect x="4.5" y="14" width="8" height="5.5" rx="1.6" fill="#fff" opacity="0.6" />
+    </>
+  ),
+  // A key, for accounts and services.
+  services: (
+    <>
+      <circle cx="8.8" cy="12" r="3.6" fill="none" stroke="#fff" strokeWidth="1.8" />
+      <path d="M12.4 12h7.2M17 12v3M19.6 12v2" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" />
     </>
   ),
   // A gear.

@@ -13,6 +13,7 @@
   "dockAutoHideSpeed": "Animation speed",
   "dockAutoHideSmooth": "Smooth",
   "system": "System",
+  "services": "Integrations",
   "appearance": "Appearance",
   "theme": "Theme",
   "themeHint": "For the dock, the menu bar and their menus. Glass themes look solid while Windows transparency effects or energy saver are on.",

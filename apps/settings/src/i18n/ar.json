@@ -13,6 +13,7 @@
   "dockAutoHideSpeed": "سرعة الحركة",
   "dockAutoHideSmooth": "سلسة",
   "system": "النظام",
+  "services": "التكاملات",
   "appearance": "المظهر",
   "theme": "السمة",
   "themeHint": "لـ Dock وشريط القوائم وقوائمهما. تصبح السمات الزجاجية معتمة عند تعطيل الشفافية في Windows أو تشغيل توفير الطاقة.",

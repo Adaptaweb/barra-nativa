@@ -151,6 +151,8 @@ export const checkUpdate = () => invoke<UpdateInfo | null>("check_update");
 export const openReleaseNotes = (url: string) => invoke<void>("open_release_notes", { url });
 /** Fixed project URL, opened only when the user asks. */
 export const openRepository = () => invoke<void>("open_repository");
+/** Opens a Google Cloud Console page in the browser; the backend refuses other links. */
+export const openUrl = (url: string) => invoke<void>("open_url", { url });
 let wallpaperRequest: Promise<string | null> | undefined;
 /** One bounded native read per Settings process, including React StrictMode. */
 export const loadWallpaperPreview = () =>

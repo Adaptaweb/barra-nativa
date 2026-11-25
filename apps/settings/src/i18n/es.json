@@ -13,6 +13,7 @@
   "dockAutoHideSpeed": "Velocidad de la animación",
   "dockAutoHideSmooth": "Suave",
   "system": "Sistema",
+  "services": "Configuraciones",
   "appearance": "Apariencia",
   "theme": "Tema",
   "themeHint": "Para el dock, la barra superior y sus menús. Los temas de cristal se ven sólidos mientras Windows tenga desactivados los efectos de transparencia o activado el ahorro de energía.",

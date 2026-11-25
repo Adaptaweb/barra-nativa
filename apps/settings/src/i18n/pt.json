@@ -13,6 +13,7 @@
   "dockAutoHideSpeed": "Velocidade da animação",
   "dockAutoHideSmooth": "Suave",
   "system": "Sistema",
+  "services": "Integrações",
   "appearance": "Aparência",
   "theme": "Tema",
   "themeHint": "Para o Dock, a barra de menus e seus menus. Os temas de vidro ficam opacos quando a transparência do Windows está desativada ou a economia de energia está ativa.",

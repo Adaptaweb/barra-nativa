@@ -19,6 +19,7 @@ import {
   googleStatus,
   importHome,
   listDisplays,
+  openUrl,
   secretSaved,
   setSecret,
 } from "./config";
@@ -213,7 +214,27 @@ function WidgetsPage({ config, update, part }: Props) {
         </Card>
       ))}
 
-      {part === "dock" ? (<>
+      {part === "dock" ? (
+        <div className="row">
+          <div className="row-text">
+            <span className="row-hint">
+              Las cuentas y servicios de cada widget (clima, calendario, casa, IA) están en Configuraciones.
+            </span>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** Accounts and services the widgets need: weather city, calendar, Home Assistant, AI limits. */
+export function ServicesSection({ config, update }: Omit<Props, "part">) {
+  // A settings file from before widgets existed has none yet.
+  if (!config.widgets) return null;
+  const widgets = config.widgets;
+  const save = (patch: Partial<WidgetSettings>) => update({ widgets: { ...widgets, ...patch } });
+  return (
+    <>
       <Card title="Clima">
         <Row label="Ciudad" hint="El nombre se busca en Open-Meteo; no hace falta cuenta.">
           <TextField
@@ -238,7 +259,6 @@ function WidgetsPage({ config, update, part }: Props) {
           </div>
         </div>
       </Card>
-      </>) : null}
     </>
   );
 }
@@ -453,6 +473,30 @@ function GoogleRow() {
             cliente OAuth de tipo «Aplicación de escritorio» con la API de Google Calendar activada; pega aquí
             el contenido de su archivo JSON.
           </span>
+        </div>
+      </div>
+      <div className="row">
+        <div className="row-text">
+          <details className="steps">
+            <summary>Cómo conseguir el JSON (una vez por PC o cuenta)</summary>
+            <ol>
+              <li>Entra en Google Cloud Console con tu cuenta de Google y crea un proyecto (por ejemplo «Barra»).</li>
+              <li>En «APIs y servicios › Biblioteca» busca «Google Calendar API» y pulsa «Habilitar».</li>
+              <li>En «Pantalla de consentimiento de OAuth» elige tipo «Externo», pon de nombre «Barra», tu correo de asistencia y guarda.</li>
+              <li>En «Público › Usuarios de prueba» añade tu propio correo.</li>
+              <li>En «Credenciales › Crear credenciales › ID de cliente de OAuth» elige tipo «Aplicación de escritorio» y créalo.</li>
+              <li>Pulsa «Descargar JSON», abre el archivo con el Bloc de notas, copia todo el texto y pégalo en «Cliente OAuth (JSON)» de arriba; luego «Guardar».</li>
+              <li>Pulsa «Conectar con Google» y acepta en el navegador. Si avisa de que la app no está verificada, elige «Avanzado › Ir a Barra»: es tu propia app.</li>
+            </ol>
+            <div className="push-group">
+              <button type="button" className="push" onClick={() => void openUrl("https://console.cloud.google.com/projectcreate").catch(() => {})}>
+                Abrir Google Cloud Console
+              </button>
+              <button type="button" className="push" onClick={() => void openUrl("https://console.cloud.google.com/apis/library/calendar-json.googleapis.com").catch(() => {})}>
+                Activar Google Calendar API
+              </button>
+            </div>
+          </details>
         </div>
       </div>
       <SecretRow

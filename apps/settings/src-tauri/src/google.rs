@@ -216,6 +216,15 @@ pub fn google_status() -> bool {
     })
 }
 
+/// Opens a Google Cloud Console page for the setup steps; any other link is refused.
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://console.cloud.google.com/") || url.contains(char::is_whitespace) {
+        return Err("Enlace no permitido".to_owned());
+    }
+    muelle_shell::launcher::open(&url).map_err(|_| "No pude abrir el navegador".to_owned())
+}
+
 /// Forgets the refresh token and keeps the OAuth client.
 #[tauri::command]
 pub fn google_disconnect() -> Result<(), String> {

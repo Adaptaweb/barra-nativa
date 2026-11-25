@@ -38,7 +38,7 @@ import { UpdateBanner } from "./UpdateBanner";
 const UPDATES = false;
 import { WallpaperGallery } from "./WallpaperGallery";
 import { CustomWallpapers } from "./CustomWallpapers";
-import { WidgetsSection } from "./WidgetsSection";
+import { ServicesSection, WidgetsSection } from "./WidgetsSection";
 import { type Texts, LANGUAGE_OPTIONS, resolveLanguage, textsFor } from "./i18n";
 
 type UpdateState =
@@ -577,6 +577,8 @@ export function App() {
             </>
           ) : section === "widgets" ? (
             <WidgetsSection config={config} update={update} part="dock" />
+          ) : section === "services" ? (
+            <ServicesSection config={config} update={update} />
           ) : section === "menubar" ? (
             <>
               <Card>
@@ -730,7 +732,7 @@ function updateHint(t: Texts, state: UpdateState, version: string): string {
   }
 }
 
-const SECTIONS: readonly SectionId[] = ["appearance", "dock", "windows", "menubar", "widgets", "system"];
+const SECTIONS: readonly SectionId[] = ["appearance", "dock", "windows", "menubar", "widgets", "services", "system"];
 
 const THEMES: readonly Appearance[] = ["auto", "light", "dark", "frosted", "clear", "aurora"];
 
@@ -759,6 +761,8 @@ function sectionTitle(t: Texts, section: SectionId): string {
   switch (section) {
     case "widgets":
       return "Widgets";
+    case "services":
+      return t.services;
     case "appearance":
       return t.appearance;
     case "dock":

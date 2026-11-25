@@ -387,7 +387,8 @@ fn main() {
             barra::list_displays,
             google::google_connect,
             google::google_status,
-            google::google_disconnect
+            google::google_disconnect,
+            google::open_url
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {
