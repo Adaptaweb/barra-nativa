@@ -19,6 +19,8 @@ use windows::UI::Composition::CompositionSurfaceBrush;
 const ACCENT_RED: Rgba = [1.0, 0.271, 0.227, 1.0];
 const HL_ORANGE: Rgba = [1.0, 0.62, 0.2, 1.0];
 const HOME_YELLOW: Rgba = [1.0, 0.82, 0.4, 1.0];
+/// Orange tile behind the home glyph, like the iOS Home app (#FF9F0A).
+const HOME_ORANGE: Rgba = [1.0, 0.624, 0.039, 1.0];
 const CALENDAR_COLORS: [Rgba; 4] = [
     [0.039, 0.518, 1.0, 1.0],
     [0.204, 0.78, 0.349, 1.0],
@@ -666,7 +668,18 @@ fn sistema(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
 }
 
 fn casa(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
-    c.emoji("🏠", 20.0)?;
+    let side = (c.height * 0.62).round();
+    let top = ((c.height - side) / 2.0).round();
+    c.pen.round_rect((c.x, top), (side, side), side * 0.26, HOME_ORANGE)?;
+    let glyph = 15.0;
+    let (gw, gh) = c.gfx.measure_icon('\u{EA8A}', glyph, c.unit)?;
+    c.pen.icon(
+        '\u{EA8A}',
+        (c.x + (side - gw) / 2.0, top + (side - gh) / 2.0),
+        glyph,
+        [1.0, 1.0, 1.0, 1.0],
+    )?;
+    c.x += side;
     c.x += c.px(8.0);
     let Some(d) = r.casa.as_ref() else {
         return c.text("Casa…", 11.0, Weight::Normal, c.faded());

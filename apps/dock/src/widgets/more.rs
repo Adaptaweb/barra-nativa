@@ -227,12 +227,12 @@ fn casa_bar(gfx: &Gfx, d: &CasaData, scale: f32, height: f32, light: bool) -> Re
         Home::NotConnected => "Conectar".to_owned(),
         Home::Failed(_) => "!".to_owned(),
     };
-    let icon = if d.on > 0 { "💡" } else { "🏠" };
-    let (iw, ih) = gfx.measure_emoji(icon, 11.0, scale)?;
+    let icon = '\u{EA8A}';
+    let (iw, ih) = gfx.measure_icon(icon, 12.0, scale)?;
     let (tw, th) = gfx.measure(&text, 13.0, scale, Weight::Normal)?;
     let gap = (4.0 * scale).round();
     gfx.paint((iw + gap + tw, height), scale, |pen| {
-        pen.emoji(icon, (0.0, (height - ih) / 2.0), 11.0)?;
+        pen.icon(icon, (0.0, (height - ih) / 2.0), 12.0, ink(light, 1.0))?;
         let color = match d.state {
             Home::Failed(_) => ORANGE,
             _ => ink(light, 1.0),
