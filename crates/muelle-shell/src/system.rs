@@ -328,6 +328,8 @@ pub struct Battery {
     pub percent: u8,
     pub charging: bool,
     pub saver: bool,
+    /// Minutes of use left on battery, when Windows estimates them.
+    pub minutes_left: Option<u32>,
 }
 
 /// Battery state, or `None` on a computer without a battery.
@@ -347,6 +349,8 @@ pub fn battery() -> Option<Battery> {
             percent: status.BatteryLifePercent,
             charging: status.ACLineStatus == 1,
             saver,
+            // u32::MAX: no estimate (charging, or not known yet).
+            minutes_left: (status.BatteryLifeTime != u32::MAX).then_some(status.BatteryLifeTime / 60),
         })
 }
 

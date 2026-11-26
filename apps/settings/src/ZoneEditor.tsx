@@ -14,6 +14,7 @@ export const WIDGETS: { key: string; name: string; detail: string }[] = [
   { key: "clima", name: "Clima", detail: "Temperatura y cielo de tu ciudad." },
   { key: "sistema", name: "Sistema", detail: "Temperatura de la CPU, uso de CPU y memoria." },
   { key: "memoria", name: "Memoria", detail: "Uso de la RAM en una rueda y los GB en uso." },
+  { key: "bateria", name: "Batería", detail: "La carga como agua verde en movimiento; burbujas mientras carga." },
   { key: "casa", name: "Casa", detail: "Tus botones de Home Assistant." },
   { key: "claude", name: "Claude", detail: "Límites de 5 horas y semanal de tu plan." },
   { key: "chatgpt", name: "ChatGPT", detail: "Límites de tu plan, a través de Codex." },

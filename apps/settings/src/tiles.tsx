@@ -12,6 +12,7 @@ const TILES: Record<string, { bg: string; glyph: ReactNode }> = {
   reloj: { bg: "#ff3b30", glyph: <><circle cx="12" cy="12" r="6.5" /><path d="M12 8.5V12l2.5 1.5" /></> },
   clima: { bg: "#0a84ff", glyph: <><circle cx="9" cy="9" r="2.6" /><path d="M9 3.6v1M3.6 9h1M5.2 5.2l.7.7M12.8 5.2l-.7.7" /><path d="M8 18.5h8.5a3 3 0 0 0 0-6 4 4 0 0 0-7.6 1A2.6 2.6 0 0 0 8 18.5z" /></> },
   sistema: { bg: GRAY, glyph: <><rect x="7" y="7" width="10" height="10" rx="1.5" /><path d="M10 4.5v2.5M14 4.5v2.5M10 17v2.5M14 17v2.5M4.5 10H7M4.5 14H7M17 10h2.5M17 14h2.5" /></> },
+  bateria: { bg: "#34c759", glyph: <><rect x="4" y="8" width="14" height="8" rx="2" /><path d="M20 11v2M8 10.5l-1.5 2.5h3L8 15.5" /></> },
   memoria: { bg: "#5e5ce6", glyph: <><rect x="4.5" y="8" width="15" height="8" rx="1.5" /><path d="M8 11v2M11 11v2M14 11v2M17 11v2M7 16v2.5M12 16v2.5M17 16v2.5" /></> },
   casa: { bg: "#ff9500", glyph: <path d="M5 11.5 12 5l7 6.5V19H5zM10 19v-4.5h4V19" /> },
   claude: { bg: "#d97757", glyph: <path d="m12 4.5 1.7 5.8 5.8 1.7-5.8 1.7L12 19.5l-1.7-5.8L4.5 12l5.8-1.7z" /> },

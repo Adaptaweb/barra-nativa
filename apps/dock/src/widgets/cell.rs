@@ -98,6 +98,9 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
         (WidgetId::Memoria, Size::Compact) => 100,
         (WidgetId::Memoria, Size::Medium | Size::Estado) => 260,
         (WidgetId::Memoria, Size::Wide) => 380,
+        (WidgetId::Bateria, Size::Compact) => 110,
+        (WidgetId::Bateria, Size::Medium | Size::Estado) => 280,
+        (WidgetId::Bateria, Size::Wide) => 460,
         (WidgetId::Casa, Size::Compact) => 140,
         (WidgetId::Casa, Size::Medium | Size::Wide | Size::Estado) => 250,
         (WidgetId::Musica, Size::Compact) => 170,
@@ -149,6 +152,7 @@ pub fn render(
                 WidgetId::Clima => clima(&mut c, size, readings),
                 WidgetId::Sistema => sistema(&mut c, size, readings),
                 WidgetId::Memoria => memoria(&mut c, size, readings),
+                WidgetId::Bateria => bateria(&mut c, size, readings),
                 WidgetId::Casa => casa(&mut c, size, readings),
                 WidgetId::Bandeja => bandeja(&mut c, readings),
                 WidgetId::Control => control(&mut c, size, readings),
@@ -727,6 +731,103 @@ fn memoria(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     c.pen.text(&free, (c.x, top + bar_h + gap), 10.5, Weight::Normal, c.faded())?;
     c.x += bar_w;
     Ok(())
+}
+
+/// Seconds since the first battery paint: the water's clock.
+fn water_clock() -> f32 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_secs_f32()
+}
+
+/// The water's top and bottom colours: green, yellow with battery saver,
+/// red at 20 % or less while not charging.
+pub(super) fn water_colors(b: muelle_shell::system::Battery) -> (Rgba, Rgba) {
+    if b.percent <= 20 && !b.charging {
+        ([1.0, 0.42, 0.37, 1.0], [0.85, 0.18, 0.13, 1.0])
+    } else if b.saver {
+        ([0.98, 0.80, 0.08, 1.0], [0.79, 0.54, 0.02, 1.0])
+    } else {
+        ([0.29, 0.87, 0.50, 1.0], [0.09, 0.64, 0.29, 1.0])
+    }
+}
+
+/// "Quedan 4 h 10 min", "Cargando", "Con batería".
+pub(super) fn battery_status(b: muelle_shell::system::Battery) -> String {
+    match (b.charging, b.minutes_left) {
+        (true, _) => "Cargando".to_owned(),
+        (false, Some(m)) if m >= 60 => format!("Quedan {} h {} min", m / 60, m % 60),
+        (false, Some(m)) => format!("Quedan {m} min"),
+        (false, None) => "Con batería".to_owned(),
+    }
+}
+
+/// The battery as a rounded box filling with water to its charge. Two waves
+/// drift against each other and the surface bobs, so it never stands still;
+/// bubbles rise while it charges. Medium adds the percent and what is left;
+/// wide, battery saver and whether it is plugged in.
+fn bateria(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
+    let Some(b) = r.control.and_then(|d| d.battery) else {
+        return c.text(if r.control.is_some() { "Sin batería" } else { "Batería…" }, 11.0, Weight::Normal, c.faded());
+    };
+    let t = if muelle_shell::system::animations_enabled() { water_clock() } else { 0.0 };
+    let side = (c.height * 0.86).round();
+    let (x, y) = (c.x, ((c.height - side) / 2.0).round());
+    let radius = side * 0.25;
+    c.pen.round_rect((x, y), (side, side), radius, ink(c.light, 0.14))?;
+    let level = (f32::from(b.percent.min(100)) / 100.0).max(0.08);
+    let surface = y + side * (1.0 - level) + c.px(0.8) * (t * 2.4).sin();
+    let (bright, deep) = water_colors(b);
+    let back = [deep[0], deep[1], deep[2], 0.85];
+    c.pen.wave((x, y), (side, side), radius, surface - c.px(1.0), (c.px(2.2), side * 0.9, 1.3 - t * 1.7), (back, back))?;
+    c.pen.wave((x, y), (side, side), radius, surface + c.px(0.8), (c.px(1.8), side * 1.1, t * 2.4), (bright, deep))?;
+    if b.charging {
+        // Three bubbles rise from the bottom to the surface, one after another.
+        for (k, (dx, d)) in [(0.28, 2.6), (0.55, 2.0), (0.74, 3.0)].into_iter().enumerate() {
+            let along = (t * 0.45 + k as f32 / 3.0).fract();
+            let bottom = y + side - c.px(4.0);
+            let by = bottom - along * (bottom - surface - c.px(2.0)).max(0.0);
+            let dot = c.px(d);
+            c.pen.round_rect((x + side * dx, by), (dot, dot), dot / 2.0, [1.0, 1.0, 1.0, 0.65 * (1.0 - along)])?;
+        }
+    }
+    let white = [1.0, 1.0, 1.0, 1.0];
+    if size == Size::Compact {
+        let number = b.percent.to_string();
+        let (nw, nh) = c.gfx.measure(&number, 17.0, c.unit, Weight::Heavy)?;
+        let (bw, bh) = if b.charging { c.gfx.measure_icon('\u{E945}', 11.0, c.unit)? } else { (0.0, 0.0) };
+        let start = x + (side - nw - bw) / 2.0;
+        if b.charging {
+            c.pen.icon('\u{E945}', (start, y + (side - bh) / 2.0), 11.0, white)?;
+        }
+        c.pen.text(&number, (start + bw, y + (side - nh) / 2.0), 17.0, Weight::Heavy, white)?;
+        c.x += side;
+        return Ok(());
+    }
+    if b.charging {
+        let (bw, bh) = c.gfx.measure_icon('\u{E945}', 15.0, c.unit)?;
+        c.pen.icon('\u{E945}', (x + (side - bw) / 2.0, y + (side - bh) / 2.0), 15.0, white)?;
+    }
+    c.x += side + c.px(10.0);
+    let percent = format!("{} %", b.percent);
+    let status = battery_status(b);
+    c.column(
+        (&percent, 24.0, Weight::Heavy, c.strong()),
+        (&status, 10.5, Weight::Normal, c.faded()),
+        false,
+        24,
+    )?;
+    if size != Size::Wide {
+        return Ok(());
+    }
+    c.separator()?;
+    let saver = if b.saver { "Ahorro de batería: sí" } else { "Ahorro de batería: no" };
+    let plug = if b.charging { "Enchufado" } else { "Con batería" };
+    c.column(
+        (saver, 12.0, Weight::Bold, c.strong()),
+        (plug, 10.5, Weight::Normal, c.faded()),
+        false,
+        24,
+    )
 }
 
 fn casa(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {

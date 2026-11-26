@@ -67,7 +67,8 @@ fn pill_height(frame: &Frame) -> f32 {
     (frame.height + frame.icon * (island_scale(frame) - 1.0)).round()
 }
 
-/// Timer that repaints the music cell while its title or artist scrolls.
+/// Timer that repaints the moving cells: music while its title or artist
+/// scrolls, and the battery's water.
 const MARQUEE_TIMER: usize = 0x4D51;
 /// Marquee repaint period (about 30 frames per second).
 const MARQUEE_MS: u32 = 33;
@@ -290,9 +291,10 @@ fn relayout(island: &mut Island, gfx: &Gfx, frame: &Frame, list: &[WidgetId], vi
     Ok(())
 }
 
-/// Runs the marquee timer only while the island has a music cell that scrolls.
+/// Runs the timer only while the island has a cell that moves.
 fn sync_marquee(island: &Island) {
-    let wanted = widgets::marquee_active() && island.cells.iter().any(|(id, _, _)| *id == WidgetId::Musica);
+    let readings = widgets::readings();
+    let wanted = island.cells.iter().any(|(id, _, _)| widgets::animates(*id, &readings));
     // SAFETY: Our own live window; the timer is replaced or killed by id.
     unsafe {
         if wanted {
@@ -462,8 +464,8 @@ pub fn repaint() {
     });
 }
 
-/// The marquee timer fired: repaint only the music cells (and rebuild if
-/// their width changed).
+/// The timer fired: repaint only the moving cells (and rebuild if their
+/// width changed).
 fn repaint_music() {
     STATE.with(|state| {
         let Ok(mut state) = state.try_borrow_mut() else {
@@ -481,7 +483,7 @@ fn repaint_music() {
                 .zip(&island.sprites)
                 .zip(island.zones.iter_mut())
             {
-                if *id != WidgetId::Musica {
+                if !matches!(id, WidgetId::Musica | WidgetId::Bateria) {
                     continue;
                 }
                 widgets::set_marquee(true);

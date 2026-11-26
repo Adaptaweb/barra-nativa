@@ -8,9 +8,10 @@ use windows::{
     Win32::Graphics::{
         Direct2D::{
             Common::{
-                D2D_RECT_F, D2D_SIZE_F, D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_OPEN,
-                D2D1_GRADIENT_STOP,
+                D2D_RECT_F, D2D_SIZE_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_BEGIN_HOLLOW,
+                D2D1_FIGURE_END_CLOSED, D2D1_FIGURE_END_OPEN, D2D1_GRADIENT_STOP,
             },
+            D2D1_COMBINE_MODE_INTERSECT,
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_LARGE, D2D1_ARC_SIZE_SMALL,
             D2D1_BUFFER_PRECISION_8BPC_UNORM, D2D1_CAP_STYLE_ROUND,
             D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED, D2D1_COLOR_SPACE_SRGB,
@@ -372,6 +373,71 @@ impl Pen<'_> {
                 None,
             )?;
             self.dc.DrawGeometry(&path, &ink, stroke, &style);
+        }
+        Ok(())
+    }
+
+    /// Liquid inside a rounded box: everything under a sine wave whose rest
+    /// line is `surface` (absolute y), `amplitude` high and `wavelength`
+    /// long, shifted by `phase` (radians), cut to the box's rounded shape and
+    /// filled top to bottom from `top` to `bottom`.
+    pub fn wave(
+        &self,
+        (x, y): (f32, f32),
+        (width, height): (f32, f32),
+        radius: f32,
+        surface: f32,
+        (amplitude, wavelength, phase): (f32, f32, f32),
+        (top, bottom): (Rgba, Rgba),
+    ) -> Result<()> {
+        // SAFETY: Geometries, sinks and brushes live for the drawing call.
+        unsafe {
+            let factory = self.dc.GetFactory()?;
+            let wave = factory.CreatePathGeometry()?;
+            let sink = wave.Open()?;
+            let at = |px: f32| surface + amplitude * (std::f32::consts::TAU * (px - x) / wavelength.max(1.0) + phase).sin();
+            sink.BeginFigure(Vector2 { X: x, Y: at(x) }, D2D1_FIGURE_BEGIN_FILLED);
+            let step = 2.0_f32.max(width / 48.0);
+            let mut px = x + step;
+            while px < x + width {
+                sink.AddLine(Vector2 { X: px, Y: at(px) });
+                px += step;
+            }
+            sink.AddLine(Vector2 { X: x + width, Y: at(x + width) });
+            sink.AddLine(Vector2 { X: x + width, Y: y + height });
+            sink.AddLine(Vector2 { X: x, Y: y + height });
+            sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+            sink.Close()?;
+            let shape = factory.CreateRoundedRectangleGeometry(&D2D1_ROUNDED_RECT {
+                rect: D2D_RECT_F { left: x, top: y, right: x + width, bottom: y + height },
+                radiusX: radius,
+                radiusY: radius,
+            })?;
+            let liquid = factory.CreatePathGeometry()?;
+            let inside = liquid.Open()?;
+            wave.CombineWithGeometry(&shape, D2D1_COMBINE_MODE_INTERSECT, None, 0.25, &inside)?;
+            inside.Close()?;
+            let stops = [
+                D2D1_GRADIENT_STOP { position: 0.0, color: rgb(top[0], top[1], top[2], top[3]) },
+                D2D1_GRADIENT_STOP { position: 1.0, color: rgb(bottom[0], bottom[1], bottom[2], bottom[3]) },
+            ];
+            let collection = self.dc.CreateGradientStopCollection(
+                &stops,
+                D2D1_COLOR_SPACE_SRGB,
+                D2D1_COLOR_SPACE_SRGB,
+                D2D1_BUFFER_PRECISION_8BPC_UNORM,
+                D2D1_EXTEND_MODE_CLAMP,
+                D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED,
+            )?;
+            let fill = self.dc.CreateLinearGradientBrush(
+                &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                    startPoint: Vector2 { X: x, Y: surface - amplitude },
+                    endPoint: Vector2 { X: x, Y: y + height },
+                },
+                None,
+                &collection,
+            )?;
+            self.dc.FillGeometry(&liquid, &fill, None);
         }
         Ok(())
     }

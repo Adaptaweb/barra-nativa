@@ -49,6 +49,8 @@ pub enum WidgetId {
     Sistema,
     /// Memory in use: a ring with the load and the gigabytes used.
     Memoria,
+    /// Battery charge as green water that rises with it and keeps moving.
+    Bateria,
     /// Current weather for the configured city.
     Clima,
     /// Date and time with the next calendar event. Replaces the bar's clock.
@@ -75,7 +77,7 @@ pub enum WidgetId {
 }
 
 impl WidgetId {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Bandeja,
         Self::Control,
         Self::Notificaciones,
@@ -83,6 +85,7 @@ impl WidgetId {
         Self::Audio,
         Self::Sistema,
         Self::Memoria,
+        Self::Bateria,
         Self::Clima,
         Self::Reloj,
         Self::Casa,
@@ -100,6 +103,7 @@ impl WidgetId {
         match self {
             Self::Sistema => "sistema",
             Self::Memoria => "memoria",
+            Self::Bateria => "bateria",
             Self::Clima => "clima",
             Self::Reloj => "reloj",
             Self::Casa => "casa",
@@ -119,6 +123,7 @@ impl WidgetId {
         match self {
             Self::Sistema => "Sistema",
             Self::Memoria => "Memoria",
+            Self::Bateria => "Batería",
             Self::Clima => "Clima",
             Self::Reloj => "Calendario",
             Self::Casa => "Casa",
@@ -149,6 +154,7 @@ impl WidgetId {
         let readings = readings();
         match self {
             Self::Sistema | Self::Memoria => "taskmgr.exe".to_owned(),
+            Self::Bateria => "ms-settings:batterysaver".to_owned(),
             Self::Clima => "msnweather:".to_owned(),
             Self::Reloj => match readings.reloj.map(|r| r.calendar) {
                 Some(Calendar::NotConnected) => {
@@ -222,6 +228,7 @@ impl WidgetId {
             // The dock shows only its chevron; the icons are in the panel.
             Self::Bandeja | Self::Notificaciones => String::new(),
             Self::Control => format!("{:?}", readings.control),
+            Self::Bateria => format!("{:?}", readings.control.map(|d| d.battery)),
             Self::Musica => format!("{:?}", readings.musica),
             Self::Audio => format!("{:?}", readings.audio),
             Self::Claude | Self::ChatGpt | Self::Gemini => {
@@ -241,6 +248,7 @@ impl WidgetId {
             Self::Reloj => readings.reloj.is_some(),
             Self::Casa => readings.casa.is_some(),
             Self::Bandeja | Self::Control | Self::Notificaciones => true,
+            Self::Bateria => readings.control.is_some(),
             Self::Claude | Self::ChatGpt | Self::Gemini => readings.ia.is_some(),
             Self::Musica => readings.musica.is_some(),
             Self::Audio => readings.audio.is_some(),
@@ -255,12 +263,24 @@ impl WidgetId {
             Self::Casa => (&CASA_ON, casa::start),
             Self::Claude | Self::ChatGpt | Self::Gemini => (&IA_ON, ia::start),
             Self::Bandeja => (&BANDEJA_ON, start_tray),
-            Self::Control => (&CONTROL_ON, control::start),
+            Self::Control | Self::Bateria => (&CONTROL_ON, control::start),
             // Nothing to read: a shape flag with no source thread (`configure` sets it).
             Self::Notificaciones => (&NOTIFICACIONES_ON, no_source),
             Self::Musica => (&MUSICA_ON, musica::start),
             Self::Audio => (&AUDIO_ON, audio::start),
         }
+    }
+}
+
+/// Whether widget `id` moves on its own in an island and needs the repaint
+/// timer: music while its text scrolls, the battery's water while there is one.
+pub fn animates(id: WidgetId, readings: &Readings) -> bool {
+    match id {
+        WidgetId::Musica => marquee_active(),
+        WidgetId::Bateria => {
+            readings.control.and_then(|d| d.battery).is_some() && muelle_shell::system::animations_enabled()
+        }
+        _ => false,
     }
 }
 

@@ -42,6 +42,11 @@ pub(super) fn bar(
             .map(|d| control_bar(gfx, d, scale, height, light))
             .transpose(),
         WidgetId::Notificaciones => notificaciones_bar(gfx, scale, height, light).map(Some),
+        WidgetId::Bateria => readings
+            .control
+            .and_then(|d| d.battery)
+            .map(|b| bateria_bar(gfx, b, scale, height, light))
+            .transpose(),
         WidgetId::Musica => readings
             .musica
             .as_ref()
@@ -54,6 +59,21 @@ pub(super) fn bar(
             .transpose(),
         WidgetId::Sistema | WidgetId::Memoria | WidgetId::Clima | WidgetId::Bandeja => Ok(None),
     }
+}
+
+/// The battery glyph (with a plug while charging) and the percent.
+fn bateria_bar(gfx: &Gfx, b: muelle_shell::system::Battery, scale: f32, height: f32, light: bool) -> Result<LabelBrush> {
+    let glyph = super::control::battery_glyph(b);
+    let text = format!("{} %", b.percent);
+    let (gw, gh) = gfx.measure_icon(glyph, 14.0, scale)?;
+    let (tw, th) = gfx.measure(&text, 13.0, scale, Weight::Normal)?;
+    let gap = (5.0 * scale).round();
+    let color = if b.percent <= 20 && !b.charging { RED } else { ink(light, 1.0) };
+    gfx.paint((gw + gap + tw, height), scale, |pen| {
+        pen.icon(glyph, (0.0, (height - gh) / 2.0), 14.0, color)?;
+        pen.text(&text, (gw + gap, (height - th) / 2.0), 13.0, Weight::Normal, ink(light, 1.0))?;
+        Ok(())
+    })
 }
 
 /// A note and the title of what is playing.

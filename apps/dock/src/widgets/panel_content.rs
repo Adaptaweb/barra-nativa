@@ -69,6 +69,26 @@ pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
         WidgetId::Notificaciones => {}
         // Drawn by musica_panel.
         WidgetId::Musica => {}
+        WidgetId::Bateria => {
+            b.push(Block::Title("Batería".into(), String::new()));
+            let Some(bat) = r.control.and_then(|d| d.battery) else {
+                b.push(Block::Text("Este equipo no tiene batería.".into(), true));
+                return b;
+            };
+            b.push(Block::Meter {
+                label: if bat.charging { "Cargando".into() } else { "Carga".into() },
+                percent: bat.percent.min(100),
+                color: super::cell::water_colors(bat).0,
+                note: format!("{} %", bat.percent),
+            });
+            b.push(Block::Text(super::cell::battery_status(bat), true));
+            b.push(Block::Text(
+                if bat.saver { "Ahorro de batería activado." } else { "Ahorro de batería desactivado." }.into(),
+                true,
+            ));
+            b.push(Block::Gap(4.0));
+            b.push(Block::Buttons(vec![open("Opciones de energía", "ms-settings:batterysaver", true)]));
+        }
         WidgetId::Audio => {
             b.push(Block::Title("Audio".into(), String::new()));
             // The audio thread reads the lists; the panel never enumerates.

@@ -4252,6 +4252,7 @@ mod island_tests {
             percent: 75,
             charging: false,
             saver: false,
+            minutes_left: None,
         });
         look.accessories = [None, None];
         look.status.bluetooth_on = false;

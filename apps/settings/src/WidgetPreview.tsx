@@ -16,6 +16,17 @@ const Ring = ({ value, color, label }: { value: string; color: string; label: st
   </svg>
 );
 
+/** The battery's box filling with green water whose waves keep moving (as the dock draws it). */
+const Water = ({ level, charging, label }: { level: number; charging: boolean; label: string }) => (
+  <span className="wp-water" aria-hidden="true">
+    <span className="wp-water-body" style={{ height: `${Math.max(8, level)}%` }}>
+      <svg className="wp-wave wp-wave-back" viewBox="0 0 200 20" preserveAspectRatio="none"><path d="M0 10 Q 25 2 50 10 T 100 10 T 150 10 T 200 10 V 20 H 0 Z" /></svg>
+      <svg className="wp-wave wp-wave-front" viewBox="0 0 200 20" preserveAspectRatio="none"><path d="M0 10 Q 25 18 50 10 T 100 10 T 150 10 T 200 10 V 20 H 0 Z" /></svg>
+    </span>
+    <span className="wp-water-label">{charging ? "⚡" : ""}{label}</span>
+  </span>
+);
+
 const Bar = ({ label, value, color }: { label: string; value: number; color: string }) => (
   <span className="wp-meter">
     <span className="wp-dim">{label}</span>
@@ -53,6 +64,14 @@ function dockCell(key: string, size: PreviewSize) {
         <>
           <Ring value="52°" color="#34c759" label="TEMP" />
           {compact ? null : <><Ring value="18%" color="#34c759" label="CPU" /><Ring value="47%" color="#34c759" label="RAM" /></>}
+        </>
+      );
+    case "bateria":
+      return (
+        <>
+          <Water level={86} charging label={compact ? "86" : ""} />
+          {compact ? null : <span className="wp-stack"><b className="wp-big">86 %</b><span className="wp-dim">Cargando</span></span>}
+          {wide ? <><span className="wp-sep" /><span className="wp-stack"><b>Ahorro de batería: no</b><span className="wp-dim">Enchufado</span></span></> : null}
         </>
       );
     case "memoria":
@@ -129,6 +148,7 @@ function barCell(key: string) {
     case "reloj": return <span>mié 25 nov  14:30 · <span className="wp-dim">Reunión en 25 min</span></span>;
     case "clima": return <span>☀️ 19°</span>;
     case "sistema": return <span><span className="wp-dot" style={{ background: "#34c759" }} /> 52° · CPU 18% · RAM 47%</span>;
+    case "bateria": return <span>🔋 86 %</span>;
     case "memoria": return <span><span className="wp-dot" style={{ background: "#34c759" }} /> 54% · 8,2 GB</span>;
     case "casa": return <span>🏠 2</span>;
     case "claude": return <span><b>C</b> 63% · 1 h 52 min</span>;

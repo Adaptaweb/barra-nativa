@@ -40,6 +40,19 @@ pub(super) fn battery_glyph(b: Battery) -> char {
     }
 }
 
+/// The battery, or in debug builds a made-up one when `BARRA_FAKE_BATTERY` is
+/// set (`72`, or `72c` charging) so a desktop can show the battery widget.
+fn battery() -> Option<Battery> {
+    if cfg!(debug_assertions)
+        && let Ok(fake) = std::env::var("BARRA_FAKE_BATTERY")
+    {
+        let charging = fake.ends_with('c');
+        let percent = fake.trim_end_matches('c').parse::<u8>().unwrap_or(72).min(100);
+        return Some(Battery { percent, charging, saver: false, minutes_left: (!charging).then_some(250) });
+    }
+    system::battery()
+}
+
 pub(super) fn start() {
     let spawned = thread::Builder::new()
         .name("barra-control".into())
@@ -53,7 +66,7 @@ pub(super) fn start() {
                 let reading = ControlData {
                     network: status::network(),
                     volume: audio.as_mut().and_then(AudioWatch::volume),
-                    battery: system::battery(),
+                    battery: battery(),
                     bluetooth: radio.as_ref().is_some_and(bluetooth::Monitor::is_on),
                 };
                 publish(|r| {

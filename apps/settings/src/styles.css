@@ -761,6 +761,16 @@ textarea.text-field { width: 100%; resize: vertical; font-family: ui-monospace, 
 .wp-emoji { font-size: 20px; }
 .wp-logo { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: #d97757; font-weight: 800; }
 .wp-ring { width: 40px; height: 40px; }
+.wp-water { position: relative; width: 38px; height: 38px; border-radius: 10px; overflow: hidden; background: rgba(255, 255, 255, 0.12); flex: none; }
+.wp-water-body { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(#4ade80, #16a34a); animation: wp-bob 2.6s ease-in-out infinite; }
+.wp-wave { position: absolute; left: 0; width: 200%; }
+.wp-wave-back { top: -7px; height: 9px; fill: #16a34a; animation: wp-wave-b 5.4s linear infinite; }
+.wp-wave-front { top: -5px; height: 7px; fill: #4ade80; animation: wp-wave-a 3.2s linear infinite; }
+.wp-water-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 13px; font-weight: 800; }
+@keyframes wp-wave-a { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes wp-wave-b { from { transform: translateX(-50%); } to { transform: translateX(0); } }
+@keyframes wp-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(1px); } }
+@media (prefers-reduced-motion: reduce) { .wp-water-body, .wp-wave { animation: none; } }
 .wp-ring-value { fill: #fff; font-size: 12px; font-weight: 800; }
 .wp-ring-label { fill: rgba(255, 255, 255, 0.88); font-size: 7.5px; font-weight: 800; }
 .wp-meter { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
