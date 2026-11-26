@@ -26,7 +26,7 @@ use crate::{
     gfx::{Gfx, LabelBrush},
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Theme {
     pub light: bool,
     /// Blur what is behind the dock; without it the tint is drawn opaque.
@@ -168,27 +168,26 @@ impl Theme {
         }
     }
 
-    /// A fixed-size surface exactly like the dock's own glass.
-    pub fn surface(
+    /// A surface exactly like the dock's own glass, kept so it can be resized in place.
+    pub fn pill(
         &self,
         gfx: &Gfx,
         size: Vector2,
         radius: f32,
         scale: f32,
-    ) -> Result<ContainerVisual> {
+    ) -> Result<GlassPill> {
         let stroke = scale.max(1.0);
         let material = GlassSurface::build(gfx, *self, radius, stroke)?;
-        material.glass.SetSize(size)?;
-        material.outline.SetSize(size)?;
-        material.rim.SetSize(size)?;
-        material
-            .rim_geometry
-            .SetSize(v2(size.X - stroke, size.Y - stroke))?;
         let root = gfx.compositor.CreateContainerVisual()?;
-        root.SetSize(size)?;
         root.Children()?.InsertAtTop(&material.glass)?;
         root.Children()?.InsertAtTop(&material.rim)?;
-        Ok(root)
+        let pill = GlassPill {
+            root,
+            material,
+            stroke,
+        };
+        pill.resize(size)?;
+        Ok(pill)
     }
 
     /// A fixed-size panel using the dock's backdrop, tint, sheen and rim.
@@ -216,6 +215,34 @@ impl Theme {
         root.Children()?.InsertAtTop(&material.glass)?;
         root.Children()?.InsertAtTop(&material.rim)?;
         Ok(root)
+    }
+}
+
+/// A glass surface whose size can change without recreating its material
+/// (and its backdrop brush).
+pub struct GlassPill {
+    root: ContainerVisual,
+    material: GlassSurface,
+    stroke: f32,
+}
+
+impl GlassPill {
+    /// The visual holding the glass and the rim.
+    pub fn visual(&self) -> &ContainerVisual {
+        &self.root
+    }
+
+    /// Resizes the glass, outline, rim and root to `size`.
+    pub fn resize(&self, size: Vector2) -> Result<()> {
+        let material = &self.material;
+        material.glass.SetSize(size)?;
+        material.outline.SetSize(size)?;
+        material.rim.SetSize(size)?;
+        material
+            .rim_geometry
+            .SetSize(v2(size.X - self.stroke, size.Y - self.stroke))?;
+        self.root.SetSize(size)?;
+        Ok(())
     }
 }
 

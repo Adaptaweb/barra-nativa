@@ -77,6 +77,15 @@ struct Island {
     hwnd: HWND,
     _target: DesktopWindowTarget,
     root: ContainerVisual,
+    /// The glass pill under the cells, resized in place when the width changes.
+    glass: crate::scene::GlassPill,
+    /// What the window was built for: reusable only while these still match.
+    monitor: Monitor,
+    /// Height of the glass pill.
+    height: f32,
+    /// The whole look the glass was made with: any change in it builds new glass.
+    theme: Theme,
+    scale: f32,
     /// Each widget and where it is, in window pixels: left, width.
     cells: Vec<(WidgetId, f32, f32)>,
     /// Per cell, the parts a click acts on: x from, x to (in the cell), what.
@@ -153,13 +162,18 @@ fn create_window() -> Result<HWND> {
     }
 }
 
-fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool) -> Result<Option<Island>> {
-    if list.is_empty() {
-        return Ok(None);
-    }
+/// What `layout_cells` produces: cells, click zones, brushes and total width.
+type Laid = (
+    Vec<(WidgetId, f32, f32)>,
+    Vec<widgets::Zones>,
+    Vec<windows::UI::Composition::CompositionSurfaceBrush>,
+    f32,
+);
+
+/// Renders every cell and lays them out left to right: they decide the width.
+fn layout_cells(gfx: &Gfx, frame: &Frame, list: &[WidgetId]) -> Result<Laid> {
     let readings = widgets::readings();
     let light = frame.theme.light;
-    // Cells first: they decide the width.
     let mut cells = Vec::new();
     let mut zones = Vec::new();
     let gap = (frame.padding * 0.6).round();
@@ -177,8 +191,47 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
         x += width + gap;
     }
     let width = (x - gap + frame.padding).round();
-    let height = pill_height(frame);
+    Ok((cells, zones, brushes, width))
+}
+
+/// Creates one sprite per cell and inserts them on top of the glass.
+fn make_sprites(
+    gfx: &Gfx,
+    root: &ContainerVisual,
+    frame: &Frame,
+    cells: &[(WidgetId, f32, f32)],
+    brushes: &[windows::UI::Composition::CompositionSurfaceBrush],
+) -> Result<Vec<windows::UI::Composition::SpriteVisual>> {
     let cell_h = cell_height(frame);
+    let height = pill_height(frame);
+    let mut sprites = Vec::new();
+    for ((_, left, w), brush) in cells.iter().zip(brushes) {
+        let sprite = gfx.compositor.CreateSpriteVisual()?;
+        sprite.SetSize(Vector2::new(*w, cell_h))?;
+        sprite.SetOffset(Vector3::new(*left, ((height - cell_h) / 2.0).round(), 0.0))?;
+        sprite.SetBrush(brush)?;
+        root.Children()?.InsertAtTop(&sprite)?;
+        sprites.push(sprite);
+    }
+    Ok(sprites)
+}
+
+/// Window left edge for an island of `width` on `side`.
+fn island_left(frame: &Frame, side: Side, width: f32) -> i32 {
+    let screen = frame.monitor.screen;
+    let left = match side {
+        Side::Left => screen.left as f32 + frame.margin,
+        Side::Right => screen.right as f32 - frame.margin - width,
+    };
+    left as i32
+}
+
+fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool) -> Result<Option<Island>> {
+    if list.is_empty() {
+        return Ok(None);
+    }
+    let (cells, zones, brushes, width) = layout_cells(gfx, frame, list)?;
+    let height = pill_height(frame);
     let c = &gfx.compositor;
     let hwnd = create_window()?;
     // SAFETY: `hwnd` is the live window created above.
@@ -190,28 +243,21 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
     root.SetSize(Vector2::new(width, height))?;
     target.SetRoot(&root)?;
     let radius = height * 0.36;
-    let glass = frame.theme.surface(gfx, Vector2::new(width, height), radius, frame.scale)?;
-    root.Children()?.InsertAtTop(&glass)?;
-    let mut sprites = Vec::new();
-    for ((_, left, w), brush) in cells.iter().zip(&brushes) {
-        let sprite = c.CreateSpriteVisual()?;
-        sprite.SetSize(Vector2::new(*w, cell_h))?;
-        sprite.SetOffset(Vector3::new(*left, ((height - cell_h) / 2.0).round(), 0.0))?;
-        sprite.SetBrush(brush)?;
-        root.Children()?.InsertAtTop(&sprite)?;
-        sprites.push(sprite);
-    }
-    let screen = frame.monitor.screen;
-    let left = match side {
-        Side::Left => screen.left as f32 + frame.margin,
-        Side::Right => screen.right as f32 - frame.margin - width,
-    } as i32;
-    let top = (screen.bottom as f32 - frame.margin - height) as i32;
+    let glass = frame.theme.pill(gfx, Vector2::new(width, height), radius, frame.scale)?;
+    root.Children()?.InsertAtTop(glass.visual())?;
+    let sprites = make_sprites(gfx, &root, frame, &cells, &brushes)?;
+    let left = island_left(frame, side, width);
+    let top = (frame.monitor.screen.bottom as f32 - frame.margin - height) as i32;
     let island = Island {
         side,
         hwnd,
         _target: target,
         root,
+        glass,
+        monitor: frame.monitor,
+        height,
+        theme: frame.theme,
+        scale: frame.scale,
         cells,
         zones,
         sprites,
@@ -221,6 +267,27 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
     };
     island.place(visible);
     Ok(Some(island))
+}
+
+/// Lays an island's cells out again in place, reusing its window, target,
+/// root and glass so nothing flickers.
+fn relayout(island: &mut Island, gfx: &Gfx, frame: &Frame, list: &[WidgetId], visible: bool) -> Result<()> {
+    let (cells, zones, brushes, width) = layout_cells(gfx, frame, list)?;
+    for sprite in &island.sprites {
+        island.root.Children()?.Remove(sprite)?;
+    }
+    island.sprites.clear();
+    let size = Vector2::new(width, island.height);
+    island.root.SetSize(size)?;
+    island.glass.resize(size)?;
+    island.sprites = make_sprites(gfx, &island.root, frame, &cells, &brushes)?;
+    island.cells = cells;
+    island.zones = zones;
+    island.left = island_left(frame, island.side, width);
+    island.top = (frame.monitor.screen.bottom as f32 - frame.margin - island.height) as i32;
+    island.width = width as i32;
+    island.place(visible);
+    Ok(())
 }
 
 /// Runs the marquee timer only while the island has a music cell that scrolls.
@@ -289,7 +356,7 @@ pub fn update(gfx: &Gfx, frame: Frame) {
                 && f.icon == frame.icon
                 && f.margin == frame.margin
                 && f.island_scale == frame.island_scale
-                && f.theme.light == frame.theme.light
+                && f.theme == frame.theme
         });
         state.gfx = Some(gfx.clone());
         state.frame = Some(frame);
@@ -312,13 +379,35 @@ fn rebuild(state: &mut State) {
     let (Some(gfx), Some(frame)) = (state.gfx.clone(), state.frame) else {
         return;
     };
-    state.islands.clear();
+    let visible = state.visible;
+    let mut old = std::mem::take(&mut state.islands);
     for side in [Side::Left, Side::Right] {
         let list: Vec<WidgetId> = widgets::islands(side == Side::Left)
             .into_iter()
             .map(|(id, _)| id)
             .collect();
-        match build(&gfx, &frame, side, &list, state.visible) {
+        let existing = old.iter().position(|i| i.side == side).map(|at| old.remove(at));
+        if list.is_empty() {
+            continue;
+        }
+        if let Some(mut island) = existing {
+            let reusable = island.monitor == frame.monitor
+                && island.height == pill_height(&frame)
+                && island.theme == frame.theme
+                && island.scale == frame.scale;
+            if reusable {
+                match relayout(&mut island, &gfx, &frame, &list, visible) {
+                    Ok(()) => {
+                        sync_marquee(&island);
+                        state.islands.push(island);
+                        continue;
+                    }
+                    Err(error) => eprintln!("muelle: isla de widgets: {error:#}"),
+                }
+            }
+            // Dropping the old island destroys its window before the new one.
+        }
+        match build(&gfx, &frame, side, &list, visible) {
             Ok(Some(island)) => {
                 sync_marquee(&island);
                 state.islands.push(island);
