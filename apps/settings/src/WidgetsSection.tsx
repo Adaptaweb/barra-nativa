@@ -1,19 +1,18 @@
 /**
  * Barra widgets, in two places of Settings: the menu bar section edits the
  * menu bar's widgets (`part="bar"`), the Widgets section the dock's and the
- * islands' (`part="dock"`) and what widgets need (the weather city, the
- * calendar link, Home Assistant). Secrets go to the Windows Credential
- * Manager and never come back to this page; only whether one is saved.
+ * islands' (`part="dock"`). Configuraciones holds what widgets need (the
+ * weather city, the calendar link, Home Assistant). Secrets go to the Windows
+ * Credential Manager and never come back to this page; only whether one is saved.
  */
 
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   type Config,
   type DisplayInfo,
   type HomeItem,
   type ScreenWidgets,
   type WidgetSettings,
-  ICON_SIZE,
   googleConnect,
   googleDisconnect,
   googleStatus,
@@ -23,36 +22,11 @@ import {
   secretSaved,
   setSecret,
 } from "./config";
-import { Card, Row, Slider, Toggle } from "./controls";
-import { type PreviewSize, WidgetPreview } from "./WidgetPreview";
+import { Card, Row, Segmented } from "./controls";
+import { Tile } from "./tiles";
+import { AddWidget, type MapBox, type Zone, ZONES, ZoneList, ZoneMap, isBarZone } from "./ZoneEditor";
 
-type Zone = "barLeft" | "barRight" | "islandLeft" | "dockLeft" | "dock" | "islandRight";
-
-const WIDGETS: { key: string; name: string; detail: string }[] = [
-  { key: "reloj", name: "Reloj y calendario", detail: "Fecha, hora y tu próximo evento. Reemplaza el reloj de la barra." },
-  { key: "clima", name: "Clima", detail: "Temperatura y cielo de tu ciudad." },
-  { key: "sistema", name: "Sistema", detail: "Temperatura de la CPU, uso de CPU y memoria." },
-  { key: "casa", name: "Casa", detail: "Tus botones de Home Assistant." },
-  { key: "claude", name: "Claude", detail: "Límites de 5 horas y semanal de tu plan." },
-  { key: "chatgpt", name: "ChatGPT", detail: "Límites de tu plan, a través de Codex." },
-  { key: "gemini", name: "Gemini", detail: "Cuota de Gemini CLI o Antigravity." },
-  { key: "control", name: "Centro de control", detail: "Red, volumen y batería; abre la configuración rápida de Windows." },
-  { key: "notificaciones", name: "Notificaciones", detail: "Un botón de campana; abre el centro de notificaciones de Windows." },
-  { key: "musica", name: "Sonando ahora", detail: "La canción que suena, con su carátula, el progreso y los botones de anterior, pausa y siguiente." },
-  { key: "audio", name: "Micrófono y salida", detail: "Dos botones: silencia el micrófono con un clic y elige la salida y la entrada de audio predeterminadas." },
-  { key: "bandeja", name: "Segundo plano", detail: "Los iconos ocultos de la bandeja de Windows (solo en el dock)." },
-];
-
-const ZONES: { zone: Zone; title: string; hint: string }[] = [
-  { zone: "barLeft", title: "Barra superior · izquierda", hint: "Después del nombre de la app activa." },
-  { zone: "barRight", title: "Barra superior · derecha", hint: "Antes de los iconos de estado." },
-  { zone: "islandLeft", title: "Isla izquierda", hint: "Una burbuja aparte abajo a la izquierda; el dock queda solo con tus apps." },
-  { zone: "dockLeft", title: "Dentro del dock · izquierda", hint: "Antes de tus apps; las apps quedan centradas." },
-  { zone: "dock", title: "Dentro del dock · derecha", hint: "Al final del dock, después de las carpetas." },
-  { zone: "islandRight", title: "Isla derecha", hint: "Una burbuja aparte abajo a la derecha." },
-];
-
-const DEFAULT_SCREEN: ScreenWidgets = {
+export const DEFAULT_SCREEN: ScreenWidgets = {
   enabled: true,
   barLeft: [],
   barRight: ["reloj"],
@@ -63,7 +37,15 @@ const DEFAULT_SCREEN: ScreenWidgets = {
   dockSizes: {},
 };
 
-const nameOf = (key: string) => WIDGETS.find((w) => w.key === key)?.name ?? key;
+/** The boxes of the zone map; the dashed ones are what the dock and the bar draw themselves. */
+const DOCK_MAP: MapBox[] = [
+  { zone: "islandLeft" },
+  { zone: "dockLeft" },
+  { note: "tus apps" },
+  { zone: "dock" },
+  { zone: "islandRight" },
+];
+const BAR_MAP: MapBox[] = [{ zone: "barLeft" }, { note: "hora e iconos" }, { zone: "barRight" }];
 
 interface Props {
   config: Config;
@@ -71,8 +53,6 @@ interface Props {
   /** Which widgets this page edits: the menu bar's or the dock's. */
   part: "bar" | "dock";
 }
-
-const isBarZone = (zone: Zone) => zone === "barLeft" || zone === "barRight";
 
 export function WidgetsSection(props: Props) {
   // A settings file from before widgets existed has none yet.
@@ -112,129 +92,63 @@ function WidgetsPage({ config, update, part }: Props) {
   const saveLayout = (patch: Partial<ScreenWidgets>) =>
     editing ? saveScreen(editing.device, patch) : save(patch as Partial<WidgetSettings>);
 
-  const move = (zone: Zone, index: number, by: number) => {
-    const list = [...(layout[zone] ?? [])];
-    const target = index + by;
-    if (target < 0 || target >= list.length) return;
-    [list[index], list[target]] = [list[target], list[index]];
+  const map = part === "bar" ? BAR_MAP : DOCK_MAP;
+  const zones = ZONES.filter(({ zone }) => isBarZone(zone) === (part === "bar")).map((z) => z.zone);
+  const [selected, setSelected] = useState<Zone>(
+    () => zones.find((z) => (layout[z] ?? []).length > 0) ?? (part === "bar" ? "barLeft" : "islandRight"),
+  );
+  const zone = zones.includes(selected) ? selected : zones[0];
+  const keys = layout[zone] ?? [];
+  const counts = Object.fromEntries(zones.map((z) => [z, (layout[z] ?? []).length]));
+
+  const reorder = (from: number, to: number) => {
+    const list = [...keys];
+    if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return;
+    const [item] = list.splice(from, 1);
+    list.splice(to, 0, item);
     saveLayout({ [zone]: list });
   };
-  const remove = (zone: Zone, index: number) =>
-    saveLayout({ [zone]: (layout[zone] ?? []).filter((_, i) => i !== index) });
-  const add = (zone: Zone, key: string) => {
-    if (!key || (layout[zone] ?? []).includes(key)) return;
-    saveLayout({ [zone]: [...(layout[zone] ?? []), key] });
+  const remove = (index: number) => saveLayout({ [zone]: keys.filter((_, i) => i !== index) });
+  const add = (key: string) => {
+    if (!key || keys.includes(key)) return;
+    saveLayout({ [zone]: [...keys, key] });
   };
 
   return (
     <>
-      {displays.length > 1 && part === "bar" ? (
-        <Card title="Pantalla">
+      {displays.length > 1 ? (
+        <Card title={part === "bar" ? "Pantalla" : undefined}>
           <ScreenPicker displays={displays} value={editing ? editing.device : ""} onChange={setScreen} />
         </Card>
       ) : null}
-      {displays.length > 1 && part === "dock" ? (
-        <Card title="Pantallas">
-          {displays.map((d) => (
-            <Row
-              key={d.device}
-              label={d.label}
-              hint={d.primary ? "Siempre tiene dock y barra superior." : "Dock y barra superior propios, con sus widgets y solo las apps de esta pantalla."}
-            >
-              <Toggle
-                label={`Dock en ${d.label}`}
-                checked={d.primary || (widgets.screens?.[d.device]?.enabled ?? true)}
-                disabled={d.primary}
-                onChange={(enabled) => saveScreen(d.device, { enabled })}
-              />
-            </Row>
-          ))}
-          {displays.filter((d) => !d.primary).map((d) => {
-            const own = widgets.screens?.[d.device]?.iconSize ?? null;
-            return (
-              <div key={`size-${d.device}`}>
-                <Row
-                  label={`Tamaño propio en ${d.label}`}
-                  hint={own === null ? `Usa el tamaño del dock principal (${config.iconSize} px).` : "Solo el dock de esta pantalla."}
-                >
-                  <Toggle
-                    label={`Tamaño propio en ${d.label}`}
-                    checked={own !== null}
-                    onChange={(on) => saveScreen(d.device, { iconSize: on ? config.iconSize : null })}
-                  />
-                </Row>
-                {own !== null ? (
-                  <Row label="Tamaño del dock">
-                    <Slider
-                      label={`Tamaño del dock en ${d.label}`}
-                      value={own}
-                      min={ICON_SIZE.min}
-                      max={ICON_SIZE.max}
-                      onChange={(iconSize) => saveScreen(d.device, { iconSize })}
-                    />
-                  </Row>
-                ) : null}
-              </div>
-            );
-          })}
-          <ScreenPicker displays={displays} value={editing ? editing.device : ""} onChange={setScreen} />
-        </Card>
-      ) : null}
-      {part === "dock" ? (
-        <Card title="Islas">
+      <Card>
+        <ZoneMap boxes={map} counts={counts} selected={zone} onSelect={setSelected} />
+        {part === "dock" ? (
           <Row label="Alto de las islas" hint="Cuántas veces el icono mide de alto la burbuja de cada isla.">
-            <span className="select-wrap">
-              <select
-                className="select-control"
-                aria-label="Alto de las islas"
-                value={String(widgets.islandScale ?? 12)}
-                onChange={(e) => save({ islandScale: Number(e.target.value) })}
-              >
-                <option value="10">Normal (1,0×)</option>
-                <option value="12">Medio (1,2×)</option>
-                <option value="15">Grande (1,5×)</option>
-              </select>
-            </span>
+            <Segmented<"10" | "12" | "15">
+              label="Alto de las islas"
+              value={String(widgets.islandScale ?? 12) as "10" | "12" | "15"}
+              options={[
+                { value: "10", label: "1,0×" },
+                { value: "12", label: "1,2×" },
+                { value: "15", label: "1,5×" },
+              ]}
+              onChange={(scale) => save({ islandScale: Number(scale) })}
+            />
           </Row>
-        </Card>
-      ) : null}
-      {ZONES.filter(({ zone }) => isBarZone(zone) === (part === "bar")).map(({ zone, title, hint }) => (
-        <Card key={zone} title={title}>
-          {(layout[zone] ?? []).length === 0 ? (
-            <div className="row"><div className="row-text"><span className="row-hint">{hint} Sin widgets.</span></div></div>
-          ) : (
-            (layout[zone] ?? []).map((key, index) => (
-              <div className="row" key={key}>
-                <div className="row-text">
-                  <span className="row-label">{nameOf(key)}</span>
-                  {index === 0 ? <span className="row-hint">{hint}</span> : null}
-                </div>
-                <div className="row-control push-group">
-                  {zone !== "barLeft" && zone !== "barRight" ? (
-                    <span className="select-wrap">
-                      <select
-                        className="select-control size-control"
-                        aria-label={`Tamaño de ${nameOf(key)}`}
-                        value={layout.dockSizes?.[key] ?? "mediano"}
-                        onChange={(e) => saveLayout({ dockSizes: { ...layout.dockSizes, [key]: e.target.value } })}
-                      >
-                        <option value="compacto">{key === "clima" ? "Compacto · temperatura" : "Compacto"}</option>
-                        <option value="mediano">{key === "clima" ? "Mediano · detalles" : "Mediano"}</option>
-                        <option value="ancho">{key === "clima" ? "Ancho · pronóstico" : "Ancho"}</option>
-                        {key === "clima" ? <option value="estado">Estado · tarjeta</option> : null}
-                      </select>
-                    </span>
-                  ) : null}
-                  <button type="button" className="push" aria-label="Subir" disabled={index === 0} onClick={() => move(zone, index, -1)}>↑</button>
-                  <button type="button" className="push" aria-label="Bajar" disabled={index === (layout[zone] ?? []).length - 1} onClick={() => move(zone, index, 1)}>↓</button>
-                  <button type="button" className="push" aria-label={`Quitar ${nameOf(key)}`} onClick={() => remove(zone, index)}>Quitar</button>
-                </div>
-              </div>
-            ))
-          )}
-          <AddRow zone={zone} placed={layout[zone] ?? []} onAdd={(key) => add(zone, key)} />
-        </Card>
-      ))}
+        ) : null}
+      </Card>
+      <ZoneList
+        zone={zone}
+        keys={keys}
+        sizes={layout.dockSizes}
+        showSize={part === "dock"}
+        onReorder={reorder}
+        onRemove={remove}
+        onSize={(key, size) => saveLayout({ dockSizes: { ...layout.dockSizes, [key]: size } })}
+      >
+        <AddWidget key={zone} zone={zone} placed={keys} onAdd={add} />
+      </ZoneList>
 
       {part === "dock" ? (
         <div className="row">
@@ -249,15 +163,40 @@ function WidgetsPage({ config, update, part }: Props) {
   );
 }
 
+type ServiceId = "clima" | "calendario" | "casa" | "ia";
+
 /** Accounts and services the widgets need: weather city, calendar, Home Assistant, AI limits. */
 export function ServicesSection({ config, update }: Omit<Props, "part">) {
+  const [open, setOpen] = useState<ServiceId | null>(null);
+  const [status, setStatus] = useState({ google: false, ical: false, token: false });
+  // Read again when a row opens or closes, so the pills follow what was just saved.
+  useEffect(() => {
+    Promise.all([
+      googleStatus().catch(() => false),
+      secretSaved("calendario.ics").catch(() => false),
+      secretSaved("casa.token").catch(() => false),
+    ]).then(([google, ical, token]) => setStatus({ google, ical, token }));
+  }, [open]);
   // A settings file from before widgets existed has none yet.
   if (!config.widgets) return null;
   const widgets = config.widgets;
   const save = (patch: Partial<WidgetSettings>) => update({ widgets: { ...widgets, ...patch } });
+  const toggle = (id: ServiceId) => setOpen(open === id ? null : id);
+
+  const buttons = widgets.homeItems.length;
+  const homeSummary = widgets.homeUrl || buttons > 0
+    ? `${buttons} ${buttons === 1 ? "botón" : "botones"}${widgets.cameraName ? ` · cámara ${widgets.cameraName}` : ""}`
+    : "Sin configurar";
+
   return (
-    <>
-      <Card title="Clima">
+    <Card>
+      <ServiceRow
+        tile="clima"
+        title="Clima"
+        subtitle={widgets.weatherCity || "Sin ciudad"}
+        open={open === "clima"}
+        onToggle={() => toggle("clima")}
+      >
         <Row label="Ciudad" hint="El nombre se busca en Open-Meteo; no hace falta cuenta.">
           <TextField
             value={widgets.weatherCity}
@@ -265,12 +204,34 @@ export function ServicesSection({ config, update }: Omit<Props, "part">) {
             onCommit={(weatherCity) => save({ weatherCity })}
           />
         </Row>
-      </Card>
-
-      <CalendarCard />
-      <HomeCard widgets={widgets} save={save} />
-
-      <Card title="Límites de IA">
+      </ServiceRow>
+      <ServiceRow
+        tile="calendario"
+        title="Calendario"
+        subtitle={status.google ? "Google" : status.ical ? "iCal" : "Sin conectar"}
+        pill={status.google || status.ical ? "Conectado" : undefined}
+        open={open === "calendario"}
+        onToggle={() => toggle("calendario")}
+      >
+        <CalendarCard />
+      </ServiceRow>
+      <ServiceRow
+        tile="casa"
+        title="Casa · Home Assistant"
+        subtitle={homeSummary}
+        pill={widgets.homeUrl && status.token ? "Conectado" : undefined}
+        open={open === "casa"}
+        onToggle={() => toggle("casa")}
+      >
+        <HomeCard widgets={widgets} save={save} />
+      </ServiceRow>
+      <ServiceRow
+        tile="claude"
+        title="Límites de IA"
+        subtitle="Claude, ChatGPT, Gemini"
+        open={open === "ia"}
+        onToggle={() => toggle("ia")}
+      >
         <div className="row">
           <div className="row-text">
             <span className="row-hint">
@@ -280,8 +241,36 @@ export function ServicesSection({ config, update }: Omit<Props, "part">) {
             </span>
           </div>
         </div>
-      </Card>
-    </>
+      </ServiceRow>
+    </Card>
+  );
+}
+
+/** One service of Configuraciones: a header that unfolds its settings below (one open at a time). */
+function ServiceRow({ tile, title, subtitle, pill, open, onToggle, children }: {
+  tile: string;
+  title: string;
+  subtitle: string;
+  pill?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="service">
+      <button type="button" className="service-head" aria-expanded={open} onClick={onToggle}>
+        <Tile id={tile} size={30} />
+        <span className="row-text">
+          <span className="row-label">{title}</span>
+          <span className="row-hint">{subtitle}</span>
+        </span>
+        {pill ? <span className="pill">{pill}</span> : null}
+        <svg className="service-chevron" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+          <path d="m6 3 5 5-5 5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open ? <div className="service-body">{children}</div> : null}
+    </div>
   );
 }
 
@@ -296,72 +285,6 @@ function ScreenPicker({ displays, value, onChange }: { displays: DisplayInfo[]; 
         </select>
       </span>
     </Row>
-  );
-}
-
-function AddRow({ zone, placed, onAdd }: { zone: Zone; placed: string[]; onAdd: (key: string) => void }) {
-  const bar = isBarZone(zone);
-  // The tray chevron lives only in the dock.
-  const free = WIDGETS.filter((w) => !placed.includes(w.key) && !(bar && w.key === "bandeja"));
-  const [choice, setChoice] = useState("");
-  const [size, setSize] = useState<PreviewSize>("mediano");
-  if (free.length === 0) return null;
-  const selected = free.find((w) => w.key === choice);
-  return (
-    <>
-    <div className="row">
-      <div className="row-text">
-        <span className="row-label">Añadir widget</span>
-        {selected ? <span className="row-hint">{selected.detail}</span> : null}
-      </div>
-      <div className="row-control push-group">
-        <span className="select-wrap">
-          <select
-            className="select-control"
-            aria-label={`Widget para ${zone}`}
-            value={choice}
-            onChange={(e) => setChoice(e.target.value)}
-          >
-            <option value="">Elegir…</option>
-            {free.map((w) => (
-              <option key={w.key} value={w.key}>{w.name}</option>
-            ))}
-          </select>
-        </span>
-        <button
-          type="button"
-          className="push push-primary"
-          disabled={!choice}
-          onClick={() => {
-            onAdd(choice);
-            setChoice("");
-          }}
-        >
-          Añadir
-        </button>
-      </div>
-    </div>
-    {selected ? (
-      <div className="row row-stacked widget-preview-row">
-        <div className="row-text">
-          <span className="row-label">Vista previa</span>
-          <span className="row-hint">Así se ve {selected.name} {bar ? "en la barra superior" : "en el dock"}, con datos de ejemplo.</span>
-        </div>
-        <div className="row-control widget-preview-control">
-          <WidgetPreview widget={selected.key} place={bar ? "bar" : "dock"} size={size} />
-          {bar ? null : (
-            <span className="select-wrap">
-              <select className="select-control size-control" aria-label="Tamaño de la vista previa" value={size} onChange={(e) => setSize(e.target.value as PreviewSize)}>
-                <option value="compacto">Compacto</option>
-                <option value="mediano">Mediano</option>
-                <option value="ancho">Ancho</option>
-              </select>
-            </span>
-          )}
-        </div>
-      </div>
-    ) : null}
-    </>
   );
 }
 
@@ -553,7 +476,7 @@ function GoogleRow() {
 
 function CalendarCard() {
   return (
-    <Card title="Calendario">
+    <>
       <GoogleRow />
       <div className="row">
         <div className="row-text">
@@ -572,7 +495,7 @@ function CalendarCard() {
         placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"
         multiline
       />
-    </Card>
+    </>
   );
 }
 
@@ -589,7 +512,7 @@ function HomeCard({ widgets, save }: { widgets: WidgetSettings; save: (patch: Pa
   const removeItem = (item: HomeItem) =>
     save({ homeItems: widgets.homeItems.filter((i) => i.id !== item.id) });
   return (
-    <Card title="Casa · Home Assistant">
+    <>
       <Row label="Dirección" hint="Por ejemplo http://192.168.1.10:8123">
         <TextField
           value={widgets.homeUrl}
@@ -651,6 +574,6 @@ function HomeCard({ widgets, save }: { widgets: WidgetSettings; save: (patch: Pa
           </div>
         </div>
       ))}
-    </Card>
+    </>
   );
 }

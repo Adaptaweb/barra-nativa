@@ -39,6 +39,7 @@ const UPDATES = false;
 import { WallpaperGallery } from "./WallpaperGallery";
 import { CustomWallpapers } from "./CustomWallpapers";
 import { ServicesSection, WidgetsSection } from "./WidgetsSection";
+import { ScreensCard } from "./ScreensCard";
 import { type Texts, LANGUAGE_OPTIONS, resolveLanguage, textsFor } from "./i18n";
 
 type UpdateState =
@@ -389,6 +390,7 @@ export function App() {
                   />
                 </Row>
               </Card>
+              <ScreensCard config={config} update={update} />
               <Card title={t.groupAppearance}>
                 <VisualChoices<DockPosition>
                   label={t.dockPosition}
@@ -582,7 +584,7 @@ export function App() {
           ) : section === "menubar" ? (
             <>
               <Card>
-                <Row icon={<SettingIcon name="menu" />} label={t.menuBarShow} hint={t.menuBarHint}>
+                <Row icon={<SectionIcon section="menubar" />} label={t.menuBarShow} hint={t.menuBarHint}>
                   <Toggle
                     label={t.menuBarShow}
                     checked={config.menuBar}
