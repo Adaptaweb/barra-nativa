@@ -81,8 +81,15 @@ fn button(item: &HomeItem, states: &HashMap<String, Value>) -> HomeButton {
         .entities
         .iter()
         .any(|id| SWITCHABLE.iter().any(|d| id.starts_with(&format!("{d}."))));
+    let available = item.entities.iter().any(|id| {
+        states
+            .get(id)
+            .and_then(|e| e["state"].as_str())
+            .is_some_and(|s| s != "unavailable")
+    });
     HomeButton {
         id: item.id.clone(),
+        available,
         switchable,
         name: item.name.clone(),
         kind: item.kind.clone(),

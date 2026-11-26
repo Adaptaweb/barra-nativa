@@ -4,7 +4,7 @@
 //! Esc is pressed, or when its widget is clicked again. While open it
 //! follows the readings, so a light switched on shows at once.
 
-use super::{WidgetId, calendario, musica_panel, panel_content};
+use super::{WidgetId, calendario, camara, casa_panel, musica_panel, panel_content};
 use crate::gfx::{Gfx, Rgba, Weight};
 use crate::menu::{apply_popup_frame, draw_popup_background};
 use anyhow::Result;
@@ -19,12 +19,12 @@ use windows::{
         Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
         System::{LibraryLoader::GetModuleHandleW, WinRT::Composition::ICompositorDesktopInterop},
         UI::{
-            Input::KeyboardAndMouse::VK_ESCAPE,
+            Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, VK_ESCAPE},
             WindowsAndMessaging::{
                 CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, DestroyWindow, HWND_TOPMOST,
                 IDC_ARROW, IDC_HAND, LoadCursorW, RegisterClassW, SW_SHOW,
                 SWP_NOACTIVATE, SetCursor, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
-                WM_APP, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_TIMER,
+                WM_APP, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_TIMER,
                 WM_RBUTTONUP,
                 WM_SETCURSOR, WNDCLASSW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
                 WS_EX_TOPMOST, WS_POPUP,
@@ -39,6 +39,8 @@ use windows_numerics::{Vector2, Vector3};
 pub const WIDTH: f32 = 330.0;
 const PAD: f32 = 16.0;
 const CLOSE: u32 = WM_APP + 1;
+/// `MK_LBUTTON` in the `WPARAM` of mouse messages: the left button is down.
+const MK_LBUTTON: usize = 0x0001;
 /// Watches for a click outside the panel while it is open.
 const OUTSIDE_TIMER: usize = 1;
 
@@ -93,6 +95,8 @@ pub enum Placement {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PanelAction {
     Open(String),
+    /// Opens the Barra Settings app.
+    OpenSettings,
     HomeToggle(String),
     RefreshIa,
     /// A tray icon: a left click here, a right click opens its menu.
@@ -107,8 +111,9 @@ pub enum PanelAction {
     StartLhm,
     /// Music: previous, play or pause, next.
     Media(crate::media::Control),
-    /// Music: switch the open panel to the Audio panel.
-    ShowAudio,
+    /// Music: mute or unmute the output; the volume slider (dragged, not clicked).
+    ToggleMute,
+    Volume,
     /// Audio: make a device (by id) the default, mute or unmute the microphone.
     SetAudioDevice(String),
     ToggleMic,
@@ -183,6 +188,12 @@ struct Panel {
     view: calendario::View,
     /// Fingerprint of what was last painted; empty means always repaint.
     print: String,
+    /// Physical left and right x of the volume slider (music panel only).
+    slider: Option<(f32, f32)>,
+    /// The volume slider is being dragged.
+    dragging: bool,
+    /// The last percent sent while dragging, to send only changes.
+    sent: Option<u8>,
 }
 
 thread_local! {
@@ -243,6 +254,7 @@ pub fn refresh() {
 
 fn close() {
     let panel = OPEN.with(|open| open.try_borrow_mut().ok().and_then(|mut slot| slot.take()));
+    camara::close();
     if let Some(panel) = panel {
         CLOSED.with(|closed| *closed.borrow_mut() = Some((panel.id, Instant::now())));
         // SAFETY: Our own window, destroyed once.
@@ -314,8 +326,15 @@ fn open(gfx: &Gfx, id: WidgetId, anchor: POINT, placement: Placement) -> Result<
         hits: Vec::new(),
         view: calendario::View::today(),
         print: String::new(),
+        slider: None,
+        dragging: false,
+        sent: None,
     };
     panel.paint()?;
+    // The picture box appears with the next repaint, when the reading is published.
+    if id == WidgetId::Casa && casa_panel::applies(&super::readings()) {
+        camara::open();
+    }
     // SAFETY: Showing our own window and giving it the focus, so losing the
     // focus (a click elsewhere) closes it.
     unsafe {
@@ -331,6 +350,7 @@ impl Panel {
         let readings = super::readings();
         let px = |v: f32| (v * self.scale).round();
         let mut hits = Vec::new();
+        let mut slider = None;
         let (width, height, content) = if self.id == WidgetId::Reloj {
             let width = px(calendario::WIDTH);
             let height = px(calendario::height(&self.view));
@@ -342,7 +362,14 @@ impl Panel {
             let width = px(musica_panel::WIDTH);
             let height = px(musica_panel::height());
             let content = self.gfx.paint((width, height), self.scale, |pen| {
-                musica_panel::draw(pen, &self.gfx, &readings, self.scale, &mut hits)
+                musica_panel::draw(pen, &self.gfx, &readings, self.scale, &mut hits, &mut slider)
+            })?;
+            (width, height, content)
+        } else if self.id == WidgetId::Casa && casa_panel::applies(&readings) {
+            let width = px(casa_panel::WIDTH);
+            let height = px(casa_panel::height(&readings));
+            let content = self.gfx.paint((width, height), self.scale, |pen| {
+                casa_panel::draw(pen, &self.gfx, &readings, self.dark, self.scale, &mut hits)
             })?;
             (width, height, content)
         } else {
@@ -367,6 +394,7 @@ impl Panel {
         sprite.SetBrush(&content.brush)?;
         children.InsertAtTop(&sprite)?;
         self.hits = hits;
+        self.slider = slider;
         self.place(width as i32, height as i32);
         self.print = self.print();
         Ok(())
@@ -385,14 +413,22 @@ impl Panel {
         match self.id {
             WidgetId::Reloj => {}
             WidgetId::Audio => return format!("{:?}", readings.audio),
+            WidgetId::Casa => {
+                // A new frame is told apart by the address of its picture.
+                let camera = readings
+                    .camara
+                    .as_ref()
+                    .map(|c| (&c.status, c.image.as_ref().map(std::sync::Arc::as_ptr)));
+                return format!("{:?}|{camera:?}", readings.casa);
+            }
             WidgetId::Musica => {
                 return readings.musica.as_ref().map_or_else(
                     || "none".to_owned(),
                     |d| {
                         format!(
-                            "{}|{}|{}|{}{}{}|{}|{}|{:?}",
+                            "{}|{}|{}|{}{}{}|{}|{}|{:?}|{:?}",
                             d.title, d.artist, d.playing, d.can_prev, d.can_toggle, d.can_next,
-                            d.position_s, d.duration_s, d.colors
+                            d.position_s, d.duration_s, d.colors, d.volume
                         )
                     },
                 );
@@ -651,6 +687,20 @@ fn perform(action: PanelAction) {
                 eprintln!("muelle: panel: {error}");
             }
         }
+        PanelAction::OpenSettings => {
+            // The settings app is installed next to the dock.
+            let settings = std::env::current_exe()
+                .ok()
+                .map(|exe| exe.with_file_name("muelle-settings.exe"));
+            match settings {
+                Some(path) if path.exists() => {
+                    if let Err(error) = muelle_shell::launcher::open(&path.to_string_lossy()) {
+                        eprintln!("muelle: panel: {error}");
+                    }
+                }
+                _ => eprintln!("muelle: no se encontró muelle-settings.exe junto al dock"),
+            }
+        }
         PanelAction::HomeToggle(id) => super::casa::toggle(id),
         PanelAction::RefreshIa => super::ia::wake(),
         PanelAction::Tray(id) => muelle_shell::tray::click(&id, muelle_shell::tray::Click::Left),
@@ -661,7 +711,9 @@ fn perform(action: PanelAction) {
         PanelAction::InstallLhm => super::sistema::install_lhm(),
         PanelAction::StartLhm => super::sistema::start_lhm(),
         PanelAction::Media(control) => super::musica::control(control),
-        PanelAction::ShowAudio => show_audio(),
+        PanelAction::ToggleMute => super::musica::toggle_mute(),
+        // Handled by the mouse messages while dragging.
+        PanelAction::Volume => {}
         PanelAction::SetAudioDevice(id) => super::audio::set_default(id),
         PanelAction::ToggleMic => super::audio::toggle_mic(),
     }
@@ -681,18 +733,58 @@ fn change_view(change: impl FnOnce(&mut calendario::View)) {
     });
 }
 
-/// Switches the open panel to the Audio panel and repaints it.
-fn show_audio() {
-    OPEN.with(|open| {
-        if let Ok(mut slot) = open.try_borrow_mut()
-            && let Some(panel) = slot.as_mut()
-        {
-            panel.id = WidgetId::Audio;
-            if let Err(error) = panel.paint() {
-                eprintln!("muelle: panel: {error:#}");
+/// The phases of a drag of the volume slider.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Drag {
+    Start,
+    Move,
+    End,
+}
+
+/// Starts, continues or ends a drag of the volume slider at physical (`x`,
+/// `y`) and applies the volume it points at; while moving, only changes are
+/// sent. Returns whether the message belonged to a drag.
+fn drag_volume(hwnd: HWND, (x, y): (f32, f32), phase: Drag) -> bool {
+    // `None`: not a drag. `Some(None)`: a drag with nothing new to send.
+    let percent = OPEN.with(|open| {
+        let mut slot = open.try_borrow_mut().ok()?;
+        let panel = slot.as_mut()?;
+        if phase == Drag::Start {
+            if !matches!(panel.hit(x, y), Some(PanelAction::Volume)) {
+                return None;
             }
+            panel.dragging = true;
+        } else if !panel.dragging {
+            return None;
         }
+        let (left, right) = panel.slider?;
+        let percent = (((x - left) / (right - left).max(1.0)).clamp(0.0, 1.0) * 100.0).round() as u8;
+        if phase == Drag::End {
+            panel.dragging = false;
+            panel.sent = None;
+        } else if panel.sent == Some(percent) {
+            return Some(None);
+        } else {
+            panel.sent = Some(percent);
+        }
+        Some(Some(percent))
     });
+    // SAFETY: Capturing the mouse for our own window, released when the drag ends.
+    unsafe {
+        match phase {
+            Drag::Start if percent.is_some() => {
+                SetCapture(hwnd);
+            }
+            Drag::End => {
+                let _ = ReleaseCapture();
+            }
+            _ => {}
+        }
+    }
+    if let Some(Some(percent)) = percent {
+        super::musica::set_volume(percent);
+    }
+    percent.is_some()
 }
 
 unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -708,7 +800,14 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM)
         }
         CLOSE => close(),
         WM_KEYDOWN if w.0 == usize::from(VK_ESCAPE.0) => close(),
+        WM_LBUTTONDOWN => {
+            drag_volume(hwnd, (x, y), Drag::Start);
+            return LRESULT(0);
+        }
         WM_LBUTTONUP => {
+            if drag_volume(hwnd, (x, y), Drag::End) {
+                return LRESULT(0);
+            }
             let action = OPEN.with(|open| {
                 open.try_borrow()
                     .ok()
@@ -730,7 +829,11 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM)
             }
             return LRESULT(0);
         }
-        WM_MOUSEMOVE => {}
+        WM_MOUSEMOVE => {
+            // Without the left button down the drag ended elsewhere (capture lost).
+            let phase = if w.0 & MK_LBUTTON != 0 { Drag::Move } else { Drag::End };
+            drag_volume(hwnd, (x, y), phase);
+        }
         WM_SETCURSOR => {
             let mut point = POINT::default();
             // SAFETY: Reading the cursor into a local, converting with our window.

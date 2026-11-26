@@ -19,7 +19,13 @@ use windows::{
 };
 
 /// Only these secrets can be read or written from Settings.
-const KEYS: [&str; 4] = ["calendario.ics", "casa.token", "google.cliente", "google.token"];
+const KEYS: [&str; 5] = [
+    "calendario.ics",
+    "camara.clave",
+    "casa.token",
+    "google.cliente",
+    "google.token",
+];
 
 pub(crate) fn checked(key: &str) -> Result<HSTRING, String> {
     if KEYS.contains(&key) {

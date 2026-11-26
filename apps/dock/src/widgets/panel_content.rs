@@ -231,33 +231,8 @@ pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
                     b.push(Block::Title("Casa".into(), "Home Assistant".into()));
                     b.push(Block::Text(error.clone(), false));
                 }
-                Home::Connected => {
-                    let note = match d.on {
-                        0 => "todo apagado".to_owned(),
-                        1 => "1 encendido".to_owned(),
-                        n => format!("{n} encendidos"),
-                    };
-                    b.push(Block::Title("Casa".into(), note));
-                    b.push(Block::Grid(
-                        d.buttons
-                            .iter()
-                            .map(|button| Cell {
-                                title: button.name.clone(),
-                                detail: button.value.clone().unwrap_or_else(|| {
-                                    if button.on { "Encendido" } else { "Apagado" }.to_owned()
-                                }),
-                                on: button.on,
-                                action: button
-                                    .switchable
-                                    .then(|| PanelAction::HomeToggle(button.id.clone())),
-                            })
-                            .collect(),
-                    ));
-                    let (url, _) = super::home_settings();
-                    if !url.is_empty() {
-                        b.push(Block::Buttons(vec![open("Abrir Home Assistant", &url, false)]));
-                    }
-                }
+                // Drawn by casa_panel.rs.
+                Home::Connected => {}
             }
         }
         WidgetId::Claude | WidgetId::ChatGpt | WidgetId::Gemini => {

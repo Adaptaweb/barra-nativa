@@ -6,9 +6,12 @@
 
 use super::{MUSICA_ON, MusicaData, TARGET, TARGET_MESSAGE, publish};
 use crate::media::{Control, Track, Watch};
-use muelle_shell::icons::IconImage;
+use muelle_shell::{audio_devices, icons::IconImage};
 use std::{
-    sync::{Arc, Mutex, atomic::Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicI16, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -27,6 +30,15 @@ const MAX_LUMINANCE: f32 = 0.35;
 
 static WATCH: Mutex<Option<Arc<Watch>>> = Mutex::new(None);
 
+/// The volume percent waiting to be applied, or -1 for none.
+static PENDING: AtomicI16 = AtomicI16::new(-1);
+/// A worker is applying volumes.
+static VOLUME_BUSY: AtomicBool = AtomicBool::new(false);
+/// When the volume was last set from the panel; the poll does not overwrite
+/// it with the system's value for a moment, so a drag does not jump back.
+static LAST_SET: Mutex<Option<Instant>> = Mutex::new(None);
+const SET_HOLD: Duration = Duration::from_secs(1);
+
 pub(super) fn start() {
     let hwnd = HWND(TARGET.load(Ordering::Acquire) as *mut _);
     let Some(watch) = Watch::start_square(hwnd, TARGET_MESSAGE.load(Ordering::Acquire)) else {
@@ -44,8 +56,23 @@ pub(super) fn start() {
         move || {
             let mut cover: Option<(Arc<IconImage>, [[f32; 4]; 2])> = None;
             while MUSICA_ON.load(Ordering::Acquire) {
-                let data = watch.snapshot().map(|track| reading(&track, &mut cover));
+                let volume = audio_devices::master_volume()
+                    .map(|(level, muted)| ((level * 100.0).round().clamp(0.0, 100.0) as u8, muted));
+                let mut data = watch.snapshot().map(|track| MusicaData {
+                    volume,
+                    ..reading(&track, &mut cover)
+                });
+                let held = LAST_SET
+                    .lock()
+                    .ok()
+                    .and_then(|last| *last)
+                    .is_some_and(|at| at.elapsed() < SET_HOLD);
                 publish(|r| {
+                    if held
+                        && let (Some(new), Some(old)) = (data.as_mut(), r.musica.as_ref())
+                    {
+                        new.volume = old.volume;
+                    }
                     let changed = r.musica != data;
                     r.musica = data;
                     changed
@@ -76,6 +103,77 @@ pub(super) fn control(control: Control) {
     {
         watch.send(&track, control);
     }
+}
+
+/// Sets the master volume (percent, 0-100) and shows it at once. Dragging
+/// sends many values: only the latest is applied, by one worker at a time.
+pub(super) fn set_volume(percent: u8) {
+    let percent = percent.min(100);
+    publish(|r| {
+        r.musica.as_mut().is_some_and(|d| {
+            let new = Some((percent, d.volume.is_some_and(|(_, muted)| muted && percent == 0)));
+            let changed = d.volume != new;
+            d.volume = new;
+            changed
+        })
+    });
+    if let Ok(mut last) = LAST_SET.lock() {
+        *last = Some(Instant::now());
+    }
+    PENDING.store(i16::from(percent), Ordering::Release);
+    if VOLUME_BUSY
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+    // COM calls can block for a moment: not on the UI thread.
+    let spawned = thread::Builder::new().name("barra-musica-vol".into()).spawn(|| {
+        loop {
+            loop {
+                let pending = PENDING.swap(-1, Ordering::AcqRel);
+                if pending < 0 {
+                    break;
+                }
+                if let Err(error) = audio_devices::set_master_volume(f32::from(pending) / 100.0) {
+                    eprintln!("muelle: musica: no se pudo cambiar el volumen: {error}");
+                }
+            }
+            VOLUME_BUSY.store(false, Ordering::Release);
+            // A value stored after the last swap would otherwise be lost, as
+            // its setter saw the worker busy.
+            if PENDING.load(Ordering::Acquire) < 0
+                || VOLUME_BUSY
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
+            {
+                break;
+            }
+        }
+    });
+    if spawned.is_err() {
+        VOLUME_BUSY.store(false, Ordering::Release);
+    }
+}
+
+/// Mutes or unmutes the default output and shows it at once.
+pub(super) fn toggle_mute() {
+    let spawned = thread::Builder::new().name("barra-musica-mute".into()).spawn(|| {
+        match audio_devices::toggle_master_mute() {
+            Ok(muted) => {
+                publish(|r| {
+                    r.musica.as_mut().is_some_and(|d| {
+                        let new = d.volume.map(|(percent, _)| (percent, muted));
+                        let changed = d.volume != new;
+                        d.volume = new;
+                        changed
+                    })
+                });
+            }
+            Err(error) => eprintln!("muelle: musica: no se pudo silenciar la salida: {error}"),
+        }
+    });
+    drop(spawned);
 }
 
 fn reading(track: &Track, cover: &mut Option<(Arc<IconImage>, [[f32; 4]; 2])>) -> MusicaData {
@@ -111,6 +209,7 @@ fn reading(track: &Track, cover: &mut Option<(Arc<IconImage>, [[f32; 4]; 2])>) -
         colors,
         duration_s: u32::try_from(duration).unwrap_or(u32::MAX),
         position_s: u32::try_from(position).unwrap_or(u32::MAX),
+        volume: None,
     }
 }
 

@@ -203,6 +203,56 @@ pub fn mic_muted() -> Option<bool> {
     .ok()
 }
 
+fn master_endpoint(enumerator: &IMMDeviceEnumerator) -> Result<IAudioEndpointVolume> {
+    let device = default_device(enumerator, true)?;
+    // SAFETY: Activating the endpoint volume interface on a live device.
+    unsafe { device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None) }
+}
+
+/// The master volume (0.0 to 1.0) and mute state of the default output, or
+/// `None` without one.
+#[must_use]
+pub fn master_volume() -> Option<(f32, bool)> {
+    with_com(|| {
+        let volume = master_endpoint(&enumerator()?)?;
+        // SAFETY: Plain queries on a live COM object.
+        unsafe { Ok((volume.GetMasterVolumeLevelScalar()?, volume.GetMute()?.as_bool())) }
+    })
+    .ok()
+}
+
+/// Sets the master volume of the default output (clamped to 0.0..=1.0),
+/// unmuting it when the level is above zero.
+pub fn set_master_volume(level: f32) -> Result<()> {
+    let level = level.clamp(0.0, 1.0);
+    with_com(|| {
+        let volume = master_endpoint(&enumerator()?)?;
+        // SAFETY: Updates a live endpoint of this thread; the event context
+        // is optional.
+        unsafe {
+            volume.SetMasterVolumeLevelScalar(level, std::ptr::null())?;
+            if level > 0.0 && volume.GetMute()?.as_bool() {
+                volume.SetMute(false, std::ptr::null())?;
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Mutes or unmutes the default output; returns whether it is now muted.
+pub fn toggle_master_mute() -> Result<bool> {
+    with_com(|| {
+        let volume = master_endpoint(&enumerator()?)?;
+        // SAFETY: Reads and updates a live endpoint of this thread; the
+        // event context is optional.
+        unsafe {
+            let muted = !volume.GetMute()?.as_bool();
+            volume.SetMute(muted, std::ptr::null())?;
+            Ok(muted)
+        }
+    })
+}
+
 /// Mutes or unmutes the default microphone; returns whether it is now muted.
 pub fn toggle_mic() -> Result<bool> {
     with_com(|| {

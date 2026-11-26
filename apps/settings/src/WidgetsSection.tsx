@@ -603,6 +603,40 @@ function HomeCard({ widgets, save }: { widgets: WidgetSettings; save: (patch: Pa
         secretKey="casa.token"
         placeholder="eyJhbGciOi…"
       />
+      <Row label="Cámara · go2rtc URL" hint="Si lo dejas vacío, en este PC se usa la cámara de panel-proyectos.">
+        <TextField
+          value={widgets.cameraUrl}
+          placeholder="http://192.168.100.250:1984"
+          onCommit={(cameraUrl) => save({ cameraUrl: cameraUrl.replace(/\/+$/, "") })}
+        />
+      </Row>
+      <Row label="Usuario" hint="Usuario de la cámara en go2rtc.">
+        <TextField
+          value={widgets.cameraUser}
+          placeholder="panel"
+          onCommit={(cameraUser) => save({ cameraUser })}
+        />
+      </Row>
+      <SecretRow
+        label="Clave"
+        hint="Contraseña de go2rtc. Se guarda solo en este PC."
+        secretKey="camara.clave"
+        placeholder="Contraseña"
+      />
+      <Row label="Fuente" hint="Nombre del stream en go2rtc.">
+        <TextField
+          value={widgets.cameraSource}
+          placeholder="porton_sd"
+          onCommit={(cameraSource) => save({ cameraSource })}
+        />
+      </Row>
+      <Row label="Nombre" hint="Se muestra sobre la imagen.">
+        <TextField
+          value={widgets.cameraName}
+          placeholder="Portón"
+          onCommit={(cameraName) => save({ cameraName })}
+        />
+      </Row>
       <Row label="Botones" hint={message || "Copia la dirección y los botones de tu Barra anterior o del Panel de proyectos."}>
         <button type="button" className="push" onClick={importNow}>Importar</button>
       </Row>

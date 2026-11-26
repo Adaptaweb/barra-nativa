@@ -9,7 +9,9 @@
 
 mod audio;
 mod calendario;
+mod camara;
 mod casa;
+mod casa_panel;
 mod cell;
 mod clima;
 mod control;
@@ -186,13 +188,13 @@ impl WidgetId {
                     .as_ref()
                     .map(|d| RelojData { second: 0, ..d.clone() })
             ),
-            // The bar shows the title only, not the position.
+            // The bar shows the title only, not the position or the volume.
             Self::Musica => format!(
                 "{:?}",
                 readings
                     .musica
                     .as_ref()
-                    .map(|d| MusicaData { position_s: 0, ..d.clone() })
+                    .map(|d| MusicaData { position_s: 0, volume: None, ..d.clone() })
             ),
             _ => self.fingerprint(readings),
         }
@@ -368,6 +370,8 @@ pub struct HomeButton {
     pub value: Option<String>,
     /// Lights, plugs, covers... can be switched; sensors cannot.
     pub switchable: bool,
+    /// False when every entity is `unavailable` or missing.
+    pub available: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -376,6 +380,39 @@ pub struct CasaData {
     /// How many buttons are on.
     pub on: u8,
     pub buttons: Vec<HomeButton>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CameraStatus {
+    Connecting,
+    Ok,
+    /// What to tell the user, short.
+    Error(String),
+}
+
+/// The camera picture of the Casa panel while it is open.
+#[derive(Clone)]
+pub struct CamaraData {
+    pub status: CameraStatus,
+    /// The last frame, cropped to 16:9 with rounded corners.
+    pub image: Option<std::sync::Arc<muelle_shell::icons::IconImage>>,
+    pub name: String,
+    /// The go2rtc page that shows the live stream.
+    pub page: String,
+}
+
+impl PartialEq for CamaraData {
+    fn eq(&self, other: &Self) -> bool {
+        // A frame is told apart by address, not by its pixels.
+        self.status == other.status
+            && self.name == other.name
+            && self.page == other.page
+            && match (&self.image, &other.image) {
+                (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+    }
 }
 
 /// What is playing now. `art` is a rounded square.
@@ -394,6 +431,9 @@ pub struct MusicaData {
     /// Zero when the player gives no timeline.
     pub duration_s: u32,
     pub position_s: u32,
+    /// Master volume of the default output in percent (0-100) and whether it
+    /// is muted; `None` without an output.
+    pub volume: Option<(u8, bool)>,
 }
 
 impl std::fmt::Debug for MusicaData {
@@ -407,6 +447,7 @@ impl std::fmt::Debug for MusicaData {
             .field("art", &self.art.as_ref().map(std::sync::Arc::as_ptr))
             .field("colors", &self.colors)
             .field("time", &(self.position_s, self.duration_s))
+            .field("volume", &self.volume)
             .finish()
     }
 }
@@ -449,6 +490,8 @@ pub struct Readings {
     /// Calendar events of three months, for the month panel.
     pub agenda: Option<Agenda>,
     pub casa: Option<CasaData>,
+    /// The camera of the Casa panel; `None` while it is closed or unconfigured.
+    pub camara: Option<CamaraData>,
     pub ia: Option<usage::Snapshot>,
     pub control: Option<ControlData>,
     /// What is playing; `None` without a media session.
@@ -486,6 +529,7 @@ static READINGS: Mutex<Readings> = Mutex::new(Readings {
     reloj: None,
     agenda: None,
     casa: None,
+    camara: None,
     ia: None,
     control: None,
     musica: None,

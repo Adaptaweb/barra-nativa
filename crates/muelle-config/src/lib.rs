@@ -163,6 +163,15 @@ pub struct Widgets {
     pub home_url: String,
     /// Home Assistant buttons the widget shows.
     pub home_items: Vec<HomeItem>,
+    /// go2rtc address of the camera shown in the Casa panel, e.g.
+    /// `http://192.168.1.20:1984`. Its password lives in the Windows Credential
+    /// Manager as `Barra/camara.clave`.
+    pub camera_url: String,
+    pub camera_user: String,
+    /// The go2rtc stream name, e.g. `porton_sd`.
+    pub camera_source: String,
+    /// The name drawn over the picture.
+    pub camera_name: String,
     /// Size of each widget in the dock: `compacto`, `mediano` (default) or `ancho`.
     pub dock_sizes: std::collections::BTreeMap<String, String>,
     /// Height of the widget islands in tenths of the icon size (12 = 1.2x).
@@ -240,6 +249,10 @@ impl Default for Widgets {
             weather_city: "Santiago".into(),
             home_url: String::new(),
             home_items: Vec::new(),
+            camera_url: String::new(),
+            camera_user: String::new(),
+            camera_source: String::new(),
+            camera_name: String::new(),
             dock_sizes: std::collections::BTreeMap::new(),
             island_scale: default_island_scale(),
             screens: std::collections::BTreeMap::new(),

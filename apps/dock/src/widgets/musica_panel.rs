@@ -14,11 +14,12 @@ use anyhow::Result;
 /// Logical width of the panel.
 pub(super) const WIDTH: f32 = 340.0;
 
-const HEIGHT: f32 = 152.0;
+const HEIGHT: f32 = 180.0;
 const PAD: f32 = 16.0;
 const ART: f32 = 64.0;
 const BAR_TOP: f32 = 94.0;
 const CONTROLS_Y: f32 = 128.0;
+const VOLUME_Y: f32 = 160.0;
 const HIT: f32 = 36.0;
 /// Distance between the centers of the transport buttons.
 const STEP: f32 = 48.0;
@@ -84,7 +85,15 @@ fn track_time(seconds: u32) -> String {
     if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
 }
 
-pub(super) fn draw(pen: &Pen<'_>, gfx: &Gfx, readings: &Readings, scale: f32, hits: &mut Vec<Hit>) -> Result<()> {
+/// `slider` is set to the physical left and right x of the volume slider.
+pub(super) fn draw(
+    pen: &Pen<'_>,
+    gfx: &Gfx,
+    readings: &Readings,
+    scale: f32,
+    hits: &mut Vec<Hit>,
+    slider: &mut Option<(f32, f32)>,
+) -> Result<()> {
     let cx = Ctx { pen, gfx, scale };
     let d = readings.musica.as_ref();
     let width = cx.px(WIDTH);
@@ -129,7 +138,8 @@ pub(super) fn draw(pen: &Pen<'_>, gfx: &Gfx, readings: &Readings, scale: f32, hi
     }
 
     progress(&cx, d.map_or((0, 0), |d| (d.position_s, d.duration_s)), width)?;
-    controls(&cx, d, width, hits)
+    controls(&cx, d, width, hits)?;
+    volume(&cx, d.and_then(|d| d.volume), width, hits, slider)
 }
 
 /// Elapsed time, a thin bar and the total, on one row.
@@ -160,12 +170,56 @@ fn progress(cx: &Ctx<'_, '_>, (position, duration): (u32, u32), width: f32) -> R
     Ok(())
 }
 
-/// The volume shortcut on the left and the transport buttons in the middle.
+/// The speaker (mute) on the left, a volume slider and the percent on one row.
+/// `slider` gets the left and right physical x of the slider track.
+fn volume(
+    cx: &Ctx<'_, '_>,
+    volume: Option<(u8, bool)>,
+    width: f32,
+    hits: &mut Vec<Hit>,
+    slider: &mut Option<(f32, f32)>,
+) -> Result<()> {
+    let y = cx.px(VOLUME_Y);
+    let pad = cx.px(PAD);
+    let glyph = if volume.is_some_and(|(_, muted)| muted) { '\u{E74F}' } else { '\u{E767}' };
+    // Centered on the glyph's hit area, so it lines up with the left padding.
+    let (color, action) = if volume.is_some() {
+        (WHITE, Some(PanelAction::ToggleMute))
+    } else {
+        (WHITE_OFF, None)
+    };
+    cx.button(glyph, 14.0, color, (cx.px(PAD + HIT / 2.0), y), action, hits)?;
+
+    let text = volume.map_or_else(|| "--".to_owned(), |(percent, _)| percent.to_string());
+    let (tw, _) = cx.gfx.measure("100", 10.5, cx.scale, Weight::Normal)?;
+    let (nw, nh) = cx.gfx.measure(&text, 10.5, cx.scale, Weight::Normal)?;
+    let text_color = if volume.is_some() { WHITE_DIM } else { WHITE_OFF };
+    cx.pen.text(&text, (width - pad - nw, y - nh / 2.0), 10.5, Weight::Normal, text_color)?;
+
+    let left = pad + cx.px(HIT);
+    let right = (width - pad - tw - cx.px(8.0)).max(left);
+    let track_h = cx.px(4.0);
+    let knob = cx.px(12.0);
+    cx.pen.round_rect((left, y - track_h / 2.0), (right - left, track_h), track_h / 2.0, TRACK)?;
+    let ratio = volume.map_or(0.0, |(percent, _)| f32::from(percent) / 100.0);
+    let end = left + (right - left) * ratio;
+    if volume.is_some() {
+        let filled = (end - left).max(track_h.min(right - left));
+        cx.pen.round_rect((left, y - track_h / 2.0), (filled, track_h), track_h / 2.0, FILL)?;
+    }
+    let knob_color = if volume.is_some() { WHITE } else { WHITE_OFF };
+    cx.pen.round_rect((end - knob / 2.0, y - knob / 2.0), (knob, knob), knob / 2.0, knob_color)?;
+    if volume.is_some() {
+        let half = cx.px(10.0);
+        hits.push(Hit { left, top: y - half, right, bottom: y + half, action: PanelAction::Volume });
+        *slider = Some((left, right));
+    }
+    Ok(())
+}
+
+/// The transport buttons, centered.
 fn controls(cx: &Ctx<'_, '_>, d: Option<&super::MusicaData>, width: f32, hits: &mut Vec<Hit>) -> Result<()> {
     let y = cx.px(CONTROLS_Y);
-    // Centered on the glyph's hit area, so it lines up with the left padding.
-    cx.button('\u{E767}', 16.0, WHITE_DIM, (cx.px(PAD + HIT / 2.0), y), Some(PanelAction::ShowAudio), hits)?;
-
     let middle = width / 2.0;
     let step = cx.px(STEP);
     let playing = d.is_some_and(|d| d.playing);

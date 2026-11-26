@@ -14,7 +14,38 @@ use windows::Win32::{
 /// downscaled BGRA buffer is retained. No URI fetching or shell extensions.
 #[must_use]
 pub fn decode(bytes: &[u8], side: u32, max_pixels: u64) -> Option<IconImage> {
-    if bytes.is_empty() || bytes.len() > 32 * 1024 * 1024 || !(1..=512).contains(&side) {
+    if !(1..=512).contains(&side) {
+        return None;
+    }
+    decode_scaled(bytes, max_pixels, |width, height| {
+        let divisor = width.max(height).max(side);
+        (
+            ((u64::from(width) * u64::from(side)) / u64::from(divisor)).max(1) as u32,
+            ((u64::from(height) * u64::from(side)) / u64::from(divisor)).max(1) as u32,
+        )
+    })
+}
+
+/// Like [`decode`], but keeps the aspect ratio and bounds only the width
+/// (`max_width`, up to 2048); a smaller picture is not enlarged.
+#[must_use]
+pub fn decode_full(bytes: &[u8], max_width: u32, max_pixels: u64) -> Option<IconImage> {
+    if !(1..=2048).contains(&max_width) {
+        return None;
+    }
+    decode_scaled(bytes, max_pixels, |width, height| {
+        let target = width.min(max_width);
+        (target, ((u64::from(height) * u64::from(target)) / u64::from(width)).max(1) as u32)
+    })
+}
+
+/// Decodes and scales to the size `target` picks from the original size.
+fn decode_scaled(
+    bytes: &[u8],
+    max_pixels: u64,
+    target: impl FnOnce(u32, u32) -> (u32, u32),
+) -> Option<IconImage> {
+    if bytes.is_empty() || bytes.len() > 32 * 1024 * 1024 {
         return None;
     }
     // SAFETY: Input bytes and all WIC objects remain alive until CopyPixels
@@ -32,9 +63,7 @@ pub fn decode(bytes: &[u8], side: u32, max_pixels: u64) -> Option<IconImage> {
         if width == 0 || height == 0 || u64::from(width) * u64::from(height) > max_pixels {
             return None;
         }
-        let divisor = width.max(height).max(side);
-        width = ((u64::from(width) * u64::from(side)) / u64::from(divisor)).max(1) as u32;
-        height = ((u64::from(height) * u64::from(side)) / u64::from(divisor)).max(1) as u32;
+        (width, height) = target(width, height);
         let scaler = factory.CreateBitmapScaler().ok()?;
         scaler
             .Initialize(&frame, width, height, WICBitmapInterpolationModeFant)

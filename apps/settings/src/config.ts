@@ -90,6 +90,12 @@ export interface WidgetSettings {
   weatherCity: string;
   homeUrl: string;
   homeItems: HomeItem[];
+  /** go2rtc address of the camera shown in the Casa panel. */
+  cameraUrl: string;
+  cameraUser: string;
+  /** The go2rtc stream name, e.g. porton_sd. */
+  cameraSource: string;
+  cameraName: string;
   /** Size of each widget in the dock: compacto, mediano or ancho. */
   dockSizes: Record<string, string>;
   /** Island height in tenths of the icon size: 10 to 16 (12 = 1.2x, default). */
