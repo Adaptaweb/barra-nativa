@@ -58,7 +58,7 @@ function fixture(section = "menubar", config = {}, save = async () => {}, galler
     ...React,
     useState(initial) {
       const index = stateIndex++;
-      if (!(index in states)) states[index] = !gallery && index === 0 ? { ...loaded } : !gallery && initial === "dock" ? section : initial;
+      if (!(index in states)) states[index] = !gallery && index === 0 ? { ...loaded } : !gallery && initial === "appearance" ? section : initial;
       return [states[index], (value) => { states[index] = typeof value === "function" ? value(states[index]) : value; }];
     },
     useRef(initial) { const index = refIndex++; return refs[index] ??= { current: initial }; },

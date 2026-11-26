@@ -5,7 +5,6 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Card, Segmented, Select } from "./controls";
-import { Tile } from "./tiles";
 import { type PreviewSize, WidgetPreview } from "./WidgetPreview";
 
 export type Zone = "barLeft" | "barRight" | "islandLeft" | "dockLeft" | "dock" | "islandRight";
@@ -93,7 +92,7 @@ const previewSize = (size?: string): PreviewSize =>
   size === "compacto" || size === "mediano" || size === "ancho" ? size : "mediano";
 
 /** A preview in a fixed-size box; it shrinks (never grows) to fit both width and height, without cropping. */
-function FitPreview({ children }: { children: ReactNode }) {
+function FitPreview({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -116,7 +115,7 @@ function FitPreview({ children }: { children: ReactNode }) {
     return () => observer.disconnect();
   }, []);
   return (
-    <div ref={boxRef} className="zone-item-preview" aria-hidden="true">
+    <div ref={boxRef} className={wide ? "zone-item-preview gallery-preview" : "zone-item-preview"} aria-hidden="true">
       <div ref={innerRef} className="zone-item-fit">{children}</div>
     </div>
   );
@@ -236,7 +235,9 @@ export function AddWidget({ zone, placed, onAdd }: { zone: Zone; placed: string[
                 aria-pressed={choice === w.key}
                 onClick={() => setChoice(w.key)}
               >
-                <Tile id={w.key} size={30} />
+                <FitPreview wide>
+                  <WidgetPreview widget={w.key} place={bar ? "bar" : "dock"} size="mediano" bare />
+                </FitPreview>
                 <span className="gallery-name">{w.name}</span>
                 <span className="gallery-detail">{w.detail}</span>
               </button>

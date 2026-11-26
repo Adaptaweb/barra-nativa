@@ -848,6 +848,7 @@ button.zone-box:focus-visible { outline: 2px solid var(--accent); outline-offset
 .gallery-tile:hover { background: var(--line); }
 .gallery-tile[aria-pressed="true"] { border: 2px solid var(--accent); padding: 9px; }
 .gallery-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gallery-preview { width: 100%; height: 46px; margin-bottom: 4px; }
 .gallery-name { font-weight: 600; }
 .gallery-detail { color: var(--text-dim); font-size: 11px; line-height: 1.3; }
 .add-preview { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }

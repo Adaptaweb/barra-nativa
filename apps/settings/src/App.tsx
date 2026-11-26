@@ -78,7 +78,7 @@ export function App() {
   const animations = windowsPreferences?.animations ?? true;
   // VITE_SECTION opens another section first (development screenshots).
   const [section, setSection] = useState<SectionId>(
-    (import.meta.env?.VITE_SECTION as SectionId | undefined) ?? "dock",
+    (import.meta.env?.VITE_SECTION as SectionId | undefined) ?? "appearance",
   );
   const [failed, setFailed] = useState(false);
   const [version, setVersion] = useState("");
