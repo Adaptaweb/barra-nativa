@@ -52,7 +52,7 @@ pub(super) fn bar(
             .as_ref()
             .map(|d| audio_bar(gfx, d, scale, height, light))
             .transpose(),
-        WidgetId::Sistema | WidgetId::Clima | WidgetId::Bandeja => Ok(None),
+        WidgetId::Sistema | WidgetId::Memoria | WidgetId::Clima | WidgetId::Bandeja => Ok(None),
     }
 }
 

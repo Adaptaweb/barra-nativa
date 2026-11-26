@@ -39,16 +39,20 @@ fn cpu_times() -> Option<(u64, u64)> {
     Some((ticks(idle), ticks(kernel) + ticks(user)))
 }
 
-fn memory_percent() -> u8 {
+/// Memory load in percent, and the physical memory in use and installed, in MiB.
+fn memory() -> (u8, u32, u32) {
     let mut status = MEMORYSTATUSEX {
         dwLength: size_of::<MEMORYSTATUSEX>() as u32,
         ..Default::default()
     };
     // SAFETY: `status` is initialized with its size.
     if unsafe { GlobalMemoryStatusEx(&mut status) }.is_ok() {
-        status.dwMemoryLoad.min(100) as u8
+        let mib = |bytes: u64| u32::try_from(bytes / (1024 * 1024)).unwrap_or(u32::MAX);
+        let total = status.ullTotalPhys;
+        let used = total.saturating_sub(status.ullAvailPhys);
+        (status.dwMemoryLoad.min(100) as u8, mib(used), mib(total))
     } else {
-        0
+        (0, 0, 0)
     }
 }
 
@@ -377,12 +381,15 @@ pub(super) fn start() {
                     };
                 }
                 round = round.wrapping_add(1);
+                let (ram, ram_used_mb, ram_total_mb) = memory();
                 let reading = SistemaData {
                     temp,
                     temp_why: why,
                     installing: INSTALLING.load(Ordering::Acquire),
                     cpu,
-                    ram: memory_percent(),
+                    ram,
+                    ram_used_mb,
+                    ram_total_mb,
                 };
                 publish(|r| {
                     let changed = r.sistema != Some(reading);

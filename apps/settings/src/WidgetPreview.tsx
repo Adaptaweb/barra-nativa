@@ -55,6 +55,14 @@ function dockCell(key: string, size: PreviewSize) {
           {compact ? null : <span className="wp-stack"><Bar label="CPU" value={18} color="#0a84ff" /><Bar label="RAM" value={47} color="#34c759" /></span>}
         </>
       );
+    case "memoria":
+      return (
+        <>
+          <Ring value="54%" color="#34c759" label="RAM" />
+          {compact ? null : <span className="wp-stack"><b className="wp-big">8,2 GB</b><span className="wp-dim">de 16 GB</span></span>}
+          {wide ? <span className="wp-stack"><Bar label="Uso" value={54} color="#34c759" /><span className="wp-dim">7,8 GB libres</span></span> : null}
+        </>
+      );
     case "casa":
       return (
         <>
@@ -121,6 +129,7 @@ function barCell(key: string) {
     case "reloj": return <span>mié 25 nov  14:30 · <span className="wp-dim">Reunión en 25 min</span></span>;
     case "clima": return <span>☀️ 19°</span>;
     case "sistema": return <span><span className="wp-dot" style={{ background: "#34c759" }} /> 52° · CPU 18% · RAM 47%</span>;
+    case "memoria": return <span><span className="wp-dot" style={{ background: "#34c759" }} /> 54% · 8,2 GB</span>;
     case "casa": return <span>🏠 2</span>;
     case "claude": return <span><b>C</b> 63% · 1 h 52 min</span>;
     case "chatgpt": return <span><b>G</b> 40% · 3 h</span>;

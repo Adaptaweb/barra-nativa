@@ -173,6 +173,26 @@ pub(super) fn blocks(id: WidgetId, r: &Readings) -> Vec<Block> {
             b.push(Block::Gap(4.0));
             b.push(Block::Buttons(vec![open("Administrador de tareas", "taskmgr.exe", true)]));
         }
+        WidgetId::Memoria => {
+            b.push(Block::Title("Memoria".into(), String::new()));
+            let Some(d) = r.sistema else {
+                b.push(Block::Text("Leyendo…".into(), true));
+                return b;
+            };
+            let gb = super::cell::gb_text;
+            b.push(Block::Meter {
+                label: "En uso".into(),
+                percent: d.ram,
+                color: super::cell::ram_color(d.ram),
+                note: format!("{} de {} GB", gb(d.ram_used_mb), gb(d.ram_total_mb)),
+            });
+            b.push(Block::Text(
+                format!("Libre: {} GB", gb(d.ram_total_mb.saturating_sub(d.ram_used_mb))),
+                true,
+            ));
+            b.push(Block::Gap(4.0));
+            b.push(Block::Buttons(vec![open("Administrador de tareas", "taskmgr.exe", true)]));
+        }
         WidgetId::Clima => {
             let Some(d) = r.clima.as_ref() else {
                 b.push(Block::Title("Clima".into(), String::new()));

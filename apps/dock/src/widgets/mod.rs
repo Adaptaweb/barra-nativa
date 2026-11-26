@@ -47,6 +47,8 @@ use windows::Win32::{
 pub enum WidgetId {
     /// CPU temperature gauge with CPU and memory bars.
     Sistema,
+    /// Memory in use: a ring with the load and the gigabytes used.
+    Memoria,
     /// Current weather for the configured city.
     Clima,
     /// Date and time with the next calendar event. Replaces the bar's clock.
@@ -73,13 +75,14 @@ pub enum WidgetId {
 }
 
 impl WidgetId {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Bandeja,
         Self::Control,
         Self::Notificaciones,
         Self::Musica,
         Self::Audio,
         Self::Sistema,
+        Self::Memoria,
         Self::Clima,
         Self::Reloj,
         Self::Casa,
@@ -96,6 +99,7 @@ impl WidgetId {
     pub fn key(self) -> &'static str {
         match self {
             Self::Sistema => "sistema",
+            Self::Memoria => "memoria",
             Self::Clima => "clima",
             Self::Reloj => "reloj",
             Self::Casa => "casa",
@@ -114,6 +118,7 @@ impl WidgetId {
     pub fn name(self) -> &'static str {
         match self {
             Self::Sistema => "Sistema",
+            Self::Memoria => "Memoria",
             Self::Clima => "Clima",
             Self::Reloj => "Calendario",
             Self::Casa => "Casa",
@@ -143,7 +148,7 @@ impl WidgetId {
     pub fn target(self) -> String {
         let readings = readings();
         match self {
-            Self::Sistema => "taskmgr.exe".to_owned(),
+            Self::Sistema | Self::Memoria => "taskmgr.exe".to_owned(),
             Self::Clima => "msnweather:".to_owned(),
             Self::Reloj => match readings.reloj.map(|r| r.calendar) {
                 Some(Calendar::NotConnected) => {
@@ -204,6 +209,13 @@ impl WidgetId {
     pub fn fingerprint(self, readings: &Readings) -> String {
         match self {
             Self::Sistema => format!("{:?}", readings.sistema),
+            // Only what it draws: the load and the gigabytes, in tenths.
+            Self::Memoria => format!(
+                "{:?}",
+                readings
+                    .sistema
+                    .map(|d| (d.ram, gb_tenths(d.ram_used_mb), gb_tenths(d.ram_total_mb)))
+            ),
             Self::Clima => format!("{:?}", readings.clima),
             Self::Reloj => format!("{:?}", readings.reloj),
             Self::Casa => format!("{:?}", readings.casa),
@@ -224,7 +236,7 @@ impl WidgetId {
     /// Whether it has something to draw yet.
     pub fn has_reading(self, readings: &Readings) -> bool {
         match self {
-            Self::Sistema => readings.sistema.is_some(),
+            Self::Sistema | Self::Memoria => readings.sistema.is_some(),
             Self::Clima => readings.clima.is_some(),
             Self::Reloj => readings.reloj.is_some(),
             Self::Casa => readings.casa.is_some(),
@@ -237,7 +249,7 @@ impl WidgetId {
 
     fn source(self) -> (&'static AtomicBool, fn()) {
         match self {
-            Self::Sistema => (&SISTEMA_ON, sistema::start),
+            Self::Sistema | Self::Memoria => (&SISTEMA_ON, sistema::start),
             Self::Clima => (&CLIMA_ON, clima::start),
             Self::Reloj => (&RELOJ_ON, reloj::start),
             Self::Casa => (&CASA_ON, casa::start),
@@ -250,6 +262,11 @@ impl WidgetId {
             Self::Audio => (&AUDIO_ON, audio::start),
         }
     }
+}
+
+/// Mebibytes as tenths of a gibibyte, rounded.
+pub fn gb_tenths(mb: u32) -> u32 {
+    (mb * 10 + 512) / 1024
 }
 
 /// Dock entry ids start with this, then the widget key.
@@ -278,6 +295,9 @@ pub struct SistemaData {
     pub installing: bool,
     pub cpu: u8,
     pub ram: u8,
+    /// Physical memory in use and installed, in MiB.
+    pub ram_used_mb: u32,
+    pub ram_total_mb: u32,
 }
 
 /// Latest weather reading.

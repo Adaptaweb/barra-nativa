@@ -45,8 +45,36 @@ pub fn render_bar(
             .as_ref()
             .map(|data| clima(gfx, data, scale, height, light))
             .transpose(),
+        WidgetId::Memoria => readings
+            .sistema
+            .map(|data| memoria(gfx, data, scale, height, light))
+            .transpose(),
         other => super::more::bar(gfx, other, readings, scale, height, light),
     }
+}
+
+/// A 270° ring with the memory load in it, then the gigabytes in use.
+fn memoria(gfx: &Gfx, d: SistemaData, scale: f32, height: f32, light: bool) -> Result<LabelBrush> {
+    let px = |v: f32| (v * scale).round();
+    let ring = height;
+    let used = format!("{} GB", super::cell::gb_text(d.ram_used_mb));
+    let (uw, uh) = gfx.measure(&used, 12.0, scale, Weight::Normal)?;
+    let width = ring + px(6.0) + uw;
+    gfx.paint((width, height), scale, |pen| {
+        let center = (ring / 2.0, height / 2.0);
+        let stroke = px(2.6);
+        let radius = ring / 2.0 - stroke / 2.0 - px(0.5);
+        let fraction = (f32::from(d.ram) / 100.0).clamp(0.0, 1.0);
+        pen.arc(center, radius, stroke, (225.0, 270.0), ink(light, 0.28))?;
+        if fraction > 0.0 {
+            pen.arc(center, radius, stroke, (225.0, 270.0 * fraction), super::cell::ram_color(d.ram))?;
+        }
+        let number = format!("{}%", d.ram);
+        let (nw, nh) = gfx.measure(&number, 7.5, scale, Weight::Bold)?;
+        pen.text(&number, (center.0 - nw / 2.0, center.1 - nh / 2.0), 7.5, Weight::Bold, ink(light, 1.0))?;
+        pen.text(&used, (ring + px(6.0), (height - uh) / 2.0), 12.0, Weight::Normal, ink(light, 1.0))?;
+        Ok(())
+    })
 }
 
 /// A 270° ring with the temperature (or the CPU load without a sensor), then

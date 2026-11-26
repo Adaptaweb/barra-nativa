@@ -95,6 +95,9 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
         (WidgetId::Clima, Size::Estado) => 420,
         (WidgetId::Sistema, Size::Compact) => 100,
         (WidgetId::Sistema, Size::Medium | Size::Wide | Size::Estado) => 370,
+        (WidgetId::Memoria, Size::Compact) => 100,
+        (WidgetId::Memoria, Size::Medium | Size::Estado) => 260,
+        (WidgetId::Memoria, Size::Wide) => 380,
         (WidgetId::Casa, Size::Compact) => 140,
         (WidgetId::Casa, Size::Medium | Size::Wide | Size::Estado) => 250,
         (WidgetId::Musica, Size::Compact) => 170,
@@ -145,6 +148,7 @@ pub fn render(
                 WidgetId::Reloj => reloj(&mut c, size, readings),
                 WidgetId::Clima => clima(&mut c, size, readings),
                 WidgetId::Sistema => sistema(&mut c, size, readings),
+                WidgetId::Memoria => memoria(&mut c, size, readings),
                 WidgetId::Casa => casa(&mut c, size, readings),
                 WidgetId::Bandeja => bandeja(&mut c, readings),
                 WidgetId::Control => control(&mut c, size, readings),
@@ -667,6 +671,76 @@ fn sistema(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
         c.pen.text(&text, (pct_x + pct_w - tw, y), 15.0, Weight::Bold, c.strong())?;
     }
     c.x = pct_x + pct_w;
+    Ok(())
+}
+
+/// Ring colour of the memory load: green, yellow from 70, red from 85.
+pub(super) fn ram_color(percent: u8) -> Rgba {
+    match percent {
+        85.. => [1.0, 0.27, 0.23, 1.0],
+        70.. => [1.0, 0.80, 0.0, 1.0],
+        _ => [0.20, 0.78, 0.35, 1.0],
+    }
+}
+
+/// "8,2": mebibytes as gibibytes with one decimal and a comma.
+pub(super) fn gb_text(mb: u32) -> String {
+    let tenths = super::gb_tenths(mb);
+    format!("{},{}", tenths / 10, tenths % 10)
+}
+
+/// Memory: the same 270° ring as the CPU gauge, with the load in it. Medium
+/// adds the gigabytes in use and installed; wide, a used / free bar.
+fn memoria(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
+    let Some(d) = r.sistema else {
+        return c.text("Memoria…", 11.0, Weight::Normal, c.faded());
+    };
+    let ring = c.height * 0.8;
+    let left = if size == Size::Compact { c.x } else { c.x - c.px(4.0) };
+    let center = (left + ring / 2.0, c.height / 2.0);
+    let stroke = c.px(4.5);
+    let radius = ring / 2.0 - stroke;
+    c.pen.arc(center, radius, stroke, (225.0, 270.0), ink(c.light, 0.22))?;
+    let fraction = (f32::from(d.ram) / 100.0).clamp(0.0, 1.0);
+    if fraction > 0.0 {
+        c.pen.arc(center, radius, stroke, (225.0, 270.0 * fraction), ram_color(d.ram))?;
+    }
+    let number = format!("{}%", d.ram);
+    let (nw, nh) = c.gfx.measure(&number, 13.0, c.unit, Weight::Bold)?;
+    c.pen.text(&number, (center.0 - nw / 2.0, center.1 - nh / 2.0 - c.px(3.0)), 13.0, Weight::Bold, c.strong())?;
+    let (lw, _) = c.gfx.measure("RAM", 7.5, c.unit, Weight::Bold)?;
+    c.pen.text("RAM", (center.0 - lw / 2.0, center.1 + radius - c.px(6.0)), 7.5, Weight::Bold, c.faded())?;
+    c.x = left + ring;
+    if size == Size::Compact || d.ram_total_mb == 0 {
+        return Ok(());
+    }
+    c.x += c.px(10.0);
+    let used = format!("{} GB", gb_text(d.ram_used_mb));
+    let total = format!("de {} GB", gb_text(d.ram_total_mb));
+    c.column(
+        (&used, 17.0, Weight::Bold, c.strong()),
+        (&total, 10.5, Weight::Normal, c.faded()),
+        false,
+        16,
+    )?;
+    if size != Size::Wide {
+        return Ok(());
+    }
+    c.separator()?;
+    // Used against free, with what is free under the bar.
+    let free = format!("{} GB libres", gb_text(d.ram_total_mb.saturating_sub(d.ram_used_mb)));
+    let (fw, fh) = c.gfx.measure(&free, 10.5, c.unit, Weight::Normal)?;
+    let bar_w = c.px(84.0).max(fw);
+    let bar_h = c.px(6.0);
+    let gap = c.px(5.0);
+    let top = (c.height - bar_h - gap - fh) / 2.0;
+    c.pen.round_rect((c.x, top), (bar_w, bar_h), bar_h / 2.0, ink(c.light, 0.15))?;
+    let filled = bar_w * fraction;
+    if filled > 0.5 {
+        c.pen.round_rect((c.x, top), (filled.max(bar_h), bar_h), bar_h / 2.0, ram_color(d.ram))?;
+    }
+    c.pen.text(&free, (c.x, top + bar_h + gap), 10.5, Weight::Normal, c.faded())?;
+    c.x += bar_w;
     Ok(())
 }
 
