@@ -306,7 +306,7 @@ fn liquid_layers(
             return Ok(None);
         };
         glass.add_backdrop(&layers.visuals)?;
-        layers.place((left as f32, top as f32), size)?;
+        layers.place(gfx, (left as f32, top as f32), size)?;
         Ok(Some(layers))
     })();
     made.unwrap_or_else(|error| {
@@ -340,7 +340,7 @@ fn relayout(island: &mut Island, gfx: &Gfx, frame: &Frame, list: &[WidgetId], vi
     island.top = (frame.monitor.screen.bottom as f32 - frame.margin - island.height) as i32;
     island.width = width as i32;
     if let Some(layers) = &island.liquid {
-        layers.place((island.left as f32, island.top as f32), size)?;
+        layers.place(gfx, (island.left as f32, island.top as f32), size)?;
     }
     island.place(visible);
     Ok(())

@@ -27,7 +27,7 @@ use windows::{
         SizeInt32,
     },
     UI::Composition::{
-        CompositionDrawingSurface, CompositionMaskBrush, CompositionNineGridBrush, CompositionStretch,
+        CompositionDrawingSurface, CompositionMaskBrush, CompositionStretch,
         CompositionSurfaceBrush, SpriteVisual,
     },
     Win32::{
@@ -186,6 +186,13 @@ pub struct Layers {
     clear_brush: CompositionSurfaceBrush,
     /// Each ring's brush over the capture and its shift in physical pixels.
     rings: Vec<(CompositionSurfaceBrush, f32)>,
+    /// Each ring's mask, where it starts and ends in from the edge (physical
+    /// pixels), and the picture drawn for it at the glass's size.
+    masks: Vec<(CompositionMaskBrush, f32, f32, RefCell<Option<CompositionSurfaceBrush>>)>,
+    /// The glass's corner radius in physical pixels.
+    radius: f32,
+    /// The size the masks were last drawn at.
+    drawn: std::cell::Cell<Vector2>,
 }
 
 impl Layers {
@@ -211,38 +218,62 @@ impl Layers {
         let clear_brush = brush()?;
         let mut visuals = vec![sprite(&clear_brush.cast()?)?];
         let mut rings = Vec::new();
-        // Rings stay inside the corners' curve, where the nine-grid keeps
-        // them. The picture has a straight stretch between its corners: the
-        // nine-grid stretches those middle slices along each edge, and with
-        // none the ring showed only as four corner arcs.
-        let side = (radius * 2.0 + 2.0).ceil() + 8.0;
+        let mut masks = Vec::new();
         for (from, to, shift) in RINGS {
-            let (from, to) = ((from * scale).round(), (to * scale).round().min(radius - 1.0));
-            if to <= from {
-                continue;
-            }
-            let (mid, width) = ((from + to) / 2.0, to - from);
-            // A ring from `from` to `to` in from the edge, drawn once and
-            // stretched by a nine-grid so its width stays whatever the size.
-            let ring = gfx.paint((side, side), scale, |pen| {
-                pen.stroke_round_rect((mid, mid), (side - mid * 2.0, side - mid * 2.0), (radius - mid).max(0.0), width, [1.0, 1.0, 1.0, 1.0])
-            })?;
-            let nine: CompositionNineGridBrush = c.CreateNineGridBrush()?;
-            nine.SetSource(&ring.brush)?;
-            nine.SetInsets(radius + 1.0)?;
+            let (from, to) = ((from * scale).round(), (to * scale).round());
             let lens = brush()?;
             let mask: CompositionMaskBrush = c.CreateMaskBrush()?;
             mask.SetSource(&lens)?;
-            mask.SetMask(&nine)?;
             visuals.push(sprite(&mask.cast()?)?);
             rings.push((lens, shift * scale));
+            masks.push((mask, from, to, RefCell::new(None)));
         }
-        Ok(Some(Self { visuals, clear_brush, rings }))
+        Ok(Some(Self {
+            visuals,
+            clear_brush,
+            rings,
+            masks,
+            radius,
+            drawn: std::cell::Cell::new(Vector2 { X: 0.0, Y: 0.0 }),
+        }))
+    }
+
+    /// Draws each ring's mask at the glass's `size`: a rounded band from
+    /// `from` to `to` in from the edge, following the glass's outline. Drawn
+    /// at the real size (not stretched by a nine-grid), because a pill's
+    /// corners take its whole height and leave a nine-grid no room.
+    fn draw_masks(&self, gfx: &Gfx, size: Vector2) -> Result<()> {
+        if self.drawn.get() == size || size.X < 1.0 || size.Y < 1.0 {
+            return Ok(());
+        }
+        let radius = self.radius.min(size.X / 2.0).min(size.Y / 2.0);
+        for (mask, from, to, picture) in &self.masks {
+            let to = to.min(size.Y / 2.0);
+            if to <= *from {
+                mask.SetMask(None::<&windows::UI::Composition::CompositionBrush>)?;
+                continue;
+            }
+            let (mid, width) = ((from + to) / 2.0, to - from);
+            let ring = gfx.paint_into(picture.borrow().as_ref(), (size.X, size.Y), 1.0, |pen| {
+                pen.stroke_round_rect(
+                    (mid, mid),
+                    (size.X - mid * 2.0, size.Y - mid * 2.0),
+                    (radius - mid).max(0.0),
+                    width,
+                    [1.0, 1.0, 1.0, 1.0],
+                )
+            })?;
+            mask.SetMask(&ring.brush)?;
+            *picture.borrow_mut() = Some(ring.brush);
+        }
+        self.drawn.set(size);
+        Ok(())
     }
 
     /// Aligns the backdrop with a glass of `size` whose top left is at
     /// (`x`, `y`) in screen pixels.
-    pub fn place(&self, (x, y): (f32, f32), size: Vector2) -> Result<()> {
+    pub fn place(&self, gfx: &Gfx, (x, y): (f32, f32), size: Vector2) -> Result<()> {
+        self.draw_masks(gfx, size)?;
         let screen = CAPTURE.with(|c| c.borrow().as_ref().map(|c| c.screen));
         let Some(screen) = screen else {
             return Ok(());
