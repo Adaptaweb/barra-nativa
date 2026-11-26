@@ -417,8 +417,25 @@ impl Panel {
         let children = self.root.Children()?;
         children.RemoveAll()?;
         self.root.SetSize(Vector2::new(width, height))?;
-        let glass = muelle_shell::system::transparency_enabled();
-        draw_popup_background(&children, self.dark, glass, width, height)?;
+        match self.liquid.as_ref().and_then(|layers| layers.backdrop.as_ref()) {
+            // Liquid glass: what is behind, sharp, under a light tint.
+            Some(backdrop) => {
+                children.InsertAtTop(backdrop)?;
+                let tint = if self.dark {
+                    windows::UI::Color { A: 110, R: 22, G: 24, B: 30 }
+                } else {
+                    windows::UI::Color { A: 140, R: 250, G: 250, B: 252 }
+                };
+                let fill = c.CreateSpriteVisual()?;
+                fill.SetBrush(&c.CreateColorBrushWithColor(tint)?)?;
+                fill.SetSize(Vector2::new(width, height))?;
+                children.InsertAtTop(&fill)?;
+            }
+            None => {
+                let glass = muelle_shell::system::transparency_enabled();
+                draw_popup_background(&children, self.dark, glass, width, height)?;
+            }
+        }
         let sprite = c.CreateSpriteVisual()?;
         sprite.SetSize(Vector2::new(content.width, content.height))?;
         sprite.SetOffset(Vector3::new(0.0, 0.0, 0.0))?;

@@ -65,7 +65,12 @@ pub(super) fn draw(pen: &Pen<'_>, gfx: &Gfx, readings: &Readings, scale: f32, hi
     let Some(d) = readings.clima.as_ref() else {
         return Ok(());
     };
-    let [top, bottom] = sky(d);
+    let [mut top, mut bottom] = sky(d);
+    // Liquid glass: the sky lets what is behind show through.
+    if crate::appearance::current().material.is_liquid() {
+        top[3] *= 0.55;
+        bottom[3] *= 0.55;
+    }
     pen.gradient_rect((0.0, 0.0), (width, height), px(8.0), (0.0, 0.0), (0.0, height), &[(0.0, top), (1.0, bottom)])?;
     let (left, right) = (px(PAD), width - px(PAD));
     let mut y = px(PAD);

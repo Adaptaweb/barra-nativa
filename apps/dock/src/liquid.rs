@@ -209,7 +209,10 @@ struct Ring {
 /// the lens rings along its edge.
 pub struct Layers {
     /// Bottom to top: the sharp backdrop, then the rings (and a bezel's rim).
+    /// A bezel keeps its backdrop apart, in `backdrop`.
     pub visuals: Vec<Visual>,
+    /// A bezel's sharp backdrop, for the panel to put under its content.
+    pub backdrop: Option<Visual>,
     clear_brush: CompositionSurfaceBrush,
     rings: Vec<Ring>,
     /// A bezel's bright rim along the edge, and its outline.
@@ -228,9 +231,9 @@ impl Layers {
         Self::build(gfx, screen, owner, radius, scale, false)
     }
 
-    /// Only the lens and a bright rim, thinner, for drawing over a panel's
-    /// own content (bubbles, the weather and music cards): the glass shows as
-    /// a bezel around what the panel draws, which stays readable.
+    /// For a panel: the sharp backdrop apart (`backdrop`, under the content)
+    /// and a thinner lens with a bright rim (`visuals`, over the content, the
+    /// weather and music cards' own art included).
     pub fn bezel(gfx: &Gfx, screen: RECT, owner: HWND, radius: f32, scale: f32) -> Result<Self> {
         Self::build(gfx, screen, owner, radius, scale, true)
     }
@@ -244,6 +247,7 @@ impl Layers {
             visuals: Vec::new(),
             clear_brush: c.CreateSurfaceBrush()?,
             rings: Vec::new(),
+            backdrop: None,
             rim: None,
             radius,
             owner: owner.0 as isize,
@@ -265,8 +269,11 @@ impl Layers {
             Ok(sprite.cast()?)
         };
         layers.clear_brush = brush()?;
-        if !bezel {
-            layers.visuals.push(sprite(&layers.clear_brush.cast()?)?);
+        let clear = sprite(&layers.clear_brush.cast()?)?;
+        if bezel {
+            layers.backdrop = Some(clear);
+        } else {
+            layers.visuals.push(clear);
         }
         // A bezel is narrower and bends less: it frames content.
         let band = if bezel { 0.6 } else { 1.0 };

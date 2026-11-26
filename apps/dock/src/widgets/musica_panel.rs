@@ -99,8 +99,10 @@ pub(super) fn draw(
     let width = cx.px(WIDTH);
     let height = cx.px(HEIGHT);
 
-    // Over the frosted background of the popup, so a little see-through.
-    let colors = d.map_or([NO_ARTWORK, NO_ARTWORK_2], |d| d.colors).map(|c| [c[0], c[1], c[2], 0.92]);
+    // Over the frosted background of the popup, so a little see-through;
+    // with liquid glass, clearly see-through.
+    let alpha = if crate::appearance::current().material.is_liquid() { 0.55 } else { 0.92 };
+    let colors = d.map_or([NO_ARTWORK, NO_ARTWORK_2], |d| d.colors).map(|c| [c[0], c[1], c[2], alpha]);
     pen.gradient_rect(
         (0.0, 0.0),
         (width, height),
