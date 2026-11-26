@@ -18,6 +18,7 @@ mod google;
 mod ia;
 mod more;
 mod musica;
+mod musica_panel;
 mod panel;
 mod panel_content;
 mod reloj;
@@ -387,8 +388,9 @@ pub struct MusicaData {
     pub can_toggle: bool,
     pub can_next: bool,
     pub art: Option<std::sync::Arc<muelle_shell::icons::IconImage>>,
-    /// The card colour: the artwork's, darkened for white text.
-    pub color: [f32; 4],
+    /// The card gradient, top left to bottom right: the artwork's two halves,
+    /// darkened for white text.
+    pub colors: [[f32; 4]; 2],
     /// Zero when the player gives no timeline.
     pub duration_s: u32,
     pub position_s: u32,
@@ -403,7 +405,7 @@ impl std::fmt::Debug for MusicaData {
             .field("playing", &self.playing)
             .field("can", &(self.can_prev, self.can_toggle, self.can_next))
             .field("art", &self.art.as_ref().map(std::sync::Arc::as_ptr))
-            .field("color", &self.color)
+            .field("colors", &self.colors)
             .field("time", &(self.position_s, self.duration_s))
             .finish()
     }

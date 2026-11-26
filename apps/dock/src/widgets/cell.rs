@@ -6,7 +6,7 @@
 
 use super::draw::{BLUE, GREEN, ORANGE, RED, ink, symbol};
 use super::clima::describe;
-use super::musica::NO_ARTWORK;
+use super::musica::{NO_ARTWORK, NO_ARTWORK_2};
 use super::{Calendar, ClimaData, Home, Readings, WidgetId};
 use crate::gfx::{Gfx, Pen, Rgba, Weight};
 use crate::media::{self, Control};
@@ -886,11 +886,14 @@ fn musica(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     let total = c.height * f32::from(width(WidgetId::Musica, size)) / 100.0;
     let right = total - left;
     let d = r.musica.as_ref();
-    c.pen.round_rect(
+    let colors = d.map_or([NO_ARTWORK, NO_ARTWORK_2], |d| d.colors);
+    c.pen.gradient_rect(
         (0.0, 0.0),
         (total, c.height),
         c.height * 0.22,
-        d.map_or(NO_ARTWORK, |d| d.color),
+        (0.0, 0.0),
+        (total, c.height),
+        &[(0.0, colors[0]), (1.0, colors[1])],
     )?;
     let compact = size == Size::Compact;
     let wide = size == Size::Wide;

@@ -7,11 +7,17 @@ use anyhow::Result;
 use windows::{
     Win32::Graphics::{
         Direct2D::{
-            Common::{D2D_RECT_F, D2D_SIZE_F, D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_OPEN},
-            D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_LARGE, D2D1_ARC_SIZE_SMALL, D2D1_CAP_STYLE_ROUND,
+            Common::{
+                D2D_RECT_F, D2D_SIZE_F, D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_OPEN,
+                D2D1_GRADIENT_STOP,
+            },
+            D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_LARGE, D2D1_ARC_SIZE_SMALL,
+            D2D1_BUFFER_PRECISION_8BPC_UNORM, D2D1_CAP_STYLE_ROUND,
+            D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED, D2D1_COLOR_SPACE_SRGB,
             D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, D2D1_DRAW_TEXT_OPTIONS_NONE,
-            D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
-            D2D1_LINE_JOIN_ROUND, D2D1_ROUNDED_RECT, D2D1_STROKE_STYLE_PROPERTIES,
+            D2D1_EXTEND_MODE_CLAMP, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+            D2D1_LINE_JOIN_ROUND, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_ROUNDED_RECT,
+            D2D1_STROKE_STYLE_PROPERTIES,
             D2D1_SWEEP_DIRECTION_CLOCKWISE, ID2D1DeviceContext, ID2D1SolidColorBrush,
         },
         DirectWrite::{
@@ -228,6 +234,59 @@ impl Pen<'_> {
                     radiusY: radius,
                 },
                 &fill,
+            );
+        }
+        Ok(())
+    }
+
+    /// A rounded rectangle filled with a linear gradient from `from` to `to`
+    /// (absolute coordinates), with (position, colour) stops.
+    pub fn gradient_rect(
+        &self,
+        (x, y): (f32, f32),
+        (width, height): (f32, f32),
+        radius: f32,
+        from: (f32, f32),
+        to: (f32, f32),
+        stops: &[(f32, Rgba)],
+    ) -> Result<()> {
+        let stops: Vec<D2D1_GRADIENT_STOP> = stops
+            .iter()
+            .map(|&(position, color)| D2D1_GRADIENT_STOP {
+                position,
+                color: rgb(color[0], color[1], color[2], color[3]),
+            })
+            .collect();
+        // SAFETY: The stop collection and brush live for the drawing call.
+        unsafe {
+            let collection = self.dc.CreateGradientStopCollection(
+                &stops,
+                D2D1_COLOR_SPACE_SRGB,
+                D2D1_COLOR_SPACE_SRGB,
+                D2D1_BUFFER_PRECISION_8BPC_UNORM,
+                D2D1_EXTEND_MODE_CLAMP,
+                D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED,
+            )?;
+            let gradient = self.dc.CreateLinearGradientBrush(
+                &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                    startPoint: Vector2 { X: from.0, Y: from.1 },
+                    endPoint: Vector2 { X: to.0, Y: to.1 },
+                },
+                None,
+                &collection,
+            )?;
+            self.dc.FillRoundedRectangle(
+                &D2D1_ROUNDED_RECT {
+                    rect: D2D_RECT_F {
+                        left: x,
+                        top: y,
+                        right: x + width,
+                        bottom: y + height,
+                    },
+                    radiusX: radius,
+                    radiusY: radius,
+                },
+                &gradient,
             );
         }
         Ok(())

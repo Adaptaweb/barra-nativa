@@ -4,7 +4,7 @@
 //! Esc is pressed, or when its widget is clicked again. While open it
 //! follows the readings, so a light switched on shows at once.
 
-use super::{WidgetId, calendario, panel_content};
+use super::{WidgetId, calendario, musica_panel, panel_content};
 use crate::gfx::{Gfx, Rgba, Weight};
 use crate::menu::{apply_popup_frame, draw_popup_background};
 use anyhow::Result;
@@ -107,6 +107,8 @@ pub enum PanelAction {
     StartLhm,
     /// Music: previous, play or pause, next.
     Media(crate::media::Control),
+    /// Music: switch the open panel to the Audio panel.
+    ShowAudio,
     /// Audio: make a device (by id) the default, mute or unmute the microphone.
     SetAudioDevice(String),
     ToggleMic,
@@ -336,6 +338,13 @@ impl Panel {
                 calendario::draw(pen, &self.gfx, &self.view, &readings, self.dark, self.scale, &mut hits)
             })?;
             (width, height, content)
+        } else if self.id == WidgetId::Musica {
+            let width = px(musica_panel::WIDTH);
+            let height = px(musica_panel::height());
+            let content = self.gfx.paint((width, height), self.scale, |pen| {
+                musica_panel::draw(pen, &self.gfx, &readings, self.scale, &mut hits)
+            })?;
+            (width, height, content)
         } else {
             let blocks = panel_content::blocks(self.id, &readings);
             let width = px(WIDTH);
@@ -376,6 +385,18 @@ impl Panel {
         match self.id {
             WidgetId::Reloj => {}
             WidgetId::Audio => return format!("{:?}", readings.audio),
+            WidgetId::Musica => {
+                return readings.musica.as_ref().map_or_else(
+                    || "none".to_owned(),
+                    |d| {
+                        format!(
+                            "{}|{}|{}|{}{}{}|{}|{}|{:?}",
+                            d.title, d.artist, d.playing, d.can_prev, d.can_toggle, d.can_next,
+                            d.position_s, d.duration_s, d.colors
+                        )
+                    },
+                );
+            }
             _ => return String::new(),
         }
         let resets: Vec<_> = readings.ia.iter().flat_map(|ia| {
@@ -640,6 +661,7 @@ fn perform(action: PanelAction) {
         PanelAction::InstallLhm => super::sistema::install_lhm(),
         PanelAction::StartLhm => super::sistema::start_lhm(),
         PanelAction::Media(control) => super::musica::control(control),
+        PanelAction::ShowAudio => show_audio(),
         PanelAction::SetAudioDevice(id) => super::audio::set_default(id),
         PanelAction::ToggleMic => super::audio::toggle_mic(),
     }
@@ -652,6 +674,20 @@ fn change_view(change: impl FnOnce(&mut calendario::View)) {
             && let Some(panel) = slot.as_mut()
         {
             change(&mut panel.view);
+            if let Err(error) = panel.paint() {
+                eprintln!("muelle: panel: {error:#}");
+            }
+        }
+    });
+}
+
+/// Switches the open panel to the Audio panel and repaints it.
+fn show_audio() {
+    OPEN.with(|open| {
+        if let Ok(mut slot) = open.try_borrow_mut()
+            && let Some(panel) = slot.as_mut()
+        {
+            panel.id = WidgetId::Audio;
             if let Err(error) = panel.paint() {
                 eprintln!("muelle: panel: {error:#}");
             }
