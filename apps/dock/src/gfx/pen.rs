@@ -11,7 +11,7 @@ use windows::{
                 D2D_RECT_F, D2D_SIZE_F, D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_OPEN,
                 D2D1_GRADIENT_STOP,
             },
-            D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_LARGE, D2D1_ARC_SIZE_SMALL,
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_LARGE, D2D1_ARC_SIZE_SMALL,
             D2D1_BUFFER_PRECISION_8BPC_UNORM, D2D1_CAP_STYLE_ROUND,
             D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED, D2D1_COLOR_SPACE_SRGB,
             D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, D2D1_DRAW_TEXT_OPTIONS_NONE,
@@ -135,6 +135,30 @@ impl Pen<'_> {
         color: Rgba,
     ) -> Result<f32> {
         self.run(text, text_font(), (x, y), size, weight, color, false)
+    }
+
+    /// Like [`Pen::text`], but only the part between `clip_left` and
+    /// `clip_right` (x) shows. Returns the text's full width.
+    pub fn text_clipped(
+        &self,
+        text: &str,
+        (x, y): (f32, f32),
+        size: f32,
+        weight: Weight,
+        color: Rgba,
+        (clip_left, clip_right): (f32, f32),
+    ) -> Result<f32> {
+        // SAFETY: The clip is popped below, always, so the stack stays balanced.
+        unsafe {
+            self.dc.PushAxisAlignedClip(
+                &D2D_RECT_F { left: clip_left, top: -1e4, right: clip_right, bottom: 1e4 },
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+            );
+        }
+        let drawn = self.text(text, (x, y), size, weight, color);
+        // SAFETY: Pairs the push above.
+        unsafe { self.dc.PopAxisAlignedClip() };
+        drawn
     }
 
     /// Text wrapped to `width`, top left at (`x`, `y`). Returns its height.

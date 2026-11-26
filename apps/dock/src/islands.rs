@@ -19,7 +19,8 @@ use windows::{
         UI::WindowsAndMessaging::{
             CreateWindowExW, DefWindowProcW, DestroyWindow, HWND_TOPMOST, IDC_ARROW, IDC_HAND,
             LoadCursorW, RegisterClassW, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-            SetCursor, SetWindowPos, WM_LBUTTONUP, WM_SETCURSOR, WNDCLASSW,
+            KillTimer, SetCursor, SetTimer, SetWindowPos, WM_LBUTTONUP, WM_SETCURSOR, WM_TIMER,
+            WNDCLASSW,
             WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
@@ -65,6 +66,11 @@ fn cell_height(frame: &Frame) -> f32 {
 fn pill_height(frame: &Frame) -> f32 {
     (frame.height + frame.icon * (island_scale(frame) - 1.0)).round()
 }
+
+/// Timer that repaints the music cell while its title or artist scrolls.
+const MARQUEE_TIMER: usize = 0x4D51;
+/// Marquee repaint period (about 30 frames per second).
+const MARQUEE_MS: u32 = 33;
 
 struct Island {
     side: Side,
@@ -160,7 +166,10 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
     let mut x = frame.padding;
     let mut brushes = Vec::new();
     for id in list {
-        let (brush, _, cell_zones) = widgets::render_cell(gfx, *id, &readings, cell_height(frame) as u32, light)?;
+        widgets::set_marquee(true);
+        let rendered = widgets::render_cell(gfx, *id, &readings, cell_height(frame) as u32, light);
+        widgets::set_marquee(false);
+        let (brush, _, cell_zones) = rendered?;
         let width = (cell_height(frame) * f32::from(widgets::dock_width(*id, widgets::dock_size(*id))) / 100.0).round();
         cells.push((*id, x, width));
         zones.push(cell_zones);
@@ -212,6 +221,19 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
     };
     island.place(visible);
     Ok(Some(island))
+}
+
+/// Runs the marquee timer only while the island has a music cell that scrolls.
+fn sync_marquee(island: &Island) {
+    let wanted = widgets::marquee_active() && island.cells.iter().any(|(id, _, _)| *id == WidgetId::Musica);
+    // SAFETY: Our own live window; the timer is replaced or killed by id.
+    unsafe {
+        if wanted {
+            SetTimer(Some(island.hwnd), MARQUEE_TIMER, MARQUEE_MS, None);
+        } else {
+            let _ = KillTimer(Some(island.hwnd), MARQUEE_TIMER);
+        }
+    }
 }
 
 impl Island {
@@ -297,7 +319,10 @@ fn rebuild(state: &mut State) {
             .map(|(id, _)| id)
             .collect();
         match build(&gfx, &frame, side, &list, state.visible) {
-            Ok(Some(island)) => state.islands.push(island),
+            Ok(Some(island)) => {
+                sync_marquee(&island);
+                state.islands.push(island);
+            }
             Ok(None) => {}
             Err(error) => eprintln!("muelle: isla de widgets: {error:#}"),
         }
@@ -323,9 +348,11 @@ pub fn repaint() {
                 .zip(&island.sprites)
                 .zip(island.zones.iter_mut())
             {
-                let Ok((brush, _, cell_zones)) =
-                    widgets::render_cell(&gfx, *id, &readings, cell_height(&frame) as u32, frame.theme.light)
-                else {
+                widgets::set_marquee(true);
+                let rendered =
+                    widgets::render_cell(&gfx, *id, &readings, cell_height(&frame) as u32, frame.theme.light);
+                widgets::set_marquee(false);
+                let Ok((brush, _, cell_zones)) = rendered else {
                     continue;
                 };
                 let now = (cell_height(&frame) * f32::from(widgets::dock_width(*id, widgets::dock_size(*id))) / 100.0).round();
@@ -339,6 +366,56 @@ pub fn repaint() {
         }
         if resized {
             rebuild(&mut state);
+        }
+        for island in &state.islands {
+            sync_marquee(island);
+        }
+    });
+}
+
+/// The marquee timer fired: repaint only the music cells (and rebuild if
+/// their width changed).
+fn repaint_music() {
+    STATE.with(|state| {
+        let Ok(mut state) = state.try_borrow_mut() else {
+            return;
+        };
+        let (Some(gfx), Some(frame)) = (state.gfx.clone(), state.frame) else {
+            return;
+        };
+        let readings = widgets::readings();
+        let mut resized = false;
+        'all: for island in &mut state.islands {
+            for (((id, _, width), sprite), zones) in island
+                .cells
+                .iter()
+                .zip(&island.sprites)
+                .zip(island.zones.iter_mut())
+            {
+                if *id != WidgetId::Musica {
+                    continue;
+                }
+                widgets::set_marquee(true);
+                let rendered =
+                    widgets::render_cell(&gfx, *id, &readings, cell_height(&frame) as u32, frame.theme.light);
+                widgets::set_marquee(false);
+                let Ok((brush, _, cell_zones)) = rendered else {
+                    continue;
+                };
+                let now = (cell_height(&frame) * f32::from(widgets::dock_width(*id, widgets::dock_size(*id))) / 100.0).round();
+                if (now - width).abs() > 0.5 {
+                    resized = true;
+                    break 'all;
+                }
+                *zones = cell_zones;
+                let _ = sprite.SetBrush(&brush);
+            }
+        }
+        if resized {
+            rebuild(&mut state);
+        }
+        for island in &state.islands {
+            sync_marquee(island);
         }
     });
 }
@@ -384,6 +461,10 @@ unsafe extern "system" fn island_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
             if let Some((gfx, id, center, top, _)) = found() {
                 widgets::toggle_panel(&gfx, id, POINT { x: center, y: top }, Placement::Above);
             }
+            return LRESULT(0);
+        }
+        WM_TIMER if w.0 == MARQUEE_TIMER => {
+            repaint_music();
             return LRESULT(0);
         }
         WM_SETCURSOR => {

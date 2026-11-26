@@ -696,6 +696,16 @@ pub fn dock_width(id: WidgetId, size: Size) -> u16 {
     cell::width(id, size)
 }
 
+/// Whether the music cell's title or artist scrolled in its last render.
+pub fn marquee_active() -> bool {
+    cell::marquee_active()
+}
+
+/// Turns the marquee on or off for the cells rendered next.
+pub fn set_marquee(on: bool) {
+    cell::set_marquee(on)
+}
+
 /// The dock cell for a widget, `height` pixels tall, and whether its width
 /// changed (the dock must then be laid out again), and the parts of the cell a
 /// click acts on: from x, to x (pixels of the cell) and what they do.

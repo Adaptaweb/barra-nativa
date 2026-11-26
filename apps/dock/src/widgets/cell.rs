@@ -12,7 +12,10 @@ use crate::gfx::{Gfx, Pen, Rgba, Weight};
 use crate::media::{self, Control};
 use crate::usage::{self, State};
 use anyhow::Result;
-use std::sync::Mutex;
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, Ordering::Relaxed},
+};
 use chrono::{DateTime, Local, TimeZone, Utc};
 use windows::UI::Composition::CompositionSurfaceBrush;
 
@@ -94,9 +97,9 @@ pub fn width(id: WidgetId, size: Size) -> u16 {
         (WidgetId::Sistema, Size::Medium | Size::Wide | Size::Estado) => 370,
         (WidgetId::Casa, Size::Compact) => 140,
         (WidgetId::Casa, Size::Medium | Size::Wide | Size::Estado) => 250,
-        (WidgetId::Musica, Size::Compact) => 130,
-        (WidgetId::Musica, Size::Medium | Size::Estado) => 330,
-        (WidgetId::Musica, Size::Wide) => 420,
+        (WidgetId::Musica, Size::Compact) => 170,
+        (WidgetId::Musica, Size::Medium | Size::Estado) => 460,
+        (WidgetId::Musica, Size::Wide) => 560,
         (WidgetId::Audio, Size::Compact) => 100,
         (WidgetId::Audio, Size::Medium | Size::Estado) => 190,
         (WidgetId::Audio, Size::Wide) => 380,
@@ -891,6 +894,76 @@ fn audio(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     Ok(())
 }
 
+/// Whether the title or artist overflowed (and scrolls) in the last music render.
+static MARQUEE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Whether the marquee may animate in the cells rendered now.
+static MARQUEE_ON: AtomicBool = AtomicBool::new(false);
+
+/// Only the islands animate the marquee; elsewhere long text is cut with an
+/// ellipsis.
+pub fn set_marquee(on: bool) {
+    MARQUEE_ON.store(on, Relaxed);
+}
+
+/// The track the marquee is timing (title + artist) and when it started.
+static MARQUEE_START: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
+
+/// Whether the music cell needs to be repainted continuously to scroll.
+pub fn marquee_active() -> bool {
+    MARQUEE_ACTIVE.load(Relaxed)
+}
+
+/// Restarts the marquee clock when the track (title + artist) changes.
+fn track_clock(title: &str, artist: &str) {
+    let key = format!("{title}\u{0}{artist}");
+    if let Ok(mut start) = MARQUEE_START.lock()
+        && start.as_ref().is_none_or(|(known, _)| *known != key)
+    {
+        *start = Some((key, std::time::Instant::now()));
+    }
+}
+
+/// Draws one line of text in `room` pixels. If it fits it is drawn as is;
+/// if not, it scrolls (two copies, clipped to the room, with a pause at each
+/// start) so it can be read. Returns the width used: the text's, or `room`
+/// when it scrolls.
+fn marquee(
+    c: &Cell<'_, '_>,
+    text: &str,
+    (x, y): (f32, f32),
+    size: f32,
+    weight: Weight,
+    color: Rgba,
+    room: f32,
+) -> Result<f32> {
+    let (text_w, _) = c.gfx.measure(text, size, c.unit, weight)?;
+    if text_w <= room {
+        return c.pen.text(text, (x, y), size, weight, color);
+    }
+    if !MARQUEE_ON.load(Relaxed) {
+        let cut = fit(c, text, size, weight, room)?;
+        return c.pen.text(&cut, (x, y), size, weight, color);
+    }
+    MARQUEE_ACTIVE.store(true, Relaxed);
+    const PAUSE: f32 = 1.8;
+    let gap = c.px(32.0);
+    let speed = c.px(28.0);
+    let elapsed = MARQUEE_START
+        .lock()
+        .ok()
+        .and_then(|s| s.as_ref().map(|(_, t)| t.elapsed().as_secs_f32()))
+        .unwrap_or(0.0);
+    let cycle = text_w + gap;
+    let period = PAUSE + cycle / speed;
+    let phase = elapsed % period;
+    let offset = ((phase - PAUSE).max(0.0) * speed).min(cycle);
+    let clip = (x, x + room);
+    c.pen.text_clipped(text, (x - offset, y), size, weight, color, clip)?;
+    c.pen.text_clipped(text, (x - offset + cycle, y), size, weight, color, clip)?;
+    Ok(room)
+}
+
 /// Three static white bars (an "it is playing" equalizer), bottom aligned at
 /// `bottom`, starting at `x`. Returns its total width.
 fn equalizer(c: &Cell<'_, '_>, x: f32, bottom: f32) -> Result<f32> {
@@ -912,6 +985,9 @@ fn equalizer(c: &Cell<'_, '_>, x: f32, bottom: f32) -> Result<f32> {
 /// play button. Medium adds the text and the progress bar. Wide also puts an
 /// equalizer by the title and elapsed / remaining times around the bar.
 fn musica(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
+    if MARQUEE_ON.load(Relaxed) {
+        MARQUEE_ACTIVE.store(false, Relaxed);
+    }
     let left = c.x;
     // The width is fixed per size (`width`), whatever the text says.
     let total = c.height * f32::from(width(WidgetId::Musica, size)) / 100.0;
@@ -940,7 +1016,7 @@ fn musica(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
 
     // Buttons, from the right edge: previous, play (white circle), next.
     let circle = c.px(26.0);
-    let side_slot = c.px(20.0);
+    let side_slot = c.px(18.0);
     let play_slot = circle + c.px(if compact { 4.0 } else { 6.0 });
     let all = [
         ('\u{E892}', Control::Previous, d.is_some_and(|d| d.can_prev), side_slot),
@@ -960,9 +1036,9 @@ fn musica(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
             let (gw, gh) = c.gfx.measure_icon(*glyph, 12.0, c.unit)?;
             c.pen.icon(*glyph, (cx + (circle - gw) / 2.0, cy + (circle - gh) / 2.0), 12.0, [0.11, 0.11, 0.12, 1.0])?;
         } else {
-            let (gw, gh) = c.gfx.measure_icon(*glyph, 13.0, c.unit)?;
+            let (gw, gh) = c.gfx.measure_icon(*glyph, 12.0, c.unit)?;
             let color = if *enabled { [1.0, 1.0, 1.0, 0.85] } else { WHITE_OFF };
-            c.pen.icon(*glyph, (from + (slot - gw) / 2.0, (c.height - gh) / 2.0), 13.0, color)?;
+            c.pen.icon(*glyph, (from + (slot - gw) / 2.0, (c.height - gh) / 2.0), 12.0, color)?;
         }
         if *enabled {
             c.zones.push((from, from + slot, CellAction::Media(*control)));
@@ -981,9 +1057,11 @@ fn musica(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
         };
         let (duration, position) = d.map_or((0, 0), |d| (d.duration_s, d.position_s.min(d.duration_s)));
         let eq_w = if wide && playing { c.px(2.5).max(2.0) * 3.0 + c.px(1.5).max(1.0) * 2.0 } else { 0.0 };
-        let title_room = if eq_w > 0.0 { (room - eq_w - c.px(6.0)).max(0.0) } else { room };
-        let title = fit(c, title, 12.0, Weight::Bold, title_room)?;
-        let artist = fit(c, artist, 10.5, Weight::Normal, room)?;
+        // The equalizer only fits when the whole title does; otherwise it scrolls.
+        let (title_w, _) = c.gfx.measure(title, 12.0, c.unit, Weight::Bold)?;
+        let show_eq = eq_w > 0.0 && title_w + eq_w + c.px(6.0) <= room;
+        let title_room = if show_eq { room - eq_w - c.px(6.0) } else { room };
+        track_clock(title, artist);
         let (_, th) = c.gfx.measure("Ág", 12.0, c.unit, Weight::Bold)?;
         let (_, ah) = c.gfx.measure("Ág", 10.5, c.unit, Weight::Normal)?;
         // Height of the row under the artist: the thin bar, or the times row.
@@ -996,10 +1074,10 @@ fn musica(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
             (c.px(4.0), c.px(3.0).max(2.0))
         };
         let y = (c.height - (th + ah + row_gap + row_h)) / 2.0;
-        c.pen.text(&title, (text_x, y), 12.0, Weight::Bold, WHITE)?;
-        c.pen.text(&artist, (text_x, y + th), 10.5, Weight::Normal, WHITE_DIM)?;
-        if eq_w > 0.0 {
-            equalizer(c, text_x + room - eq_w, y + th - c.px(2.0))?;
+        let drawn = marquee(c, title, (text_x, y), 12.0, Weight::Bold, WHITE, title_room)?;
+        marquee(c, artist, (text_x, y + th), 10.5, Weight::Normal, WHITE_DIM, room)?;
+        if show_eq {
+            equalizer(c, text_x + drawn + c.px(6.0), y + th - c.px(2.0))?;
         }
 
         if duration > 0 {
