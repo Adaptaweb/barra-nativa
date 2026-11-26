@@ -35,9 +35,9 @@ use windows::{
                 D2D1_PRIMITIVE_BLEND_COPY, D2D1_PRIMITIVE_BLEND_SOURCE_OVER, D2D1_ROUNDED_RECT,
                 D2D1CreateDevice, ID2D1Device, ID2D1DeviceContext,
             },
-            Direct3D::D3D_DRIVER_TYPE_WARP,
+            Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP},
             Direct3D11::{
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_SINGLETHREADED,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
             },
             DirectWrite::{
@@ -121,18 +121,30 @@ impl Gfx {
         // SAFETY: D3D writes only to the initialized output slot; the returned
         // device is immediately wrapped in an owned COM interface.
         let (d3d, d2d, graphics) = unsafe {
-            let mut d3d = None;
-            D3D11CreateDevice(
-                None,
-                D3D_DRIVER_TYPE_WARP,
-                HMODULE::default(),
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED,
-                None,
-                D3D11_SDK_VERSION,
-                Some(&mut d3d),
-                None,
-                None,
-            )?;
+            // The GPU first: drawing on WARP (the CPU rasterizer) costs CPU on
+            // every repaint, and screen capture frames live on the GPU. WARP
+            // stays as the fallback (no usable GPU, a remote session). A lost
+            // device restarts the dock (see `recovery`). Not single-threaded:
+            // the liquid glass's capture frame pool uses it from its thread.
+            let create = |driver| {
+                let mut d3d = None;
+                D3D11CreateDevice(
+                    None,
+                    driver,
+                    HMODULE::default(),
+                    D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                    None,
+                    D3D11_SDK_VERSION,
+                    Some(&mut d3d),
+                    None,
+                    None,
+                )
+                .map(|()| d3d)
+            };
+            let d3d = create(D3D_DRIVER_TYPE_HARDWARE)
+                .ok()
+                .flatten()
+                .map_or_else(|| create(D3D_DRIVER_TYPE_WARP), |device| Ok(Some(device)))?;
             let d3d = d3d.context("Direct3D no devolvió un dispositivo")?;
             let dxgi: IDXGIDevice = d3d.cast()?;
             let d2d = D2D1CreateDevice(&dxgi, None)?;
