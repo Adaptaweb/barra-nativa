@@ -156,6 +156,12 @@ impl Theme {
         Ok(fills)
     }
 
+    /// A liquid glass theme with Windows transparency on: it gets the sharp
+    /// backdrop and the lens (see `liquid`).
+    pub fn is_liquid(&self) -> bool {
+        self.liquid
+    }
+
     /// Inside the frame around the icon a dragged app would join.
     fn merge_fill(&self) -> Color {
         if self.light {
@@ -243,6 +249,15 @@ impl GlassPill {
         &self.root
     }
 
+    /// Puts a liquid glass's sharp backdrop and lens band right above the
+    /// bottom fill, under the tint, sheen and rim.
+    pub fn add_backdrop(&self, clear: &SpriteVisual, lens: &SpriteVisual) -> Result<()> {
+        let children = self.material.glass.Children()?;
+        children.InsertAbove(clear, &self.material.base)?;
+        children.InsertAbove(lens, clear)?;
+        Ok(())
+    }
+
     /// Resizes the glass, outline, rim and root to `size`.
     pub fn resize(&self, size: Vector2) -> Result<()> {
         let material = &self.material;
@@ -261,6 +276,9 @@ impl GlassPill {
 /// and opaque fallback when Windows transparency is disabled.
 struct GlassSurface {
     glass: ContainerVisual,
+    /// The bottom fill (Windows' blurred backdrop, or the tint without
+    /// glass): a liquid glass's sharp backdrop goes right above it.
+    base: SpriteVisual,
     outline: CompositionRoundedRectangleGeometry,
     rim: ShapeVisual,
     rim_geometry: CompositionRoundedRectangleGeometry,
@@ -286,12 +304,15 @@ impl GlassSurface {
 
         let mut fills = theme.fills(gfx)?;
         fills.push(sheen.cast()?);
+        let mut base = None;
         for brush in &fills {
             let fill = c.CreateSpriteVisual()?;
             fill.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
             fill.SetBrush(brush)?;
             glass.Children()?.InsertAtTop(&fill)?;
+            base.get_or_insert(fill);
         }
+        let base = anyhow::Context::context(base, "el vidrio no tiene relleno")?;
 
         let rim_brush = c.CreateLinearGradientBrush()?;
         rim_brush.SetStartPoint(v2(0.0, 0.0))?;
@@ -335,6 +356,7 @@ impl GlassSurface {
         rim.Shapes()?.Append(&rim_shape)?;
         Ok(Self {
             glass,
+            base,
             outline,
             rim,
             rim_geometry,
@@ -711,6 +733,7 @@ impl Scene {
             outline,
             rim,
             rim_geometry,
+            ..
         } = GlassSurface::build(gfx, theme, radius, stroke)?;
         layers.InsertAtTop(&glass)?;
         layers.InsertAtTop(&rim)?;

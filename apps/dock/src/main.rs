@@ -24,6 +24,7 @@ mod gfx;
 mod group_view;
 mod guard;
 mod islands;
+mod liquid;
 mod mascot;
 mod media;
 mod menu;

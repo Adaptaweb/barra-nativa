@@ -96,6 +96,9 @@ struct Island {
     /// Per cell, what it showed when last drawn (its fingerprint): a cell
     /// whose reading did not change is not drawn again.
     prints: Vec<String>,
+    /// The sharp backdrop and lens of a liquid glass theme, kept aligned
+    /// with the island's place on the screen.
+    liquid: Option<crate::liquid::Layers>,
     left: i32,
     top: i32,
     width: i32,
@@ -253,6 +256,7 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
     let sprites = make_sprites(gfx, &root, frame, &cells, &brushes)?;
     let left = island_left(frame, side, width);
     let top = (frame.monitor.screen.bottom as f32 - frame.margin - height) as i32;
+    let liquid = liquid_layers(gfx, frame, hwnd, &glass, radius, (left, top), Vector2::new(width, height));
     let island = Island {
         side,
         hwnd,
@@ -267,12 +271,48 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
         zones,
         sprites,
         prints: prints(list),
+        liquid,
         left,
         top,
         width: width as i32,
     };
     island.place(visible);
     Ok(Some(island))
+}
+
+/// Message an island window gets when the liquid glass's capture has a new frame.
+const LIQUID_FRAME: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 0x51;
+
+/// With a liquid glass theme: keeps the island out of screen captures,
+/// starts the capture of its display and puts the sharp backdrop and lens
+/// in its glass. Otherwise lets captures see it again.
+fn liquid_layers(
+    gfx: &Gfx,
+    frame: &Frame,
+    hwnd: HWND,
+    glass: &crate::scene::GlassPill,
+    radius: f32,
+    (left, top): (i32, i32),
+    size: Vector2,
+) -> Option<crate::liquid::Layers> {
+    let on = frame.theme.is_liquid();
+    crate::liquid::exclude(hwnd, on);
+    if !on {
+        return None;
+    }
+    let made = (|| -> Result<Option<crate::liquid::Layers>> {
+        crate::liquid::start(gfx, frame.monitor.screen, hwnd, LIQUID_FRAME)?;
+        let Some(layers) = crate::liquid::Layers::new(gfx, radius, frame.scale)? else {
+            return Ok(None);
+        };
+        glass.add_backdrop(&layers.clear, &layers.lens)?;
+        layers.place((left as f32, top as f32), size)?;
+        Ok(Some(layers))
+    })();
+    made.unwrap_or_else(|error| {
+        muelle_shell::log::line(&format!("vidrio líquido: {error:#}"));
+        None
+    })
 }
 
 /// The fingerprint of each widget's current reading, in order.
@@ -299,6 +339,9 @@ fn relayout(island: &mut Island, gfx: &Gfx, frame: &Frame, list: &[WidgetId], vi
     island.left = island_left(frame, island.side, width);
     island.top = (frame.monitor.screen.bottom as f32 - frame.margin - island.height) as i32;
     island.width = width as i32;
+    if let Some(layers) = &island.liquid {
+        layers.place((island.left as f32, island.top as f32), size)?;
+    }
     island.place(visible);
     Ok(())
 }
@@ -429,6 +472,10 @@ fn rebuild(state: &mut State) {
             Ok(None) => {}
             Err(error) => eprintln!("muelle: isla de widgets: {error:#}"),
         }
+    }
+    // No liquid glass left: nothing needs the screen capture.
+    if !state.islands.iter().any(|island| island.liquid.is_some()) {
+        crate::liquid::stop();
     }
 }
 
@@ -606,6 +653,13 @@ unsafe extern "system" fn island_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
         }
         WM_TIMER if w.0 == MARQUEE_TIMER => {
             repaint_music();
+            return LRESULT(0);
+        }
+        LIQUID_FRAME => {
+            let gfx = STATE.with(|state| state.try_borrow().ok().and_then(|state| state.gfx.clone()));
+            if let Some(gfx) = gfx {
+                crate::liquid::frame(&gfx);
+            }
             return LRESULT(0);
         }
         WM_SETCURSOR => {

@@ -377,6 +377,25 @@ impl Pen<'_> {
         Ok(())
     }
 
+    /// The outline of a rounded rectangle, `stroke` wide, centred on its edge.
+    pub fn stroke_round_rect(&self, (x, y): (f32, f32), (width, height): (f32, f32), radius: f32, stroke: f32, color: Rgba) -> Result<()> {
+        let ink = self.brush(color)?;
+        // SAFETY: The brush lives for the call.
+        unsafe {
+            self.dc.DrawRoundedRectangle(
+                &D2D1_ROUNDED_RECT {
+                    rect: D2D_RECT_F { left: x, top: y, right: x + width, bottom: y + height },
+                    radiusX: radius,
+                    radiusY: radius,
+                },
+                &ink,
+                stroke,
+                None,
+            );
+        }
+        Ok(())
+    }
+
     /// A straight line with round ends.
     pub fn line(&self, from: (f32, f32), to: (f32, f32), stroke: f32, color: Rgba) -> Result<()> {
         let ink = self.brush(color)?;

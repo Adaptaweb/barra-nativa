@@ -57,6 +57,23 @@ use windows::{
 };
 use windows_numerics::{Matrix3x2, Vector2};
 
+/// Draws a GPU surface on this device (a screen capture frame) over the
+/// target at its own size, replacing what was there.
+pub(crate) fn draw_dxgi(dc: &ID2D1DeviceContext, surface: &windows::Win32::Graphics::Dxgi::IDXGISurface) -> Result<()> {
+    // SAFETY: The bitmap wraps a live surface on this context's device for the call.
+    unsafe {
+        let bitmap = dc.CreateBitmapFromDxgiSurface(surface, None)?;
+        dc.DrawImage(
+            &bitmap,
+            None,
+            None,
+            windows::Win32::Graphics::Direct2D::D2D1_INTERPOLATION_MODE_LINEAR,
+            windows::Win32::Graphics::Direct2D::Common::D2D1_COMPOSITE_MODE_SOURCE_COPY,
+        );
+    }
+    Ok(())
+}
+
 /// Use the first letter, not the app language: media and window titles may
 /// use another script. Skip punctuation, numbers and bidi isolation marks.
 fn text_reads_rtl(text: &str) -> bool {
@@ -146,6 +163,10 @@ impl Gfx {
                 .flatten()
                 .map_or_else(|| create(D3D_DRIVER_TYPE_WARP), |device| Ok(Some(device)))?;
             let d3d = d3d.context("Direct3D no devolvió un dispositivo")?;
+            // The capture frame pool calls into it from its own thread.
+            if let Ok(multithread) = d3d.cast::<windows::Win32::Graphics::Direct3D11::ID3D11Multithread>() {
+                let _ = multithread.SetMultithreadProtected(true);
+            }
             let dxgi: IDXGIDevice = d3d.cast()?;
             let d2d = D2D1CreateDevice(&dxgi, None)?;
             let graphics = compositor
@@ -161,6 +182,25 @@ impl Gfx {
             dwrite: unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? },
             on_error: None,
         })
+    }
+
+    /// The Direct3D device the compositor surfaces live on (the liquid
+    /// glass's screen capture shares it).
+    pub(crate) fn d3d(&self) -> &ID3D11Device {
+        &self.d3d
+    }
+
+    /// A transparent `width` × `height` drawing surface, to be drawn on later
+    /// with [`Gfx::redraw_surface`].
+    pub(crate) fn blank_surface(&self, width: u32, height: u32) -> Result<CompositionDrawingSurface> {
+        Ok(self.graphics.CreateDrawingSurface(
+            Size {
+                Width: width.max(1) as f32,
+                Height: height.max(1) as f32,
+            },
+            DirectXPixelFormat::B8G8R8A8UIntNormalized,
+            DirectXAlphaMode::Premultiplied,
+        )?)
     }
 
     pub fn with_error_handler(mut self, handler: fn(&anyhow::Error)) -> Self {
