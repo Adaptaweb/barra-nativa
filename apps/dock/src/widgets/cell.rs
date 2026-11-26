@@ -421,7 +421,7 @@ fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     let date = format!("{} {}", now.day(), MONTHS[now.month0() as usize]);
     c.column(
         (&weekday.to_uppercase(), 9.5, Weight::Bold, ACCENT_RED),
-        (&date, 17.0, Weight::Bold, c.strong()),
+        (&date, 24.0, Weight::Heavy, c.strong()),
         false,
         12,
     )?;
