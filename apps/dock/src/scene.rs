@@ -249,16 +249,9 @@ impl GlassPill {
         &self.root
     }
 
-    /// Puts a liquid glass's layers (bottom first: the sharp backdrop, then
-    /// the lens rings) right above the bottom fill, under the tint, sheen and rim.
+    /// Puts a liquid glass's layers right above the bottom fill.
     pub fn add_backdrop(&self, layers: &[SpriteVisual]) -> Result<()> {
-        let children = self.material.glass.Children()?;
-        let mut below = self.material.base.clone();
-        for layer in layers {
-            children.InsertAbove(layer, &below)?;
-            below = layer.clone();
-        }
-        Ok(())
+        self.material.add_backdrop(layers)
     }
 
     /// Resizes the glass, outline, rim and root to `size`.
@@ -288,6 +281,18 @@ struct GlassSurface {
 }
 
 impl GlassSurface {
+    /// Puts a liquid glass's layers (bottom first: the sharp backdrop, then
+    /// the lens rings) right above the bottom fill, under the tint, sheen and rim.
+    fn add_backdrop(&self, layers: &[SpriteVisual]) -> Result<()> {
+        let children = self.glass.Children()?;
+        let mut below = self.base.clone();
+        for layer in layers {
+            children.InsertAbove(layer, &below)?;
+            below = layer.clone();
+        }
+        Ok(())
+    }
+
     fn build(gfx: &Gfx, theme: Theme, radius: f32, stroke: f32) -> Result<Self> {
         let c = &gfx.compositor;
         let glass = c.CreateContainerVisual()?;
@@ -406,6 +411,9 @@ pub struct SceneInput<'a> {
     pub frame: DockFrame,
     /// Shown above an icon dragged out of the dock.
     pub remove_label: Option<&'a LabelBrush>,
+    /// With a liquid glass theme: the dock's window, the display it is on
+    /// and the window's top left on the screen, for the sharp backdrop.
+    pub liquid: Option<(windows::Win32::Foundation::HWND, windows::Win32::Foundation::RECT, (f32, f32))>,
 }
 
 /// App badge on a minimized-window thumbnail: side relative to the slot, and
@@ -549,6 +557,7 @@ mod attention_tests {
                         scale,
                         frame: DockFrame::new(DockEdge::Bottom, (0.0, 0.0), layout.height),
                         remove_label: None,
+                        liquid: None,
                     },
                 )?;
                 let root = scene.root.clone();
@@ -675,6 +684,9 @@ pub struct Scene {
     indicators: Vec<Option<ShapeVisual>>,
     labels: Vec<Option<Label>>,
     remove_label: Option<Label>,
+    /// The sharp backdrop and lens of a liquid glass theme, and the window's
+    /// top left on the screen they are aligned from.
+    liquid: Option<(crate::liquid::Layers, (f32, f32))>,
 }
 
 impl Scene {
@@ -731,13 +743,21 @@ impl Scene {
         layers.InsertAtTop(&shadow_host)?;
 
         let stroke = scale.max(1.0);
+        let material = GlassSurface::build(gfx, theme, radius, stroke)?;
+        let liquid = input.liquid.and_then(|(hwnd, screen, origin)| {
+            let made = crate::liquid::Layers::new(gfx, screen, hwnd, radius, scale)
+                .and_then(|layers| material.add_backdrop(&layers.visuals).map(|()| layers));
+            made.map_err(|error| muelle_shell::log::line(&format!("vidrio líquido del dock: {error:#}")))
+                .ok()
+                .map(|layers| (layers, origin))
+        });
         let GlassSurface {
             glass,
             outline,
             rim,
             rim_geometry,
             ..
-        } = GlassSurface::build(gfx, theme, radius, stroke)?;
+        } = material;
         layers.InsertAtTop(&glass)?;
         layers.InsertAtTop(&rim)?;
 
@@ -836,6 +856,7 @@ impl Scene {
             indicators,
             labels,
             remove_label,
+            liquid,
         })
     }
 
@@ -895,6 +916,9 @@ impl Scene {
         self.outline.SetSize(size)?;
         self.rim_geometry
             .SetSize(v2(size.X - self.stroke, size.Y - self.stroke))?;
+        if let Some((layers, (left, top))) = &self.liquid {
+            layers.place((left + plate.x + slide_x, top + plate.y + slide_y), size)?;
+        }
 
         for (index, rect) in state.rects.iter().enumerate() {
             let Rect {

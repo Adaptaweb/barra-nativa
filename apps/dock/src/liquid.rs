@@ -27,7 +27,8 @@ use windows::{
         SizeInt32,
     },
     UI::Composition::{
-        CompositionDrawingSurface, CompositionMaskBrush, CompositionStretch,
+        CompositionDrawingSurface, CompositionMaskBrush, CompositionRoundedRectangleGeometry,
+        CompositionSpriteShape, CompositionStretch, CompositionVisualSurface, ShapeVisual,
         CompositionSurfaceBrush, SpriteVisual,
     },
     Win32::{
@@ -128,7 +129,7 @@ static FIRST: AtomicBool = AtomicBool::new(false);
 
 /// Stops the capture, if any.
 pub fn stop() {
-    if let Some(capture) = CAPTURE.with(|c| c.borrow_mut().take()) {
+    if let Some(capture) = CAPTURE.try_with(|c| c.borrow_mut().take()).ok().flatten() {
         let _ = capture.session.Close();
         let _ = capture.pool.Close();
     }
@@ -178,30 +179,64 @@ pub fn frame(gfx: &Gfx) {
 /// near the edge and runs straight in the middle.
 const RINGS: [(f32, f32, f32); 3] = [(0.0, 5.0, 18.0), (5.0, 10.0, 10.0), (10.0, 16.0, 4.0)];
 
+/// Message a window gets when the capture has a new frame; its handler
+/// calls [`frame`].
+pub const FRAME_MESSAGE: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 0x51;
+
+thread_local! {
+    /// The windows whose glass shows the capture, one entry per [`Layers`].
+    /// The newest is told of new frames; with none left the capture stops.
+    static USERS: RefCell<Vec<isize>> = const { RefCell::new(Vec::new()) };
+}
+
+/// One ring of the lens: a band along the glass's edge, cut out of the
+/// magnified capture by a stroke drawn into a visual surface, so the band
+/// follows the glass at any size without being painted again.
+struct Ring {
+    lens: CompositionSurfaceBrush,
+    /// How far the ring moves what is behind it at the edge (physical pixels).
+    shift: f32,
+    /// Where the band starts and ends in from the edge (physical pixels).
+    from: f32,
+    to: f32,
+    shape: ShapeVisual,
+    stroke: CompositionSpriteShape,
+    geometry: CompositionRoundedRectangleGeometry,
+    surface: CompositionVisualSurface,
+}
+
 /// What a liquid glass shows over its tint: what is behind it, sharp, and
 /// the lens rings along its edge.
 pub struct Layers {
     /// Bottom to top: the sharp backdrop, then the rings.
     pub visuals: Vec<SpriteVisual>,
     clear_brush: CompositionSurfaceBrush,
-    /// Each ring's brush over the capture and its shift in physical pixels.
-    rings: Vec<(CompositionSurfaceBrush, f32)>,
-    /// Each ring's mask, where it starts and ends in from the edge (physical
-    /// pixels), and the picture drawn for it at the glass's size.
-    masks: Vec<(CompositionMaskBrush, f32, f32, RefCell<Option<CompositionSurfaceBrush>>)>,
+    rings: Vec<Ring>,
     /// The glass's corner radius in physical pixels.
     radius: f32,
-    /// The size the masks were last drawn at.
-    drawn: std::cell::Cell<Vector2>,
+    /// The window this glass is in, told of new frames.
+    owner: isize,
 }
 
 impl Layers {
-    /// Layers for a glass with corner `radius`, or `None` without a capture.
-    pub fn new(gfx: &Gfx, radius: f32, scale: f32) -> Result<Option<Self>> {
-        let Some(surface) = CAPTURE.with(|c| c.borrow().as_ref().map(|c| c.surface.clone())) else {
-            return Ok(None);
-        };
+    /// Starts (or joins) the capture of display `screen` and makes the
+    /// layers for a glass with corner `radius` in window `owner`, whose
+    /// handler of [`FRAME_MESSAGE`] calls [`frame`].
+    pub fn new(gfx: &Gfx, screen: RECT, owner: HWND, radius: f32, scale: f32) -> Result<Self> {
+        start(gfx, screen, owner, FRAME_MESSAGE)?;
+        USERS.with(|users| users.borrow_mut().push(owner.0 as isize));
         let c = &gfx.compositor;
+        // From here on, `Drop` gives the capture back if anything fails.
+        let mut layers = Self {
+            visuals: Vec::new(),
+            clear_brush: c.CreateSurfaceBrush()?,
+            rings: Vec::new(),
+            radius,
+            owner: owner.0 as isize,
+        };
+        let Some(surface) = CAPTURE.with(|c| c.borrow().as_ref().map(|c| c.surface.clone())) else {
+            anyhow::bail!("sin captura");
+        };
         let brush = || -> Result<CompositionSurfaceBrush> {
             let brush = c.CreateSurfaceBrushWithSurface(&surface)?;
             brush.SetStretch(CompositionStretch::None)?;
@@ -215,79 +250,52 @@ impl Layers {
             sprite.SetBrush(brush)?;
             Ok(sprite)
         };
-        let clear_brush = brush()?;
-        let mut visuals = vec![sprite(&clear_brush.cast()?)?];
-        let mut rings = Vec::new();
-        let mut masks = Vec::new();
+        layers.clear_brush = brush()?;
+        layers.visuals.push(sprite(&layers.clear_brush.cast()?)?);
+        let white = c.CreateColorBrushWithColor(windows::UI::Color { A: 255, R: 255, G: 255, B: 255 })?;
         for (from, to, shift) in RINGS {
             let (from, to) = ((from * scale).round(), (to * scale).round());
+            let geometry = c.CreateRoundedRectangleGeometry()?;
+            let stroke = c.CreateSpriteShapeWithGeometry(&geometry)?;
+            stroke.SetStrokeBrush(&white)?;
+            stroke.SetStrokeThickness(to - from)?;
+            let shape = c.CreateShapeVisual()?;
+            shape.Shapes()?.Append(&stroke)?;
+            let surface = c.CreateVisualSurface()?;
+            surface.SetSourceVisual(&shape)?;
+            let picture = c.CreateSurfaceBrushWithSurface(&surface)?;
+            picture.SetStretch(CompositionStretch::None)?;
+            picture.SetHorizontalAlignmentRatio(0.0)?;
+            picture.SetVerticalAlignmentRatio(0.0)?;
             let lens = brush()?;
             let mask: CompositionMaskBrush = c.CreateMaskBrush()?;
             mask.SetSource(&lens)?;
-            visuals.push(sprite(&mask.cast()?)?);
-            rings.push((lens, shift * scale));
-            masks.push((mask, from, to, RefCell::new(None)));
+            mask.SetMask(&picture)?;
+            layers.visuals.push(sprite(&mask.cast()?)?);
+            layers.rings.push(Ring { lens, shift: shift * scale, from, to, shape, stroke, geometry, surface });
         }
-        Ok(Some(Self {
-            visuals,
-            clear_brush,
-            rings,
-            masks,
-            radius,
-            drawn: std::cell::Cell::new(Vector2 { X: 0.0, Y: 0.0 }),
-        }))
-    }
-
-    /// Draws each ring's mask at the glass's `size`: a rounded band from
-    /// `from` to `to` in from the edge, following the glass's outline. Drawn
-    /// at the real size (not stretched by a nine-grid), because a pill's
-    /// corners take its whole height and leave a nine-grid no room.
-    fn draw_masks(&self, gfx: &Gfx, size: Vector2) -> Result<()> {
-        if self.drawn.get() == size || size.X < 1.0 || size.Y < 1.0 {
-            return Ok(());
-        }
-        let radius = self.radius.min(size.X / 2.0).min(size.Y / 2.0);
-        for (mask, from, to, picture) in &self.masks {
-            let to = to.min(size.Y / 2.0);
-            if to <= *from {
-                mask.SetMask(None::<&windows::UI::Composition::CompositionBrush>)?;
-                continue;
-            }
-            let (mid, width) = ((from + to) / 2.0, to - from);
-            let ring = gfx.paint_into(picture.borrow().as_ref(), (size.X, size.Y), 1.0, |pen| {
-                pen.stroke_round_rect(
-                    (mid, mid),
-                    (size.X - mid * 2.0, size.Y - mid * 2.0),
-                    (radius - mid).max(0.0),
-                    width,
-                    [1.0, 1.0, 1.0, 1.0],
-                )
-            })?;
-            mask.SetMask(&ring.brush)?;
-            *picture.borrow_mut() = Some(ring.brush);
-        }
-        self.drawn.set(size);
-        Ok(())
+        Ok(layers)
     }
 
     /// Aligns the backdrop with a glass of `size` whose top left is at
-    /// (`x`, `y`) in screen pixels.
-    pub fn place(&self, gfx: &Gfx, (x, y): (f32, f32), size: Vector2) -> Result<()> {
-        self.draw_masks(gfx, size)?;
+    /// (`x`, `y`) in screen pixels. Cheap: only transforms and the rings'
+    /// shapes change, so it can run on every frame of an animation.
+    pub fn place(&self, (x, y): (f32, f32), size: Vector2) -> Result<()> {
         let screen = CAPTURE.with(|c| c.borrow().as_ref().map(|c| c.screen));
         let Some(screen) = screen else {
             return Ok(());
         };
         let (ox, oy) = (x - screen.left as f32, y - screen.top as f32);
         self.clear_brush.SetTransformMatrix(Matrix3x2 { M11: 1.0, M12: 0.0, M21: 0.0, M22: 1.0, M31: -ox, M32: -oy })?;
+        let radius = self.radius.min(size.X / 2.0).min(size.Y / 2.0);
         // Magnified about the glass's centre, enough on each axis that the
         // edge shows what lies `shift` pixels further in: a point q of the
         // capture lands at c + s * (q - o - c), with s = 1 / (1 - 2 shift / side).
         let (cx, cy) = (size.X / 2.0, size.Y / 2.0);
-        for (brush, shift) in &self.rings {
-            let sx = 1.0 / (1.0 - (2.0 * shift / size.X.max(1.0)).min(0.6));
-            let sy = 1.0 / (1.0 - (2.0 * shift / size.Y.max(1.0)).min(0.6));
-            brush.SetTransformMatrix(Matrix3x2 {
+        for ring in &self.rings {
+            let sx = 1.0 / (1.0 - (2.0 * ring.shift / size.X.max(1.0)).min(0.6));
+            let sy = 1.0 / (1.0 - (2.0 * ring.shift / size.Y.max(1.0)).min(0.6));
+            ring.lens.SetTransformMatrix(Matrix3x2 {
                 M11: sx,
                 M12: 0.0,
                 M21: 0.0,
@@ -295,7 +303,37 @@ impl Layers {
                 M31: cx - sx * (ox + cx),
                 M32: cy - sy * (oy + cy),
             })?;
+            // The band: a stroke along the outline, `mid` in from the edge.
+            let to = ring.to.min(size.Y.min(size.X) / 2.0);
+            let width = (to - ring.from).max(0.0);
+            let mid = (ring.from + to) / 2.0;
+            ring.stroke.SetStrokeThickness(width)?;
+            ring.geometry.SetOffset(Vector2 { X: mid, Y: mid })?;
+            ring.geometry.SetSize(Vector2 { X: (size.X - mid * 2.0).max(0.0), Y: (size.Y - mid * 2.0).max(0.0) })?;
+            let corner = (radius - mid).max(0.0);
+            ring.geometry.SetCornerRadius(Vector2 { X: corner, Y: corner })?;
+            ring.shape.SetSize(size)?;
+            ring.surface.SetSourceSize(size)?;
         }
         Ok(())
+    }
+}
+
+impl Drop for Layers {
+    /// Gives the capture back; the last glass to go stops it.
+    fn drop(&mut self) {
+        let Ok(left) = USERS.try_with(|users| {
+            let mut users = users.borrow_mut();
+            if let Some(at) = users.iter().position(|&owner| owner == self.owner) {
+                users.remove(at);
+            }
+            users.last().copied()
+        }) else {
+            return;
+        };
+        match left {
+            Some(owner) => NOTIFY.store(owner, Ordering::Release),
+            None => stop(),
+        }
     }
 }

@@ -441,6 +441,10 @@ pub(super) unsafe extern "system" fn wndproc(
             return LRESULT(if activate { MA_ACTIVATE } else { MA_NOACTIVATE } as isize);
         }
         WIDGETS_CHANGED => menu_bar_widgets_changed(),
+        crate::liquid::FRAME_MESSAGE => with_app("vidrio líquido", |app| {
+            crate::liquid::frame(&app.gfx);
+            Ok(())
+        }),
         ASSETS_READY => {
             // SAFETY: Coalesce background results on this UI window.
             unsafe { SetTimer(Some(hwnd), ASSETS_TIMER, ASSETS_DELAY_MS, None) };

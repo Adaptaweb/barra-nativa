@@ -356,6 +356,14 @@ impl App {
                 }
             })
             .collect();
+        // Liquid glass sees the screen through a capture the dock's own
+        // window stays out of.
+        crate::liquid::exclude(self.visual, theme.is_liquid());
+        let liquid = theme.is_liquid().then_some((
+            self.visual,
+            screen,
+            (window_zone.left as f32, window_zone.top as f32),
+        ));
         let scene = Scene::build(
             &self.gfx,
             &SceneInput {
@@ -365,6 +373,7 @@ impl App {
                 scale,
                 frame: window_frame,
                 remove_label: self.remove_label.as_ref(),
+                liquid,
             },
         )?;
         let reorder = self.stage.as_ref().and_then(|previous| {

@@ -280,9 +280,6 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
     Ok(Some(island))
 }
 
-/// Message an island window gets when the liquid glass's capture has a new frame.
-const LIQUID_FRAME: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 0x51;
-
 /// With a liquid glass theme: keeps the island out of screen captures,
 /// starts the capture of its display and puts the sharp backdrop and lens
 /// in its glass. Otherwise lets captures see it again.
@@ -301,12 +298,9 @@ fn liquid_layers(
         return None;
     }
     let made = (|| -> Result<Option<crate::liquid::Layers>> {
-        crate::liquid::start(gfx, frame.monitor.screen, hwnd, LIQUID_FRAME)?;
-        let Some(layers) = crate::liquid::Layers::new(gfx, radius, frame.scale)? else {
-            return Ok(None);
-        };
+        let layers = crate::liquid::Layers::new(gfx, frame.monitor.screen, hwnd, radius, frame.scale)?;
         glass.add_backdrop(&layers.visuals)?;
-        layers.place(gfx, (left as f32, top as f32), size)?;
+        layers.place((left as f32, top as f32), size)?;
         Ok(Some(layers))
     })();
     made.unwrap_or_else(|error| {
@@ -340,7 +334,7 @@ fn relayout(island: &mut Island, gfx: &Gfx, frame: &Frame, list: &[WidgetId], vi
     island.top = (frame.monitor.screen.bottom as f32 - frame.margin - island.height) as i32;
     island.width = width as i32;
     if let Some(layers) = &island.liquid {
-        layers.place(gfx, (island.left as f32, island.top as f32), size)?;
+        layers.place((island.left as f32, island.top as f32), size)?;
     }
     island.place(visible);
     Ok(())
@@ -472,10 +466,6 @@ fn rebuild(state: &mut State) {
             Ok(None) => {}
             Err(error) => eprintln!("muelle: isla de widgets: {error:#}"),
         }
-    }
-    // No liquid glass left: nothing needs the screen capture.
-    if !state.islands.iter().any(|island| island.liquid.is_some()) {
-        crate::liquid::stop();
     }
 }
 
@@ -655,7 +645,7 @@ unsafe extern "system" fn island_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
             repaint_music();
             return LRESULT(0);
         }
-        LIQUID_FRAME => {
+        crate::liquid::FRAME_MESSAGE => {
             let gfx = STATE.with(|state| state.try_borrow().ok().and_then(|state| state.gfx.clone()));
             if let Some(gfx) = gfx {
                 crate::liquid::frame(&gfx);
