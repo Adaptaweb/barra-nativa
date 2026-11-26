@@ -3,7 +3,7 @@
  * list of one zone (drag to reorder) and the gallery to add a widget.
  */
 
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Card, Segmented } from "./controls";
 import { Tile } from "./tiles";
 import { type PreviewSize, WidgetPreview } from "./WidgetPreview";
@@ -87,6 +87,37 @@ function sizeOptions(key: string) {
   return key === "clima" ? [...base, { value: "estado", label: "Tarjeta" }] : base;
 }
 
+/** The saved size as a preview size; "estado" or empty show as "mediano". */
+const previewSize = (size?: string): PreviewSize =>
+  size === "compacto" || size === "mediano" || size === "ancho" ? size : "mediano";
+
+/** A preview that shrinks (never grows) to fit the width of its box, without cropping. */
+function FitPreview({ children }: { children: ReactNode }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = boxRef.current;
+    const inner = innerRef.current;
+    if (!box || !inner) return;
+    const fit = () => {
+      const width = inner.scrollWidth;
+      const scale = width > 0 ? Math.min(1, box.clientWidth / width) : 1;
+      inner.style.transform = scale < 1 ? `scale(${scale})` : "";
+      box.style.height = `${inner.offsetHeight * scale}px`;
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(box);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div ref={boxRef} className="zone-item-preview" aria-hidden="true">
+      <div ref={innerRef} className="zone-item-fit">{children}</div>
+    </div>
+  );
+}
+
 /** The widgets of one zone, in order. Drag a row, or press Alt+Up / Alt+Down on it, to reorder. */
 export function ZoneList({ zone, keys, sizes, showSize, onReorder, onRemove, onSize, children }: {
   zone: Zone;
@@ -154,8 +185,7 @@ export function ZoneList({ zone, keys, sizes, showSize, onReorder, onRemove, onS
             }}
           >
             <span className="zone-grip" aria-hidden="true">⠿</span>
-            <Tile id={key} />
-            <div className="row-text"><span className="row-label">{nameOf(key)}</span></div>
+            <span className="zone-item-name">{nameOf(key)}</span>
             <div className="row-control push-group">
               {showSize ? (
                 <Segmented
@@ -167,6 +197,9 @@ export function ZoneList({ zone, keys, sizes, showSize, onReorder, onRemove, onS
               ) : null}
               <button type="button" className="zone-remove" aria-label={`Quitar ${nameOf(key)}`} onClick={() => onRemove(index)}>×</button>
             </div>
+            <FitPreview>
+              <WidgetPreview widget={key} place={isBarZone(zone) ? "bar" : "dock"} size={previewSize(sizes?.[key])} />
+            </FitPreview>
           </div>
         ))}
       </div>
