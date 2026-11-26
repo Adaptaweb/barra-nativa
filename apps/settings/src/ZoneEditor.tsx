@@ -103,10 +103,14 @@ function FitPreview({ children, wide = false }: { children: ReactNode; wide?: bo
       const cs = getComputedStyle(box);
       const w = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
       const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      // Measure at natural size. `zoom`, not a transform: a transform gives each
+      // preview its own compositing layer, and many of them in the transparent
+      // WebView2 window can leave it painting only the backdrop.
+      inner.style.zoom = "";
       const width = inner.scrollWidth;
       const height = inner.scrollHeight;
       const scale = width > 0 && height > 0 ? Math.min(1, w / width, h / height) : 1;
-      inner.style.transform = scale < 1 ? `scale(${scale})` : "";
+      if (scale < 1) inner.style.zoom = String(scale);
     };
     fit();
     const observer = new ResizeObserver(fit);
