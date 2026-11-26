@@ -761,6 +761,8 @@ textarea.text-field { width: 100%; resize: vertical; font-family: ui-monospace, 
 .wp-emoji { font-size: 20px; }
 .wp-logo { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: #d97757; font-weight: 800; }
 .wp-ring { width: 40px; height: 40px; }
+.wp-sun { width: 34px; height: 34px; flex: none; }
+.wp-huge { font-size: 26px; font-weight: 800; }
 .wp-water { position: relative; width: 38px; height: 38px; border-radius: 10px; overflow: hidden; background: rgba(255, 255, 255, 0.12); flex: none; }
 .wp-water-body { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(#4ade80, #16a34a); animation: wp-bob 2.6s ease-in-out infinite; }
 .wp-wave { position: absolute; left: 0; width: 200%; }

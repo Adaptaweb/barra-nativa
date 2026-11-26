@@ -16,6 +16,20 @@ const Ring = ({ value, color, label }: { value: string; color: string; label: st
   </svg>
 );
 
+/** The weather's sun, drawn as the dock draws it: a yellow-to-orange disc and eight rays. */
+const Sun = () => (
+  <svg className="wp-sun" viewBox="0 0 40 40" aria-hidden="true">
+    <defs><linearGradient id="wp-sun-disc" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#ffe14d" /><stop offset="1" stopColor="#ff9f0a" /></linearGradient></defs>
+    <g stroke="#ffcc00" strokeWidth="2.4" strokeLinecap="round">
+      {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => {
+        const r = (a * Math.PI) / 180;
+        return <line key={a} x1={20 + Math.cos(r) * 12.5} y1={20 + Math.sin(r) * 12.5} x2={20 + Math.cos(r) * 16.5} y2={20 + Math.sin(r) * 16.5} />;
+      })}
+    </g>
+    <circle cx="20" cy="20" r="9" fill="url(#wp-sun-disc)" />
+  </svg>
+);
+
 /** The battery's box filling with green water whose waves keep moving (as the dock draws it). */
 const Water = ({ level, charging, label }: { level: number; charging: boolean; label: string }) => (
   <span className="wp-water" aria-hidden="true">
@@ -53,8 +67,8 @@ function dockCell(key: string, size: PreviewSize) {
     case "clima":
       return (
         <>
-          <span className="wp-emoji">☀️</span>
-          <b className="wp-big">19°</b>
+          <Sun />
+          <b className={compact ? "wp-big wp-huge" : "wp-big"}>19°</b>
           {compact ? null : <span className="wp-stack"><b>Despejado</b><span className="wp-dim">↑24° ↓9°</span></span>}
           {wide ? <span className="wp-hours"><span>15<br />☀️ 22°</span><span>16<br />⛅ 21°</span><span>17<br />⛅ 19°</span></span> : null}
         </>

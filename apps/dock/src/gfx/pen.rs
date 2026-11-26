@@ -11,7 +11,7 @@ use windows::{
                 D2D_RECT_F, D2D_SIZE_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_BEGIN_HOLLOW,
                 D2D1_FIGURE_END_CLOSED, D2D1_FIGURE_END_OPEN, D2D1_GRADIENT_STOP,
             },
-            D2D1_COMBINE_MODE_INTERSECT,
+            D2D1_COMBINE_MODE_EXCLUDE, D2D1_COMBINE_MODE_INTERSECT, D2D1_ELLIPSE,
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_LARGE, D2D1_ARC_SIZE_SMALL,
             D2D1_BUFFER_PRECISION_8BPC_UNORM, D2D1_CAP_STYLE_ROUND,
             D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED, D2D1_COLOR_SPACE_SRGB,
@@ -373,6 +373,58 @@ impl Pen<'_> {
                 None,
             )?;
             self.dc.DrawGeometry(&path, &ink, stroke, &style);
+        }
+        Ok(())
+    }
+
+    /// A straight line with round ends.
+    pub fn line(&self, from: (f32, f32), to: (f32, f32), stroke: f32, color: Rgba) -> Result<()> {
+        let ink = self.brush(color)?;
+        // SAFETY: The brush and stroke style live for the drawing call.
+        unsafe {
+            let style = self.dc.GetFactory()?.CreateStrokeStyle(
+                &D2D1_STROKE_STYLE_PROPERTIES {
+                    startCap: D2D1_CAP_STYLE_ROUND,
+                    endCap: D2D1_CAP_STYLE_ROUND,
+                    dashCap: D2D1_CAP_STYLE_ROUND,
+                    lineJoin: D2D1_LINE_JOIN_ROUND,
+                    miterLimit: 10.0,
+                    ..Default::default()
+                },
+                None,
+            )?;
+            self.dc.DrawLine(
+                Vector2 { X: from.0, Y: from.1 },
+                Vector2 { X: to.0, Y: to.1 },
+                &ink,
+                stroke,
+                &style,
+            );
+        }
+        Ok(())
+    }
+
+    /// A crescent moon: a disc of `radius` at `center` with a disc of the
+    /// same size, moved by `bite`, cut out of it.
+    pub fn crescent(&self, center: (f32, f32), radius: f32, bite: (f32, f32), color: Rgba) -> Result<()> {
+        let fill = self.brush(color)?;
+        // SAFETY: Geometries, sink and brush live for the drawing call.
+        unsafe {
+            let factory = self.dc.GetFactory()?;
+            let disc = |cx: f32, cy: f32| {
+                factory.CreateEllipseGeometry(&D2D1_ELLIPSE {
+                    point: Vector2 { X: cx, Y: cy },
+                    radiusX: radius,
+                    radiusY: radius,
+                })
+            };
+            let moon = disc(center.0, center.1)?;
+            let shadow = disc(center.0 + bite.0, center.1 + bite.1)?;
+            let shape = factory.CreatePathGeometry()?;
+            let sink = shape.Open()?;
+            moon.CombineWithGeometry(&shadow, D2D1_COMBINE_MODE_EXCLUDE, None, 0.25, &sink)?;
+            sink.Close()?;
+            self.dc.FillGeometry(&shape, &fill, None);
         }
         Ok(())
     }

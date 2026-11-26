@@ -4,7 +4,7 @@
 //! asks. Icon, big figures, faded
 //! details, thin separators.
 
-use super::draw::{GREEN, ORANGE, RED, ink, symbol};
+use super::draw::{GREEN, ORANGE, RED, ink};
 use super::clima::describe;
 use super::musica::{NO_ARTWORK, NO_ARTWORK_2};
 use super::{Calendar, ClimaData, Home, Readings, WidgetId};
@@ -340,13 +340,6 @@ impl Cell<'_, '_> {
         Ok(())
     }
 
-    fn emoji(&mut self, text: &str, size: f32) -> Result<()> {
-        let (w, h) = self.gfx.measure_emoji(text, size, self.unit)?;
-        self.pen.emoji(text, (self.x, (self.height - h) / 2.0), size)?;
-        self.x += w;
-        Ok(())
-    }
-
     /// Width and height of the clock time (`HH:MM` big plus `:SS` small); the height is the big box's.
     fn clock_measure(&self, now: &DateTime<Local>, big: f32, small: f32) -> Result<(f32, f32)> {
         use chrono::Timelike;
@@ -488,25 +481,116 @@ fn reloj(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     }
 }
 
+const SUN_RAY: Rgba = [1.0, 0.80, 0.0, 1.0];
+const SUN_TOP: Rgba = [1.0, 0.88, 0.30, 1.0];
+const SUN_BOTTOM: Rgba = [1.0, 0.62, 0.04, 1.0];
+const MOON: Rgba = [1.0, 0.91, 0.66, 1.0];
+const CLOUD: Rgba = [0.93, 0.95, 0.98, 1.0];
+const CLOUD_DARK: Rgba = [0.70, 0.74, 0.81, 1.0];
+const RAIN: Rgba = [0.35, 0.70, 1.0, 1.0];
+
+/// A sun of disc `r` at `center`, with eight short rays.
+fn draw_sun(pen: &Pen<'_>, center: (f32, f32), r: f32) -> Result<()> {
+    for k in 0..8 {
+        let a = (k as f32 * 45.0).to_radians();
+        let (s, co) = a.sin_cos();
+        pen.line(
+            (center.0 + co * r * 1.4, center.1 + s * r * 1.4),
+            (center.0 + co * r * 1.85, center.1 + s * r * 1.85),
+            (r * 0.26).max(1.0),
+            SUN_RAY,
+        )?;
+    }
+    pen.gradient_rect(
+        (center.0 - r, center.1 - r),
+        (r * 2.0, r * 2.0),
+        r,
+        (center.0, center.1 - r),
+        (center.0, center.1 + r),
+        &[(0.0, SUN_TOP), (1.0, SUN_BOTTOM)],
+    )
+}
+
+/// A cloud `w` wide (and 0.6 `w` tall) with its top left at (`x`, `y`).
+fn draw_cloud(pen: &Pen<'_>, (x, y): (f32, f32), w: f32, color: Rgba) -> Result<()> {
+    let h = w * 0.6;
+    let disc = |cx: f32, cy: f32, r: f32| pen.round_rect((cx - r, cy - r), (r * 2.0, r * 2.0), r, color);
+    disc(x + w * 0.58, y + h * 0.46, h * 0.42)?;
+    disc(x + w * 0.32, y + h * 0.62, h * 0.3)?;
+    pen.round_rect((x + w * 0.08, y + h * 0.55), (w * 0.84, h * 0.42), h * 0.21, color)
+}
+
+/// The weather as a drawn icon in a `side` square at (`x`, `y`), in the
+/// iOS style: a yellow sun, a pale moon, white clouds, blue rain.
+fn weather_icon(pen: &Pen<'_>, (x, y): (f32, f32), side: f32, code: u8, day: bool) -> Result<()> {
+    let sky = |pen: &Pen<'_>, center: (f32, f32), r: f32| {
+        if day { draw_sun(pen, center, r) } else { pen.crescent(center, r * 1.15, (r * 0.6, -r * 0.4), MOON) }
+    };
+    match code {
+        0 | 1 => sky(pen, (x + side / 2.0, y + side / 2.0), side * 0.23),
+        2 => {
+            sky(pen, (x + side * 0.38, y + side * 0.36), side * 0.17)?;
+            draw_cloud(pen, (x + side * 0.2, y + side * 0.4), side * 0.78, CLOUD)
+        }
+        45 | 48 => {
+            draw_cloud(pen, (x + side * 0.06, y + side * 0.1), side * 0.88, CLOUD)?;
+            for k in 0..2 {
+                let ly = y + side * (0.74 + 0.13 * k as f32);
+                pen.line((x + side * 0.16, ly), (x + side * 0.84, ly), side * 0.07, CLOUD_DARK)?;
+            }
+            Ok(())
+        }
+        51..=67 | 80..=82 => {
+            draw_cloud(pen, (x + side * 0.08, y + side * 0.08), side * 0.84, CLOUD_DARK)?;
+            for k in 0..3 {
+                let lx = x + side * (0.3 + 0.2 * k as f32);
+                pen.line((lx, y + side * 0.7), (lx - side * 0.07, y + side * 0.9), side * 0.07, RAIN)?;
+            }
+            Ok(())
+        }
+        71..=77 | 85 | 86 => {
+            draw_cloud(pen, (x + side * 0.08, y + side * 0.08), side * 0.84, CLOUD)?;
+            for k in 0..3 {
+                let dot = side * 0.1;
+                let cx = x + side * (0.3 + 0.2 * k as f32);
+                let cy = y + side * (0.76 + 0.06 * (k % 2) as f32);
+                pen.round_rect((cx - dot / 2.0, cy - dot / 2.0), (dot, dot), dot / 2.0, CLOUD)?;
+            }
+            Ok(())
+        }
+        95.. => {
+            draw_cloud(pen, (x + side * 0.08, y + side * 0.04), side * 0.84, CLOUD_DARK)?;
+            pen.icon('\u{E945}', (x + side * 0.38, y + side * 0.52), side * 0.32 / pen.scale, SUN_RAY)?;
+            Ok(())
+        }
+        _ => draw_cloud(pen, (x + side * 0.05, y + side * 0.2), side * 0.9, CLOUD),
+    }
+}
+
+impl Cell<'_, '_> {
+    /// The weather icon in a `side` (logical) square, centred on the cell's height; advances.
+    fn weather(&mut self, code: u8, day: bool, side: f32) -> Result<()> {
+        let side = self.px(side);
+        weather_icon(self.pen, (self.x, ((self.height - side) / 2.0).round()), side, code, day)?;
+        self.x += side;
+        Ok(())
+    }
+}
+
 fn clima(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     let Some(d) = r.clima.as_ref() else {
         return c.text("Clima…", 11.0, Weight::Normal, c.faded());
     };
     let temp = format!("{}°", d.temp);
     match size {
+        // Only the icon and the temperature, as big as the clock's figures.
         Size::Compact => {
-            c.emoji(symbol(d.code, d.day), 26.0)?;
-            c.x += c.px(6.0);
-            let range = format!("H {}° L {}°", d.max, d.min);
-            c.column(
-                (&temp, 22.0, Weight::Bold, c.strong()),
-                (&range, 11.0, Weight::Normal, c.faded()),
-                false,
-                20,
-            )
+            c.weather(d.code, d.day, 34.0)?;
+            c.x += c.px(8.0);
+            c.text(&temp, 28.0, Weight::Heavy, c.strong())
         }
         Size::Medium => {
-            c.emoji(symbol(d.code, d.day), 22.0)?;
+            c.weather(d.code, d.day, 30.0)?;
             c.x += c.px(6.0);
             c.column(
                 (&temp, 20.0, Weight::Bold, c.strong()),
@@ -518,7 +602,7 @@ fn clima(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
             clima_details(c, d)
         }
         Size::Wide => {
-            c.emoji(symbol(d.code, d.day), 22.0)?;
+            c.weather(d.code, d.day, 30.0)?;
             c.x += c.px(6.0);
             c.column(
                 (&temp, 20.0, Weight::Bold, c.strong()),
@@ -530,14 +614,14 @@ fn clima(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
             for (name, code, high, low) in &d.days {
                 // Day name, icon, then the high and the low, stacked.
                 let (nw, nh) = c.gfx.measure(name, 10.0, c.unit, Weight::Normal)?;
-                let (ew, eh) = c.gfx.measure_emoji(symbol(*code, true), 13.0, c.unit)?;
+                let (ew, eh) = (c.px(17.0), c.px(17.0));
                 let (hw, th) = c.gfx.measure(&format!("{high}°"), 11.0, c.unit, Weight::Bold)?;
                 let low = format!(" {low}°");
                 let (lw, _) = c.gfx.measure(&low, 11.0, c.unit, Weight::Normal)?;
                 let w = nw.max(ew).max(hw + lw);
                 let y = (c.height - nh - eh - th) / 2.0;
                 c.pen.text(name, (c.x + (w - nw) / 2.0, y), 10.0, Weight::Normal, c.faded())?;
-                c.pen.emoji(symbol(*code, true), (c.x + (w - ew) / 2.0, y + nh), 13.0)?;
+                weather_icon(c.pen, (c.x + (w - ew) / 2.0, y + nh), ew, *code, true)?;
                 let x = c.x + (w - hw - lw) / 2.0;
                 c.pen.text(&format!("{high}°"), (x, y + nh + eh), 11.0, Weight::Bold, c.strong())?;
                 c.pen.text(&low, (x + hw, y + nh + eh), 11.0, Weight::Normal, c.faded())?;
@@ -609,8 +693,8 @@ fn clima_status(c: &mut Cell<'_, '_>, d: &ClimaData) -> Result<()> {
     )?;
     c.x += c.px(18.0);
     c.text(&format!("{}°", d.temp), 30.0, Weight::Normal, white)?;
-    c.x += c.px(4.0);
-    c.emoji(symbol(d.code, d.day), 24.0)
+    c.x += c.px(6.0);
+    c.weather(d.code, d.day, 30.0)
 }
 
 /// Ring colour of the CPU temperature: green, yellow from 65, red from 80.
