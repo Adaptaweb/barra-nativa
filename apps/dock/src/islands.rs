@@ -305,7 +305,7 @@ fn liquid_layers(
         let Some(layers) = crate::liquid::Layers::new(gfx, radius, frame.scale)? else {
             return Ok(None);
         };
-        glass.add_backdrop(&layers.clear, &layers.lens)?;
+        glass.add_backdrop(&layers.visuals)?;
         layers.place((left as f32, top as f32), size)?;
         Ok(Some(layers))
     })();

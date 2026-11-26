@@ -249,12 +249,15 @@ impl GlassPill {
         &self.root
     }
 
-    /// Puts a liquid glass's sharp backdrop and lens band right above the
-    /// bottom fill, under the tint, sheen and rim.
-    pub fn add_backdrop(&self, clear: &SpriteVisual, lens: &SpriteVisual) -> Result<()> {
+    /// Puts a liquid glass's layers (bottom first: the sharp backdrop, then
+    /// the lens rings) right above the bottom fill, under the tint, sheen and rim.
+    pub fn add_backdrop(&self, layers: &[SpriteVisual]) -> Result<()> {
         let children = self.material.glass.Children()?;
-        children.InsertAbove(clear, &self.material.base)?;
-        children.InsertAbove(lens, clear)?;
+        let mut below = self.material.base.clone();
+        for layer in layers {
+            children.InsertAbove(layer, &below)?;
+            below = layer.clone();
+        }
         Ok(())
     }
 

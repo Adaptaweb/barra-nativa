@@ -46,11 +46,6 @@ use windows::{
 };
 use windows_numerics::{Matrix3x2, Vector2};
 
-/// How much the lens band magnifies what is behind it.
-const LENS: f32 = 1.12;
-/// Width of the lens band along the edge, in physical pixels per unit of scale.
-const BAND: f32 = 9.0;
-
 struct Capture {
     screen: RECT,
     pool: Direct3D11CaptureFramePool,
@@ -120,8 +115,13 @@ pub fn start(gfx: &Gfx, screen: RECT, notify: HWND, message: u32) -> Result<()> 
         }
     };
     CAPTURE.with(|c| *c.borrow_mut() = Some(capture));
+    FIRST.store(true, Ordering::Release);
+    muelle_shell::log::line(&format!("vidrio líquido: captura de {width}×{height} iniciada"));
     Ok(())
 }
+
+/// The next frame is the first of this capture (logged once).
+static FIRST: AtomicBool = AtomicBool::new(false);
 
 /// Stops the capture, if any.
 pub fn stop() {
@@ -158,20 +158,31 @@ pub fn frame(gfx: &Gfx) {
                 crate::gfx::draw_dxgi(dc, &dxgi)
             })
         })();
-        if let Err(error) = copied {
-            muelle_shell::log::line(&format!("vidrio líquido: {error:#}"));
+        match copied {
+            Err(error) => muelle_shell::log::line(&format!("vidrio líquido: {error:#}")),
+            Ok(()) if FIRST.swap(false, Ordering::AcqRel) => {
+                muelle_shell::log::line("vidrio líquido: primer fotograma copiado");
+            }
+            Ok(()) => {}
         }
         let _ = frame.Close();
     });
 }
 
-/// The two layers a liquid glass shows over its tint: what is behind it,
-/// sharp, and the lens band along its edge.
+/// The lens, outermost ring first: where each ring starts and ends (logical
+/// pixels in from the edge) and how far it moves what is behind it at the
+/// edge. The shift shrinks inward, so what passes behind bends in a curve
+/// near the edge and runs straight in the middle.
+const RINGS: [(f32, f32, f32); 3] = [(0.0, 5.0, 18.0), (5.0, 10.0, 10.0), (10.0, 16.0, 4.0)];
+
+/// What a liquid glass shows over its tint: what is behind it, sharp, and
+/// the lens rings along its edge.
 pub struct Layers {
-    pub clear: SpriteVisual,
-    pub lens: SpriteVisual,
+    /// Bottom to top: the sharp backdrop, then the rings.
+    pub visuals: Vec<SpriteVisual>,
     clear_brush: CompositionSurfaceBrush,
-    lens_brush: CompositionSurfaceBrush,
+    /// Each ring's brush over the capture and its shift in physical pixels.
+    rings: Vec<(CompositionSurfaceBrush, f32)>,
 }
 
 impl Layers {
@@ -188,28 +199,39 @@ impl Layers {
             brush.SetVerticalAlignmentRatio(0.0)?;
             Ok(brush)
         };
+        let sprite = |brush: &windows::UI::Composition::CompositionBrush| -> Result<SpriteVisual> {
+            let sprite = c.CreateSpriteVisual()?;
+            sprite.SetRelativeSizeAdjustment(Vector2 { X: 1.0, Y: 1.0 })?;
+            sprite.SetBrush(brush)?;
+            Ok(sprite)
+        };
         let clear_brush = brush()?;
-        let lens_brush = brush()?;
-        let clear = c.CreateSpriteVisual()?;
-        clear.SetRelativeSizeAdjustment(Vector2 { X: 1.0, Y: 1.0 })?;
-        clear.SetBrush(&clear_brush)?;
-        // The band: a ring drawn once and stretched by a nine-grid, so its
-        // width stays the same whatever the glass's size.
-        let band = (BAND * scale).round().max(4.0);
+        let mut visuals = vec![sprite(&clear_brush.cast()?)?];
+        let mut rings = Vec::new();
+        // Rings stay inside the corners' curve, where the nine-grid keeps them.
         let side = (radius * 2.0 + 2.0).ceil();
-        let ring = gfx.paint((side, side), scale, |pen| {
-            pen.stroke_round_rect((band / 2.0, band / 2.0), (side - band, side - band), (radius - band / 2.0).max(0.0), band, [1.0, 1.0, 1.0, 1.0])
-        })?;
-        let nine: CompositionNineGridBrush = c.CreateNineGridBrush()?;
-        nine.SetSource(&ring.brush)?;
-        nine.SetInsets(radius.max(band) + 1.0)?;
-        let mask: CompositionMaskBrush = c.CreateMaskBrush()?;
-        mask.SetSource(&lens_brush)?;
-        mask.SetMask(&nine)?;
-        let lens = c.CreateSpriteVisual()?;
-        lens.SetRelativeSizeAdjustment(Vector2 { X: 1.0, Y: 1.0 })?;
-        lens.SetBrush(&mask)?;
-        Ok(Some(Self { clear, lens, clear_brush, lens_brush }))
+        for (from, to, shift) in RINGS {
+            let (from, to) = ((from * scale).round(), (to * scale).round().min(radius - 1.0));
+            if to <= from {
+                continue;
+            }
+            let (mid, width) = ((from + to) / 2.0, to - from);
+            // A ring from `from` to `to` in from the edge, drawn once and
+            // stretched by a nine-grid so its width stays whatever the size.
+            let ring = gfx.paint((side, side), scale, |pen| {
+                pen.stroke_round_rect((mid, mid), (side - mid * 2.0, side - mid * 2.0), (radius - mid).max(0.0), width, [1.0, 1.0, 1.0, 1.0])
+            })?;
+            let nine: CompositionNineGridBrush = c.CreateNineGridBrush()?;
+            nine.SetSource(&ring.brush)?;
+            nine.SetInsets(radius + 1.0)?;
+            let lens = brush()?;
+            let mask: CompositionMaskBrush = c.CreateMaskBrush()?;
+            mask.SetSource(&lens)?;
+            mask.SetMask(&nine)?;
+            visuals.push(sprite(&mask.cast()?)?);
+            rings.push((lens, shift * scale));
+        }
+        Ok(Some(Self { visuals, clear_brush, rings }))
     }
 
     /// Aligns the backdrop with a glass of `size` whose top left is at
@@ -221,17 +243,22 @@ impl Layers {
         };
         let (ox, oy) = (x - screen.left as f32, y - screen.top as f32);
         self.clear_brush.SetTransformMatrix(Matrix3x2 { M11: 1.0, M12: 0.0, M21: 0.0, M22: 1.0, M31: -ox, M32: -oy })?;
-        // Magnified about the glass's centre: a point q of the capture lands
-        // at c + LENS * (q - o - c).
+        // Magnified about the glass's centre, enough on each axis that the
+        // edge shows what lies `shift` pixels further in: a point q of the
+        // capture lands at c + s * (q - o - c), with s = 1 / (1 - 2 shift / side).
         let (cx, cy) = (size.X / 2.0, size.Y / 2.0);
-        self.lens_brush.SetTransformMatrix(Matrix3x2 {
-            M11: LENS,
-            M12: 0.0,
-            M21: 0.0,
-            M22: LENS,
-            M31: cx - LENS * (ox + cx),
-            M32: cy - LENS * (oy + cy),
-        })?;
+        for (brush, shift) in &self.rings {
+            let sx = 1.0 / (1.0 - (2.0 * shift / size.X.max(1.0)).min(0.6));
+            let sy = 1.0 / (1.0 - (2.0 * shift / size.Y.max(1.0)).min(0.6));
+            brush.SetTransformMatrix(Matrix3x2 {
+                M11: sx,
+                M12: 0.0,
+                M21: 0.0,
+                M22: sy,
+                M31: cx - sx * (ox + cx),
+                M32: cy - sy * (oy + cy),
+            })?;
+        }
         Ok(())
     }
 }
