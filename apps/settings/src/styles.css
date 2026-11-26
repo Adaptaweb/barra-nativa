@@ -44,7 +44,9 @@ body,
   background: transparent;
   color: var(--text);
   user-select: none;
-  overflow: hidden;
+  /* clip, not hidden: focusing an off-screen control must not scroll the
+     whole document (the window then shows only its backdrop). */
+  overflow: clip;
 }
 
 button {
@@ -593,6 +595,7 @@ input:focus-visible {
 }
 
 .segmented {
+  position: relative;
   display: flex;
   background: var(--hover);
   border-radius: 7px;
