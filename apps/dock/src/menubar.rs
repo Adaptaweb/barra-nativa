@@ -534,6 +534,8 @@ pub struct MenuBar {
     /// What the bar widgets showed when last painted; a new reading with the
     /// same print (only the clock's seconds changed) does not repaint.
     bar_print: String,
+    /// The built-in clock label and its width, to repaint it in place when only the time changes.
+    clock_visual: Option<(SpriteVisual, f32)>,
 }
 
 /// What the bar shows for its widgets, to tell whether a repaint is needed.
@@ -1215,6 +1217,7 @@ impl MenuBar {
             audio: AudioWatch::new(hwnd.0 as isize, AUDIO_CHANGED),
             widget_visuals: Vec::new(),
             bar_print: String::new(),
+            clock_visual: None,
         };
         AUDIO_TICK_PENDING.store(false, Ordering::Relaxed);
         bar.update_status();
@@ -2063,6 +2066,29 @@ impl MenuBar {
         if look.panel != Some(Island::Music) || moved {
             self.release_volume(None)?;
         }
+        // Rebuilding every minute recreated the glass and flickered, so when
+        // only the time changed, repaint the clock label in place.
+        if let Some(old) = self.look.as_ref()
+            && old.clock != look.clock
+        {
+            let mut same = old.clone();
+            same.clock = look.clock.clone();
+            if same == look {
+                if look.bar_widgets.has(WidgetId::Reloj) {
+                    self.look = Some(look);
+                    return Ok(());
+                }
+                if let Some((visual, width)) = self.clock_visual.clone() {
+                    let ink = if look.light { Ink::Dark } else { Ink::Light };
+                    let label = gfx.text_brush(&look.clock, look.scale, false, ink)?;
+                    if (label.width - width).abs() <= 0.5 {
+                        visual.SetBrush(&label.brush)?;
+                        self.look = Some(look);
+                        return Ok(());
+                    }
+                }
+            }
+        }
         if self.look.as_ref() == Some(&look) {
             return Ok(());
         }
@@ -2115,6 +2141,7 @@ impl MenuBar {
             height
         };
         let ink = if look.light { Ink::Dark } else { Ink::Light };
+        self.clock_visual = None;
 
         let root = c.CreateContainerVisual()?;
         root.SetSize(Vector2 {
@@ -2198,7 +2225,12 @@ impl MenuBar {
         let symbol = |layers: &[(char, f32)]| gfx.glyph_brush(layers, scale, ink);
         let mut items: Vec<(LabelBrush, Action)> = Vec::new();
         // The clock widget, when placed, shows the date and time itself.
-        if !look.bar_widgets.has(WidgetId::Reloj) {
+        let clock_index = if look.bar_widgets.has(WidgetId::Reloj) {
+            None
+        } else {
+            Some(0)
+        };
+        if clock_index.is_some() {
             items.push((
                 gfx.text_brush(&look.clock, scale, false, ink)?,
                 Action::Notifications,
@@ -2296,7 +2328,10 @@ impl MenuBar {
                 right -= px(6.0);
             }
             let left = right - item.width;
-            place(&layers, item, left)?;
+            let visual = place(&layers, item, left)?;
+            if clock_index == Some(index) {
+                self.clock_visual = Some((visual, item.width));
+            }
             // The battery icon and its percentage form one control.
             // Accessory readings are passive status indicators, not controls.
             if *action != Action::AccessoryIndicator {
