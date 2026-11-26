@@ -891,8 +891,26 @@ fn audio(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     Ok(())
 }
 
-/// "Sonando ahora": the artwork, what plays, the progress and the transport
-/// buttons, on a card of the artwork's colour.
+/// Three static white bars (an "it is playing" equalizer), bottom aligned at
+/// `bottom`, starting at `x`. Returns its total width.
+fn equalizer(c: &Cell<'_, '_>, x: f32, bottom: f32) -> Result<f32> {
+    let bar_w = c.px(2.5).max(2.0);
+    let gap = c.px(1.5).max(1.0);
+    let full = c.px(11.0);
+    for (index, factor) in [0.5_f32, 1.0, 0.7].into_iter().enumerate() {
+        let h = full * factor;
+        let bx = x + (bar_w + gap) * index as f32;
+        c.pen.round_rect((bx, bottom - h), (bar_w, h), bar_w / 2.0, [1.0, 1.0, 1.0, 0.95])?;
+    }
+    Ok(bar_w * 3.0 + gap * 2.0)
+}
+
+/// "Now playing", iOS style, on a card of the artwork's colour: the artwork
+/// on the left, then title and artist with a thin progress bar, and on the
+/// right the previous / play-pause (white circle) / next buttons. Compact
+/// shows only the artwork (with a small equalizer while it plays) and the
+/// play button. Medium adds the text and the progress bar. Wide also puts an
+/// equalizer by the title and elapsed / remaining times around the bar.
 fn musica(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     let left = c.x;
     // The width is fixed per size (`width`), whatever the text says.
@@ -910,36 +928,50 @@ fn musica(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     )?;
     let compact = size == Size::Compact;
     let wide = size == Size::Wide;
-    // The artwork, the text and the buttons use this much height; the
-    // progress row takes the rest.
-    let top_h = if wide { c.height * 0.70 } else { c.height };
-    let side = (c.height * 0.62).round();
+    let playing = d.is_some_and(|d| d.playing);
+    let side = (c.height * 0.66).round();
+    let art_y = ((c.height - side) / 2.0).round();
     if let Some(art) = d.and_then(|d| d.art.as_deref()).or(media::square_fallback()) {
-        c.pen.image(art, (left, ((top_h - side) / 2.0).round()), (side, side))?;
+        c.pen.image(art, (left, art_y), (side, side))?;
+    }
+    if compact && playing {
+        equalizer(c, left + c.px(4.0), art_y + side - c.px(4.0))?;
     }
 
-    // Buttons, from the right edge.
-    let playing = d.is_some_and(|d| d.playing);
+    // Buttons, from the right edge: previous, play (white circle), next.
+    let circle = c.px(26.0);
+    let side_slot = c.px(20.0);
+    let play_slot = circle + c.px(if compact { 4.0 } else { 6.0 });
     let all = [
-        ('\u{E892}', Control::Previous, d.is_some_and(|d| d.can_prev)),
-        (if playing { '\u{E769}' } else { '\u{E768}' }, Control::PlayPause, d.is_some_and(|d| d.can_toggle)),
-        ('\u{E893}', Control::Next, d.is_some_and(|d| d.can_next)),
+        ('\u{E892}', Control::Previous, d.is_some_and(|d| d.can_prev), side_slot),
+        (if playing { '\u{E769}' } else { '\u{E768}' }, Control::PlayPause, d.is_some_and(|d| d.can_toggle), play_slot),
+        ('\u{E893}', Control::Next, d.is_some_and(|d| d.can_next), side_slot),
     ];
     let shown = if compact { &all[1..2] } else { &all[..] };
-    let slot = c.px(if compact { 22.0 } else { 19.0 });
-    let buttons_x = right - slot * shown.len() as f32;
-    for (index, (glyph, control, enabled)) in shown.iter().enumerate() {
-        let from = buttons_x + slot * index as f32;
-        let (gw, gh) = c.gfx.measure_icon(*glyph, 14.0, c.unit)?;
-        let color = if *enabled { WHITE } else { WHITE_OFF };
-        c.pen.icon(*glyph, (from + (slot - gw) / 2.0, (top_h - gh) / 2.0), 14.0, color)?;
+    let buttons_w: f32 = shown.iter().map(|b| b.3).sum();
+    let buttons_x = right - buttons_w;
+    let mut from = buttons_x;
+    for (glyph, control, enabled, slot) in shown {
+        if *control == Control::PlayPause {
+            let cx = from + (slot - circle) / 2.0;
+            let cy = (c.height - circle) / 2.0;
+            let back = if *enabled { [1.0, 1.0, 1.0, 1.0] } else { [1.0, 1.0, 1.0, 0.35] };
+            c.pen.round_rect((cx, cy), (circle, circle), circle / 2.0, back)?;
+            let (gw, gh) = c.gfx.measure_icon(*glyph, 12.0, c.unit)?;
+            c.pen.icon(*glyph, (cx + (circle - gw) / 2.0, cy + (circle - gh) / 2.0), 12.0, [0.11, 0.11, 0.12, 1.0])?;
+        } else {
+            let (gw, gh) = c.gfx.measure_icon(*glyph, 13.0, c.unit)?;
+            let color = if *enabled { [1.0, 1.0, 1.0, 0.85] } else { WHITE_OFF };
+            c.pen.icon(*glyph, (from + (slot - gw) / 2.0, (c.height - gh) / 2.0), 13.0, color)?;
+        }
         if *enabled {
             c.zones.push((from, from + slot, CellAction::Media(*control)));
         }
+        from += slot;
     }
 
     if !compact {
-        // Title and artist between the artwork and the buttons.
+        // Title and artist between the artwork and the buttons, then the progress.
         let text_x = left + side + c.px(8.0);
         let room = (buttons_x - c.px(6.0) - text_x).max(0.0);
         let (title, artist) = match d {
@@ -947,39 +979,55 @@ fn musica(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
             Some(d) => (d.title.as_str(), d.artist.as_str()),
             None => ("Nada sonando", ""),
         };
-        let title = fit(c, title, 12.0, Weight::Bold, room)?;
+        let (duration, position) = d.map_or((0, 0), |d| (d.duration_s, d.position_s.min(d.duration_s)));
+        let eq_w = if wide && playing { c.px(2.5).max(2.0) * 3.0 + c.px(1.5).max(1.0) * 2.0 } else { 0.0 };
+        let title_room = if eq_w > 0.0 { (room - eq_w - c.px(6.0)).max(0.0) } else { room };
+        let title = fit(c, title, 12.0, Weight::Bold, title_room)?;
         let artist = fit(c, artist, 10.5, Weight::Normal, room)?;
         let (_, th) = c.gfx.measure("Ág", 12.0, c.unit, Weight::Bold)?;
         let (_, ah) = c.gfx.measure("Ág", 10.5, c.unit, Weight::Normal)?;
-        let y = (top_h - th - ah) / 2.0;
+        // Height of the row under the artist: the thin bar, or the times row.
+        let (row_gap, row_h) = if duration == 0 {
+            (0.0, 0.0)
+        } else if wide {
+            let (_, h9) = c.gfx.measure("Ág", 9.0, c.unit, Weight::Normal)?;
+            (c.px(3.0), h9.max(c.px(4.0)))
+        } else {
+            (c.px(4.0), c.px(3.0).max(2.0))
+        };
+        let y = (c.height - (th + ah + row_gap + row_h)) / 2.0;
         c.pen.text(&title, (text_x, y), 12.0, Weight::Bold, WHITE)?;
         c.pen.text(&artist, (text_x, y + th), 10.5, Weight::Normal, WHITE_DIM)?;
-    }
-
-    if wide {
-        // Elapsed time, the bar and the time left, under everything.
-        let (duration, position) = d.map_or((0, 0), |d| (d.duration_s, d.position_s.min(d.duration_s)));
-        let bar_h = c.px(3.0).max(2.0);
-        let middle = top_h + (c.height - top_h) / 2.0;
-        let (mut bar_x, mut bar_end) = (left, right);
-        if duration > 0 {
-            let widest = if duration >= 3600 { "-8:88:88" } else { "-88:88" };
-            let (slot_w, th) = c.gfx.measure(widest, 9.0, c.unit, Weight::Normal)?;
-            let elapsed = track_time(position);
-            let remaining = format!("-{}", track_time(duration - position));
-            let (rw, _) = c.gfx.measure(&remaining, 9.0, c.unit, Weight::Normal)?;
-            let y = middle - th / 2.0;
-            c.pen.text(&elapsed, (left, y), 9.0, Weight::Normal, WHITE_DIM)?;
-            c.pen.text(&remaining, (right - rw, y), 9.0, Weight::Normal, WHITE_DIM)?;
-            bar_x = left + slot_w + c.px(6.0);
-            bar_end = right - slot_w - c.px(6.0);
+        if eq_w > 0.0 {
+            equalizer(c, text_x + room - eq_w, y + th - c.px(2.0))?;
         }
-        let bar_w = (bar_end - bar_x).max(0.0);
-        let bar_y = middle - bar_h / 2.0;
-        c.pen.round_rect((bar_x, bar_y), (bar_w, bar_h), bar_h / 2.0, [1.0, 1.0, 1.0, 0.25])?;
-        let filled = if duration > 0 { bar_w * position as f32 / duration as f32 } else { 0.0 };
-        if filled > 0.5 {
-            c.pen.round_rect((bar_x, bar_y), (filled.max(bar_h), bar_h), bar_h / 2.0, [1.0, 1.0, 1.0, 0.9])?;
+
+        if duration > 0 {
+            let row_y = y + th + ah + row_gap;
+            let middle = row_y + row_h / 2.0;
+            let bar_h = if wide { c.px(4.0).max(2.0) } else { row_h };
+            let (mut bar_x, mut bar_end) = (text_x, text_x + room);
+            if wide {
+                // Elapsed on the left, remaining on the right; the widest
+                // width keeps the bar from dancing as the digits change.
+                let widest = if duration >= 3600 { "-8:88:88" } else { "-88:88" };
+                let (slot_w, h9) = c.gfx.measure(widest, 9.0, c.unit, Weight::Normal)?;
+                let elapsed = track_time(position);
+                let remaining = format!("-{}", track_time(duration - position));
+                let (rw, _) = c.gfx.measure(&remaining, 9.0, c.unit, Weight::Normal)?;
+                let ty = middle - h9 / 2.0;
+                c.pen.text(&elapsed, (bar_x, ty), 9.0, Weight::Normal, WHITE_DIM)?;
+                c.pen.text(&remaining, (text_x + room - rw, ty), 9.0, Weight::Normal, WHITE_DIM)?;
+                bar_x = text_x + slot_w + c.px(6.0);
+                bar_end = text_x + room - slot_w - c.px(6.0);
+            }
+            let bar_w = (bar_end - bar_x).max(0.0);
+            let bar_y = middle - bar_h / 2.0;
+            c.pen.round_rect((bar_x, bar_y), (bar_w, bar_h), bar_h / 2.0, [1.0, 1.0, 1.0, 0.25])?;
+            let filled = bar_w * position as f32 / duration as f32;
+            if filled > 0.5 {
+                c.pen.round_rect((bar_x, bar_y), (filled.max(bar_h), bar_h), bar_h / 2.0, [1.0, 1.0, 1.0, 0.9])?;
+            }
         }
     }
     // The cell's width is the one asked for; just under it so it does not round up.
