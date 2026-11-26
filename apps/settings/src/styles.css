@@ -579,6 +579,11 @@ input:focus-visible {
 .theme-layer[data-theme="aurora"] { --ink: #fff; --rim: rgba(255, 255, 255, 0.45); }
 .theme-layer[data-theme="aurora"] .theme-bar { background: linear-gradient(90deg, rgba(36, 214, 168, 0.59), rgba(118, 92, 255, 0.55), rgba(246, 96, 182, 0.52)), rgba(10, 14, 38, 0.47); }
 .theme-layer[data-theme="aurora"] .theme-dock { background: linear-gradient(135deg, rgba(36, 214, 168, 0.59), rgba(118, 92, 255, 0.55), rgba(246, 96, 182, 0.52)), rgba(12, 16, 42, 0.36); }
+/* Liquid glass: barely blurred, a bright specular rim lit from the top left and a lens band inside the edge. */
+.theme-layer[data-theme="liquid"], .theme-layer[data-theme="liquid-tinted"] { --ink: #fff; --bar: rgba(0, 0, 0, 0.12); --dock: rgba(255, 255, 255, 0.03); --blur: blur(1px) saturate(1.7) brightness(1.08); }
+.theme-layer[data-theme="liquid-tinted"] { --bar: rgba(14, 16, 22, 0.5); --dock: rgba(16, 18, 26, 0.41); --blur: blur(2px) saturate(1.4); }
+.theme-layer[data-theme="liquid"] .theme-dock, .theme-layer[data-theme="liquid-tinted"] .theme-dock { border-radius: 7px; box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.95), inset -0.5px -0.5px 0 rgba(255, 255, 255, 0.55), inset 0 0 4px rgba(255, 255, 255, 0.35), 0 2px 5px rgba(0, 0, 0, 0.28); }
+.theme-layer[data-theme="liquid"] .theme-bar i, .theme-layer[data-theme="liquid"] .theme-bar b { box-shadow: 0 0 2px rgba(0, 0, 0, 0.5); }
 
 .slider input:disabled {
   opacity: 0.4;

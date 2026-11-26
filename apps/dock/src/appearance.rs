@@ -19,11 +19,29 @@ pub enum Material {
     Frosted,
     Clear,
     Aurora,
+    /// Liquid glass: clear, with a lens at the edge and a specular rim.
+    Liquid,
+    /// Liquid glass with a darker tint.
+    LiquidTinted,
+}
+
+impl Material {
+    /// The liquid glass materials, which get the lens and the specular rim.
+    pub fn is_liquid(self) -> bool {
+        matches!(self, Self::Liquid | Self::LiquidTinted)
+    }
 }
 
 #[cfg(test)]
 impl Material {
-    pub const ALL: [Self; 4] = [Self::Standard, Self::Frosted, Self::Clear, Self::Aurora];
+    pub const ALL: [Self; 6] = [
+        Self::Standard,
+        Self::Frosted,
+        Self::Clear,
+        Self::Aurora,
+        Self::Liquid,
+        Self::LiquidTinted,
+    ];
 }
 
 /// What a surface is drawn for.
@@ -42,12 +60,14 @@ pub fn set(choice: Appearance) {
     CHOICE.store(choice as u8, Ordering::Relaxed);
 }
 
-const CHOICES: [Appearance; 6] = [
+const CHOICES: [Appearance; 8] = [
     Appearance::Light,
     Appearance::Dark,
     Appearance::Frosted,
     Appearance::Clear,
     Appearance::Aurora,
+    Appearance::Liquid,
+    Appearance::LiquidTinted,
     Appearance::Auto,
 ];
 
@@ -67,6 +87,8 @@ pub fn resolve(choice: Appearance, system_light: bool, glass: bool) -> Look {
         Appearance::Frosted => (Material::Frosted, true),
         Appearance::Clear => (Material::Clear, false),
         Appearance::Aurora => (Material::Aurora, false),
+        Appearance::Liquid => (Material::Liquid, false),
+        Appearance::LiquidTinted => (Material::LiquidTinted, false),
     };
     Look {
         material,
@@ -102,7 +124,13 @@ mod tests {
             );
             assert!(resolve(Appearance::Light, system_light, true).light);
             assert!(resolve(Appearance::Frosted, system_light, true).light);
-            for dark in [Appearance::Dark, Appearance::Clear, Appearance::Aurora] {
+            for dark in [
+                Appearance::Dark,
+                Appearance::Clear,
+                Appearance::Aurora,
+                Appearance::Liquid,
+                Appearance::LiquidTinted,
+            ] {
                 assert!(!resolve(dark, system_light, true).light);
             }
         }

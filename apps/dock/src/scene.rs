@@ -41,6 +41,8 @@ pub struct Theme {
     sheen: u8,
     /// The rim's brightness at its corners and sides (see `GlassSurface`).
     rim: [u8; 4],
+    /// Liquid glass: an inner lens edge and halo under the rim.
+    liquid: bool,
     separator: Color,
     shadow: Color,
     indicator: Color,
@@ -69,15 +71,21 @@ impl Theme {
             (Material::Frosted, _) => pick(rgba(250, 251, 253, 184), rgba(236, 238, 242, 255)),
             (Material::Clear, _) => pick(rgba(255, 255, 255, 14), rgba(38, 40, 46, 255)),
             (Material::Aurora, _) => pick(rgba(12, 16, 42, 92), rgba(22, 22, 50, 255)),
+            (Material::Liquid, _) => pick(rgba(255, 255, 255, 8), rgba(34, 36, 42, 255)),
+            (Material::LiquidTinted, _) => pick(rgba(16, 18, 26, 104), rgba(28, 30, 36, 255)),
         };
         let (sheen, rim) = match material {
             Material::Standard | Material::Aurora => (38, [150, 40, 30, 105]),
             Material::Frosted => (70, [210, 70, 55, 150]),
             // All the light is on the edge, like a lens.
             Material::Clear => (56, [235, 80, 60, 190]),
+            // A sharp specular rim: bright top left, a weaker reflection at
+            // the bottom right, almost nothing on the sides.
+            Material::Liquid => (52, [250, 70, 45, 175]),
+            Material::LiquidTinted => (44, [235, 60, 40, 155]),
         };
         let panel_tint = match material {
-            Material::Clear => pick(rgba(24, 24, 28, 150), tint),
+            Material::Clear | Material::Liquid => pick(rgba(24, 24, 28, 150), tint),
             _ => tint,
         };
         Self {
@@ -88,6 +96,7 @@ impl Theme {
             panel_tint,
             sheen,
             rim,
+            liquid: glass && material.is_liquid(),
             separator: if light {
                 rgba(0, 0, 0, 56)
             } else {
@@ -116,6 +125,8 @@ impl Theme {
             (Material::Frosted, _) => pick(rgba(250, 251, 253, 196), rgba(238, 240, 244, 255)),
             (Material::Clear, _) => pick(rgba(0, 0, 0, 38), rgba(30, 32, 38, 255)),
             (Material::Aurora, _) => pick(rgba(10, 14, 38, 120), rgba(20, 20, 46, 255)),
+            (Material::Liquid, _) => pick(rgba(0, 0, 0, 30), rgba(30, 32, 38, 255)),
+            (Material::LiquidTinted, _) => pick(rgba(14, 16, 22, 128), rgba(26, 28, 34, 255)),
         };
         Self {
             tint,
@@ -299,6 +310,28 @@ impl GlassSurface {
         rim_shape.SetStrokeBrush(&rim_brush)?;
         rim_shape.SetStrokeThickness(stroke)?;
         let rim = c.CreateShapeVisual()?;
+        if theme.liquid {
+            // Liquid glass: under the fine rim, a lens edge (a band of light a
+            // few pixels in, brightest at the lit corners) and a soft halo
+            // further in. They are wide strokes on the rim's own path, cut to
+            // the glass so only their inner half shows; sharing the rim's
+            // geometry and the glass outline, every resize keeps them in place.
+            for (width, alphas) in [(16.0, [26, 4, 0, 12]), (7.0, [92, 14, 4, 44])] {
+                let brush = c.CreateLinearGradientBrush()?;
+                brush.SetStartPoint(v2(0.0, 0.0))?;
+                brush.SetEndPoint(v2(1.0, 1.0))?;
+                brush.SetInterpolationSpace(CompositionColorSpace::RgbLinear)?;
+                let stops = brush.ColorStops()?;
+                for (at, alpha) in [0.0, 0.35, 0.65, 1.0].into_iter().zip(alphas) {
+                    stops.Append(&c.CreateColorGradientStopWithOffsetAndColor(at, rgba(255, 255, 255, alpha))?)?;
+                }
+                let band = c.CreateSpriteShapeWithGeometry(&rim_geometry)?;
+                band.SetStrokeBrush(&brush)?;
+                band.SetStrokeThickness(width * stroke)?;
+                rim.Shapes()?.Append(&band)?;
+            }
+            rim.SetClip(&c.CreateGeometricClipWithGeometry(&outline)?)?;
+        }
         rim.Shapes()?.Append(&rim_shape)?;
         Ok(Self {
             glass,

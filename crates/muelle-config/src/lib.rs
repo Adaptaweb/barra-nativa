@@ -401,6 +401,12 @@ pub enum Appearance {
     Clear,
     /// Glass tinted with the colours of the northern lights. Light content.
     Aurora,
+    /// Liquid glass, barely tinted: what is behind shows through, bent at
+    /// the edge by a lens, under a specular rim. Light content.
+    Liquid,
+    /// The same liquid glass, darker so content reads over busy wallpapers.
+    #[serde(rename = "liquid-tinted")]
+    LiquidTinted,
     /// Follow Windows' light or dark mode. Also what a theme added by a newer
     /// version reads as (serde needs this fallback last).
     #[default]

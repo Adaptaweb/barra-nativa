@@ -402,7 +402,7 @@ test("returning to Settings reflects dock removals without overwriting local edi
 });
 
 test("the theme picker offers every theme with a preview, saves only the choice and themes Settings", async () => {
-  const themes = ["auto", "light", "dark", "frosted", "clear", "aurora"];
+  const themes = ["auto", "light", "dark", "frosted", "clear", "aurora", "liquid", "liquid-tinted"];
   for (const language of Object.keys(texts)) {
     const view = fixture("appearance", { language });
     const picker = [...elements(view.body())].find((node) => node.props.label === texts[language].theme);

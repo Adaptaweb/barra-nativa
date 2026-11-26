@@ -736,7 +736,7 @@ function updateHint(t: Texts, state: UpdateState, version: string): string {
 
 const SECTIONS: readonly SectionId[] = ["appearance", "dock", "windows", "menubar", "widgets", "services", "system"];
 
-const THEMES: readonly Appearance[] = ["auto", "light", "dark", "frosted", "clear", "aurora"];
+const THEMES: readonly Appearance[] = ["auto", "light", "dark", "frosted", "clear", "aurora", "liquid", "liquid-tinted"];
 
 function themeName(t: Texts, theme: Appearance): string {
   switch (theme) {
@@ -752,6 +752,10 @@ function themeName(t: Texts, theme: Appearance): string {
       return t.themeClear;
     case "aurora":
       return t.themeAurora;
+    case "liquid":
+      return t.themeLiquid;
+    case "liquid-tinted":
+      return t.themeLiquidTinted;
   }
 }
 

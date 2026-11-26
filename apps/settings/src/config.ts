@@ -9,7 +9,7 @@ export type DockAutoHideSpeed = "smooth" | "normal" | "fast";
 /** View of the existing two settings; saved atomically as a mutually exclusive pair. */
 export type DockHidingMode = "visible" | "automatic" | "intelligent";
 /** `auto` follows Windows' light or dark mode. */
-export type Appearance = "auto" | "light" | "dark" | "frosted" | "clear" | "aurora";
+export type Appearance = "auto" | "light" | "dark" | "frosted" | "clear" | "aurora" | "liquid" | "liquid-tinted";
 
 /** Mirrors `muelle_config::Config`. */
 export interface Config {
