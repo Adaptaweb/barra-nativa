@@ -4,7 +4,7 @@
  */
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { Card, Segmented } from "./controls";
+import { Card, Segmented, Select } from "./controls";
 import { Tile } from "./tiles";
 import { type PreviewSize, WidgetPreview } from "./WidgetPreview";
 
@@ -91,7 +91,7 @@ function sizeOptions(key: string) {
 const previewSize = (size?: string): PreviewSize =>
   size === "compacto" || size === "mediano" || size === "ancho" ? size : "mediano";
 
-/** A preview that shrinks (never grows) to fit the width of its box, without cropping. */
+/** A preview in a fixed-size box; it shrinks (never grows) to fit both width and height, without cropping. */
 function FitPreview({ children }: { children: ReactNode }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -100,10 +100,13 @@ function FitPreview({ children }: { children: ReactNode }) {
     const inner = innerRef.current;
     if (!box || !inner) return;
     const fit = () => {
+      const cs = getComputedStyle(box);
+      const w = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
       const width = inner.scrollWidth;
-      const scale = width > 0 ? Math.min(1, box.clientWidth / width) : 1;
+      const height = inner.scrollHeight;
+      const scale = width > 0 && height > 0 ? Math.min(1, w / width, h / height) : 1;
       inner.style.transform = scale < 1 ? `scale(${scale})` : "";
-      box.style.height = `${inner.offsetHeight * scale}px`;
     };
     fit();
     const observer = new ResizeObserver(fit);
@@ -155,7 +158,7 @@ export function ZoneList({ zone, keys, sizes, showSize, onReorder, onRemove, onS
           <div
             key={key}
             data-key={key}
-            className={`row zone-item${drag === index ? " dragging" : ""}${over === index && drag !== null && drag !== index ? " drop-target" : ""}`}
+            className={`row zone-item${showSize ? "" : " no-size"}${drag === index ? " dragging" : ""}${over === index && drag !== null && drag !== index ? " drop-target" : ""}`}
             tabIndex={0}
             draggable
             aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
@@ -185,21 +188,19 @@ export function ZoneList({ zone, keys, sizes, showSize, onReorder, onRemove, onS
             }}
           >
             <span className="zone-grip" aria-hidden="true">⠿</span>
-            <span className="zone-item-name">{nameOf(key)}</span>
-            <div className="row-control push-group">
-              {showSize ? (
-                <Segmented
-                  label={`Tamaño de ${nameOf(key)}`}
-                  value={sizes?.[key] ?? "mediano"}
-                  options={sizeOptions(key)}
-                  onChange={(size) => onSize(key, size)}
-                />
-              ) : null}
-              <button type="button" className="zone-remove" aria-label={`Quitar ${nameOf(key)}`} onClick={() => onRemove(index)}>×</button>
-            </div>
             <FitPreview>
-              <WidgetPreview widget={key} place={isBarZone(zone) ? "bar" : "dock"} size={previewSize(sizes?.[key])} />
+              <WidgetPreview bare widget={key} place={isBarZone(zone) ? "bar" : "dock"} size={previewSize(sizes?.[key])} />
             </FitPreview>
+            <span className="zone-item-name">{nameOf(key)}</span>
+            {showSize ? (
+              <Select
+                label={`Tamaño de ${nameOf(key)}`}
+                value={sizes?.[key] ?? "mediano"}
+                options={sizeOptions(key)}
+                onChange={(size) => onSize(key, size)}
+              />
+            ) : null}
+            <button type="button" className="zone-remove" aria-label={`Quitar ${nameOf(key)}`} onClick={() => onRemove(index)}>×</button>
           </div>
         ))}
       </div>

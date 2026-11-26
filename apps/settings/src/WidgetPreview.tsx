@@ -133,8 +133,15 @@ function barCell(key: string) {
   }
 }
 
-/** A sample of widget `key` where it would go. */
-export function WidgetPreview({ widget, place, size = "mediano" }: { widget: string; place: PreviewPlace; size?: PreviewSize }) {
+/** A sample of widget `key` where it would go. `bare` draws only the widget, without the fake bar or dock around it. */
+export function WidgetPreview({ widget, place, size = "mediano", bare = false }: { widget: string; place: PreviewPlace; size?: PreviewSize; bare?: boolean }) {
+  if (bare) {
+    return (
+      <span className="wp-cell">
+        {place === "bar" ? (barCell(widget) ?? <span className="wp-dim">Solo en el dock</span>) : dockCell(widget, size)}
+      </span>
+    );
+  }
   if (place === "bar") {
     const cell = barCell(widget);
     return (
