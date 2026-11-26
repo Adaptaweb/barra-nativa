@@ -68,6 +68,7 @@ pub(super) fn start() {
                     volume: audio.as_mut().and_then(AudioWatch::volume),
                     battery: battery(),
                     bluetooth: radio.as_ref().is_some_and(bluetooth::Monitor::is_on),
+                    quiet: system::do_not_disturb(),
                 };
                 publish(|r| {
                     let changed = r.control != Some(reading);

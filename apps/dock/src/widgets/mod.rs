@@ -548,6 +548,8 @@ pub struct ControlData {
     pub volume: Option<muelle_shell::status::Volume>,
     pub battery: Option<muelle_shell::system::Battery>,
     pub bluetooth: bool,
+    /// Windows' "Do not disturb" is on.
+    pub quiet: bool,
 }
 
 /// Which widgets the menu bar shows, left and right.

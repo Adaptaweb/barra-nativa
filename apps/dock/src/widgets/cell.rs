@@ -192,13 +192,16 @@ pub fn render(
     Ok((cell.brush, changed, zones))
 }
 
+/// The tray: a chevron in the same rounded tile as the notifications and
+/// control centre buttons; the icons live in its bubble, not loose in the dock.
 fn bandeja(c: &mut Cell<'_, '_>, _r: &Readings) -> Result<()> {
-    // Only the chevron: the icons live in its bubble, not loose in the dock.
-    let size = 15.0;
-    let (w, h) = c.gfx.measure_icon('\u{E70E}', size, c.unit)?;
-    c.x += c.px(4.0);
-    c.pen.icon('\u{E70E}', (c.x, (c.height - h) / 2.0), size, c.strong())?;
-    c.x += w + c.px(4.0);
+    let side = (c.height * 0.84).round();
+    let top = ((c.height - side) / 2.0).round();
+    c.pen.round_rect((c.x, top), (side, side), side * 0.28, ink(c.light, 0.10))?;
+    let size = 17.0;
+    let (gw, gh) = c.gfx.measure_icon('\u{E70E}', size, c.unit)?;
+    c.pen.icon('\u{E70E}', (c.x + (side - gw) / 2.0, top + (side - gh) / 2.0), size, ink(c.light, 0.75))?;
+    c.x += side;
     Ok(())
 }
 
@@ -225,35 +228,38 @@ fn notificaciones(c: &mut Cell<'_, '_>) -> Result<()> {
 /// iOS control-centre blue for a switch that is on.
 const SWITCH_ON: Rgba = [0.04, 0.52, 1.0, 1.0];
 
-/// Network, Bluetooth and volume as round control-centre buttons: blue when
-/// on, grey when off, the glyph white on blue. The battery has its own
-/// widget. A click opens the Windows quick settings.
-fn control(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
-    let disc = (c.height * 0.72).round();
-    let gap = c.px(8.0);
-    let top = ((c.height - disc) / 2.0).round();
-    let glyph_size = 15.0;
-    let button = |c: &mut Cell<'_, '_>, glyph: char, on: bool| -> Result<()> {
-        let back = if on { SWITCH_ON } else { ink(c.light, 0.14) };
-        c.pen.round_rect((c.x, top), (disc, disc), disc / 2.0, back)?;
+/// A small control centre in the same rounded tile as the notifications and
+/// tray buttons: four discs in a 2 × 2 grid for the network, Bluetooth,
+/// volume and Do not disturb, blue when on, grey when off. The battery has
+/// its own widget. A click opens the Windows quick settings.
+fn control(c: &mut Cell<'_, '_>, _size: Size, r: &Readings) -> Result<()> {
+    let side = (c.height * 0.84).round();
+    let top = ((c.height - side) / 2.0).round();
+    c.pen.round_rect((c.x, top), (side, side), side * 0.28, ink(c.light, 0.10))?;
+    let pad = (side * 0.13).round();
+    let gap = (side * 0.07).round();
+    let disc = ((side - pad * 2.0 - gap) / 2.0).floor();
+    let glyph_size = disc * 0.5 / c.unit;
+    let items: [(char, bool); 4] = match r.control {
+        Some(d) => [
+            (super::control::network_glyph(d.network), !matches!(d.network, muelle_shell::status::Network::Offline)),
+            ('\u{E702}', d.bluetooth),
+            (super::control::volume_glyph(d.volume), !d.volume.is_none_or(|v| v.muted)),
+            ('\u{E708}', d.quiet),
+        ],
+        None => [('\u{E701}', false), ('\u{E702}', false), ('\u{E995}', false), ('\u{E708}', false)],
+    };
+    for (index, (glyph, on)) in items.into_iter().enumerate() {
+        let x = c.x + pad + (disc + gap) * (index % 2) as f32;
+        let y = top + pad + (disc + gap) * (index / 2) as f32;
+        let back = if on { SWITCH_ON } else { ink(c.light, 0.16) };
+        c.pen.round_rect((x, y), (disc, disc), disc / 2.0, back)?;
         let (gw, gh) = c.gfx.measure_icon(glyph, glyph_size, c.unit)?;
         let color = if on { [1.0, 1.0, 1.0, 1.0] } else { c.strong() };
-        c.pen.icon(glyph, (c.x + (disc - gw) / 2.0, top + (disc - gh) / 2.0), glyph_size, color)?;
-        c.x += disc;
-        Ok(())
-    };
-    let Some(d) = r.control else {
-        return button(c, '\u{E713}', false);
-    };
-    let online = !matches!(d.network, muelle_shell::status::Network::Offline);
-    button(c, super::control::network_glyph(d.network), online)?;
-    if size != Size::Compact {
-        c.x += gap;
-        button(c, '\u{E702}', d.bluetooth)?;
+        c.pen.icon(glyph, (x + (disc - gw) / 2.0, y + (disc - gh) / 2.0), glyph_size, color)?;
     }
-    c.x += gap;
-    let muted = d.volume.is_none_or(|v| v.muted);
-    button(c, super::control::volume_glyph(d.volume), !muted)
+    c.x += side;
+    Ok(())
 }
 /// Lays the cell out left to right.
 struct Cell<'a, 'b> {

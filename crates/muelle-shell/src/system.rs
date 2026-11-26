@@ -141,6 +141,27 @@ pub fn accent_color() -> Option<[u8; 3]> {
     Some([r, g, b])
 }
 
+/// `true` while Windows 11's "Do not disturb" is on: it turns the toast
+/// banners off for every app (`NOC_GLOBAL_SETTING_TOASTS_ENABLED` = 0).
+#[must_use]
+pub fn do_not_disturb() -> bool {
+    let mut value = 1u32;
+    let mut size = size_of::<u32>() as u32;
+    // SAFETY: `value` and `size` describe a valid 4-byte buffer.
+    let read = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!(r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings"),
+            w!("NOC_GLOBAL_SETTING_TOASTS_ENABLED"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some((&raw mut value).cast()),
+            Some(&mut size),
+        )
+    };
+    read.is_ok() && value == 0
+}
+
 fn personalize(name: PCWSTR) -> Option<u32> {
     let mut value = 0u32;
     let mut size = size_of::<u32>() as u32;
