@@ -28,8 +28,8 @@ use windows::{
     },
     UI::Composition::{
         CompositionDrawingSurface, CompositionMaskBrush, CompositionRoundedRectangleGeometry,
-        CompositionSpriteShape, CompositionStretch, CompositionVisualSurface, ShapeVisual,
-        CompositionSurfaceBrush, SpriteVisual,
+        CompositionSpriteShape, CompositionStretch, CompositionVisualSurface, ShapeVisual, Visual,
+        CompositionSurfaceBrush,
     },
     Win32::{
         Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
@@ -208,10 +208,12 @@ struct Ring {
 /// What a liquid glass shows over its tint: what is behind it, sharp, and
 /// the lens rings along its edge.
 pub struct Layers {
-    /// Bottom to top: the sharp backdrop, then the rings.
-    pub visuals: Vec<SpriteVisual>,
+    /// Bottom to top: the sharp backdrop, then the rings (and a bezel's rim).
+    pub visuals: Vec<Visual>,
     clear_brush: CompositionSurfaceBrush,
     rings: Vec<Ring>,
+    /// A bezel's bright rim along the edge, and its outline.
+    rim: Option<(ShapeVisual, CompositionRoundedRectangleGeometry, f32)>,
     /// The glass's corner radius in physical pixels.
     radius: f32,
     /// The window this glass is in, told of new frames.
@@ -223,6 +225,17 @@ impl Layers {
     /// layers for a glass with corner `radius` in window `owner`, whose
     /// handler of [`FRAME_MESSAGE`] calls [`frame`].
     pub fn new(gfx: &Gfx, screen: RECT, owner: HWND, radius: f32, scale: f32) -> Result<Self> {
+        Self::build(gfx, screen, owner, radius, scale, false)
+    }
+
+    /// Only the lens and a bright rim, thinner, for drawing over a panel's
+    /// own content (bubbles, the weather and music cards): the glass shows as
+    /// a bezel around what the panel draws, which stays readable.
+    pub fn bezel(gfx: &Gfx, screen: RECT, owner: HWND, radius: f32, scale: f32) -> Result<Self> {
+        Self::build(gfx, screen, owner, radius, scale, true)
+    }
+
+    fn build(gfx: &Gfx, screen: RECT, owner: HWND, radius: f32, scale: f32, bezel: bool) -> Result<Self> {
         start(gfx, screen, owner, FRAME_MESSAGE)?;
         USERS.with(|users| users.borrow_mut().push(owner.0 as isize));
         let c = &gfx.compositor;
@@ -231,6 +244,7 @@ impl Layers {
             visuals: Vec::new(),
             clear_brush: c.CreateSurfaceBrush()?,
             rings: Vec::new(),
+            rim: None,
             radius,
             owner: owner.0 as isize,
         };
@@ -244,17 +258,22 @@ impl Layers {
             brush.SetVerticalAlignmentRatio(0.0)?;
             Ok(brush)
         };
-        let sprite = |brush: &windows::UI::Composition::CompositionBrush| -> Result<SpriteVisual> {
+        let sprite = |brush: &windows::UI::Composition::CompositionBrush| -> Result<Visual> {
             let sprite = c.CreateSpriteVisual()?;
             sprite.SetRelativeSizeAdjustment(Vector2 { X: 1.0, Y: 1.0 })?;
             sprite.SetBrush(brush)?;
-            Ok(sprite)
+            Ok(sprite.cast()?)
         };
         layers.clear_brush = brush()?;
-        layers.visuals.push(sprite(&layers.clear_brush.cast()?)?);
+        if !bezel {
+            layers.visuals.push(sprite(&layers.clear_brush.cast()?)?);
+        }
+        // A bezel is narrower and bends less: it frames content.
+        let band = if bezel { 0.6 } else { 1.0 };
         let white = c.CreateColorBrushWithColor(windows::UI::Color { A: 255, R: 255, G: 255, B: 255 })?;
         for (from, to, shift) in RINGS {
-            let (from, to) = ((from * scale).round(), (to * scale).round());
+            let (from, to) = ((from * band * scale).round(), (to * band * scale).round());
+            let shift = shift * band;
             let geometry = c.CreateRoundedRectangleGeometry()?;
             let stroke = c.CreateSpriteShapeWithGeometry(&geometry)?;
             stroke.SetStrokeBrush(&white)?;
@@ -273,6 +292,27 @@ impl Layers {
             mask.SetMask(&picture)?;
             layers.visuals.push(sprite(&mask.cast()?)?);
             layers.rings.push(Ring { lens, shift: shift * scale, from, to, shape, stroke, geometry, surface });
+        }
+        if bezel {
+            // Light catching the edge: bright at the top left and bottom
+            // right corners, faint along the sides.
+            let gradient = c.CreateLinearGradientBrush()?;
+            gradient.SetStartPoint(Vector2 { X: 0.0, Y: 0.0 })?;
+            gradient.SetEndPoint(Vector2 { X: 1.0, Y: 1.0 })?;
+            let stops = gradient.ColorStops()?;
+            for (at, alpha) in [(0.0, 200), (0.35, 40), (0.65, 30), (1.0, 150)] {
+                stops.Append(&c.CreateColorGradientStopWithOffsetAndColor(at, windows::UI::Color { A: alpha, R: 255, G: 255, B: 255 })?)?;
+            }
+            let width = scale.max(1.0);
+            let geometry = c.CreateRoundedRectangleGeometry()?;
+            let line = c.CreateSpriteShapeWithGeometry(&geometry)?;
+            line.SetStrokeBrush(&gradient)?;
+            line.SetStrokeThickness(width)?;
+            let shape = c.CreateShapeVisual()?;
+            shape.SetRelativeSizeAdjustment(Vector2 { X: 1.0, Y: 1.0 })?;
+            shape.Shapes()?.Append(&line)?;
+            layers.visuals.push(shape.cast()?);
+            layers.rim = Some((shape, geometry, width));
         }
         Ok(layers)
     }
@@ -314,6 +354,13 @@ impl Layers {
             ring.geometry.SetCornerRadius(Vector2 { X: corner, Y: corner })?;
             ring.shape.SetSize(size)?;
             ring.surface.SetSourceSize(size)?;
+        }
+        if let Some((_, geometry, width)) = &self.rim {
+            let half = width / 2.0;
+            geometry.SetOffset(Vector2 { X: half, Y: half })?;
+            geometry.SetSize(Vector2 { X: (size.X - width).max(0.0), Y: (size.Y - width).max(0.0) })?;
+            let corner = (radius - half).max(0.0);
+            geometry.SetCornerRadius(Vector2 { X: corner, Y: corner })?;
         }
         Ok(())
     }

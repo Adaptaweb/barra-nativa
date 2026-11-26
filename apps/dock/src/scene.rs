@@ -250,7 +250,7 @@ impl GlassPill {
     }
 
     /// Puts a liquid glass's layers right above the bottom fill.
-    pub fn add_backdrop(&self, layers: &[SpriteVisual]) -> Result<()> {
+    pub fn add_backdrop(&self, layers: &[Visual]) -> Result<()> {
         self.material.add_backdrop(layers)
     }
 
@@ -283,9 +283,9 @@ struct GlassSurface {
 impl GlassSurface {
     /// Puts a liquid glass's layers (bottom first: the sharp backdrop, then
     /// the lens rings) right above the bottom fill, under the tint, sheen and rim.
-    fn add_backdrop(&self, layers: &[SpriteVisual]) -> Result<()> {
+    fn add_backdrop(&self, layers: &[Visual]) -> Result<()> {
         let children = self.glass.Children()?;
-        let mut below = self.base.clone();
+        let mut below: Visual = self.base.cast()?;
         for layer in layers {
             children.InsertAbove(layer, &below)?;
             below = layer.clone();

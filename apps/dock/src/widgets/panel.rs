@@ -194,6 +194,8 @@ struct Panel {
     dragging: bool,
     /// The last percent sent while dragging, to send only changes.
     sent: Option<u8>,
+    /// With a liquid glass theme: the lens and rim drawn over the content.
+    liquid: Option<crate::liquid::Layers>,
 }
 
 thread_local! {
@@ -298,6 +300,26 @@ fn create_window() -> Result<HWND> {
     }
 }
 
+/// With a liquid glass theme: keeps the panel out of screen captures and
+/// makes the lens and rim it shows along its edge.
+fn liquid_bezel(
+    gfx: &Gfx,
+    hwnd: HWND,
+    monitor: Option<&muelle_shell::system::Monitor>,
+    scale: f32,
+) -> Option<crate::liquid::Layers> {
+    let on = crate::appearance::current().material.is_liquid() && muelle_shell::system::transparency_enabled();
+    crate::liquid::exclude(hwnd, on);
+    let screen = monitor?.screen;
+    if !on {
+        return None;
+    }
+    // Windows rounds popup corners by 8 logical pixels.
+    crate::liquid::Layers::bezel(gfx, screen, hwnd, 8.0 * scale, scale)
+        .map_err(|error| muelle_shell::log::line(&format!("vidrio líquido del panel: {error:#}")))
+        .ok()
+}
+
 fn open(gfx: &Gfx, id: WidgetId, anchor: POINT, placement: Placement) -> Result<Panel> {
     let monitor = muelle_shell::system::monitor_at(anchor)
         .or_else(muelle_shell::system::primary_monitor);
@@ -305,6 +327,7 @@ fn open(gfx: &Gfx, id: WidgetId, anchor: POINT, placement: Placement) -> Result<
     let dark = !crate::appearance::current().light;
     let hwnd = create_window()?;
     apply_popup_frame(hwnd, dark);
+    let liquid = liquid_bezel(gfx, hwnd, monitor.as_ref(), scale);
     // SAFETY: `hwnd` is the live window created above.
     let target = unsafe {
         gfx.compositor
@@ -329,6 +352,7 @@ fn open(gfx: &Gfx, id: WidgetId, anchor: POINT, placement: Placement) -> Result<
         slider: None,
         dragging: false,
         sent: None,
+        liquid,
     };
     panel.paint()?;
     // The picture box appears with the next repaint, when the reading is published.
@@ -400,6 +424,12 @@ impl Panel {
         sprite.SetOffset(Vector3::new(0.0, 0.0, 0.0))?;
         sprite.SetBrush(&content.brush)?;
         children.InsertAtTop(&sprite)?;
+        // The glass's edge goes over everything, the cards' own art included.
+        if let Some(layers) = &self.liquid {
+            for layer in &layers.visuals {
+                children.InsertAtTop(layer)?;
+            }
+        }
         self.hits = hits;
         self.slider = slider;
         self.place(width as i32, height as i32);
@@ -481,6 +511,11 @@ impl Panel {
                 height,
                 SWP_NOACTIVATE,
             );
+        }
+        if let Some(layers) = &self.liquid
+            && let Err(error) = layers.place((x as f32, y as f32), Vector2::new(width as f32, height as f32))
+        {
+            muelle_shell::log::line(&format!("vidrio líquido del panel: {error:#}"));
         }
     }
 
@@ -806,6 +841,13 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM)
             }
         }
         CLOSE => close(),
+        crate::liquid::FRAME_MESSAGE => {
+            let gfx = OPEN.with(|open| open.try_borrow().ok().and_then(|p| p.as_ref().map(|p| p.gfx.clone())));
+            if let Some(gfx) = gfx {
+                crate::liquid::frame(&gfx);
+            }
+            return LRESULT(0);
+        }
         WM_KEYDOWN if w.0 == usize::from(VK_ESCAPE.0) => close(),
         WM_LBUTTONDOWN => {
             drag_volume(hwnd, (x, y), Drag::Start);
