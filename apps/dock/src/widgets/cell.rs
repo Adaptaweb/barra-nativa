@@ -640,8 +640,9 @@ fn gauge(c: &mut Cell<'_, '_>, value: &str, label: &str, fraction: f32, color: R
         (nw, nh) = c.gfx.measure(value, size, c.unit, Weight::Heavy)?;
     }
     c.pen.text(value, (center.0 - nw / 2.0, center.1 - nh / 2.0 - c.px(2.0)), size, Weight::Heavy, c.strong())?;
-    let (lw, _) = c.gfx.measure(label, 8.0, c.unit, Weight::Bold)?;
-    c.pen.text(label, (center.0 - lw / 2.0, center.1 + radius - c.px(7.0)), 8.0, Weight::Bold, c.faded())?;
+    // The label sits in the ring's opening, bright enough to tell the gauges apart.
+    let (lw, lh) = c.gfx.measure(label, 9.5, c.unit, Weight::Heavy)?;
+    c.pen.text(label, (center.0 - lw / 2.0, center.1 + radius - lh * 0.55), 9.5, Weight::Heavy, ink(c.light, 0.85))?;
     c.x += ring;
     Ok(())
 }

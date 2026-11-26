@@ -12,7 +12,7 @@ const Ring = ({ value, color, label }: { value: string; color: string; label: st
     <circle cx="20" cy="20" r="15" fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="4" strokeDasharray="70.7 94.2" transform="rotate(135 20 20)" strokeLinecap="round" />
     <circle cx="20" cy="20" r="15" fill="none" stroke={color} strokeWidth="4" strokeDasharray="35 94.2" transform="rotate(135 20 20)" strokeLinecap="round" />
     <text x="20" y="21" textAnchor="middle" className="wp-ring-value">{value}</text>
-    <text x="20" y="33" textAnchor="middle" className="wp-ring-label">{label}</text>
+    <text x="20" y="35" textAnchor="middle" className="wp-ring-label">{label}</text>
   </svg>
 );
 
