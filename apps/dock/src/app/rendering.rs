@@ -159,6 +159,7 @@ impl App {
             density: self.config.dock_density,
             max_scale: self.config.max_scale(),
             indicators: self.config.show_indicators,
+            island_scale: self.config.widgets.island_scale,
             entries: self.current_entries(),
         };
         if self.stage.as_ref().is_some_and(|stage| stage.key == key) {

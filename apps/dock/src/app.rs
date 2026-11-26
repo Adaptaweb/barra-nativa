@@ -549,6 +549,8 @@ struct StageKey {
     density: DockDensity,
     max_scale: f32,
     indicators: bool,
+    /// Height of the widget islands, in tenths of the icon (Settings).
+    island_scale: u8,
     entries: Vec<Entry>,
 }
 
