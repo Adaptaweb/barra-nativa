@@ -122,6 +122,8 @@ pub type Zones = Vec<(f32, f32, CellAction)>;
 /// Draws the cell `height` pixels tall, as wide as its content. The width it
 /// needed is remembered for the dock layout (see `width`); returns whether it
 /// changed, and the parts of the cell a click acts on (x from, x to, action).
+/// With `reuse`, a cell that keeps its width is drawn again on that brush's
+/// surface instead of a new one.
 pub fn render(
     gfx: &Gfx,
     id: WidgetId,
@@ -129,14 +131,15 @@ pub fn render(
     readings: &Readings,
     height: u32,
     light: bool,
+    reuse: Option<&CompositionSurfaceBrush>,
 ) -> Result<(CompositionSurfaceBrush, bool, Zones)> {
     let size = size.for_widget(id);
     let height = height.max(16) as f32;
     // Text sizes are relative to a 48 pixel tall cell, as in the Barra dock.
     let unit = height / 48.0;
     let pad = (height * 0.14).round();
-    let draw = |width: f32, end: &mut f32, zones: &mut Zones| {
-        gfx.paint((width, height), unit, |pen| {
+    let draw = |width: f32, end: &mut f32, zones: &mut Zones, reuse: Option<&CompositionSurfaceBrush>| {
+        gfx.paint_into(reuse, (width, height), unit, |pen| {
             let mut c = Cell {
                 pen,
                 gfx,
@@ -182,18 +185,18 @@ pub fn render(
     // first time, a roomy surface just to learn it).
     let (hundredths, cell) = match known {
         Some(hundredths) => {
-            let cell = draw(to_px(hundredths), &mut end, &mut zones)?;
+            let cell = draw(to_px(hundredths), &mut end, &mut zones, reuse)?;
             let now = step(end);
             if now == hundredths {
                 (hundredths, cell)
             } else {
-                (now, draw(to_px(now), &mut end, &mut zones)?)
+                (now, draw(to_px(now), &mut end, &mut zones, None)?)
             }
         }
         None => {
-            draw(height * 9.0, &mut end, &mut Vec::new())?;
+            draw(height * 9.0, &mut end, &mut Vec::new(), None)?;
             let now = step(end);
-            (now, draw(to_px(now), &mut end, &mut zones)?)
+            (now, draw(to_px(now), &mut end, &mut zones, None)?)
         }
     };
     let changed = WIDTHS.lock().is_ok_and(|mut widths| {

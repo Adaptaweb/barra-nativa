@@ -464,7 +464,7 @@ pub fn repaint() {
                 *print = now_print;
                 widgets::set_marquee(true);
                 let rendered =
-                    widgets::render_cell(&gfx, *id, &readings, cell_height(&frame) as u32, frame.theme.light);
+                    paint_again(&gfx, *id, &readings, &frame, sprite);
                 widgets::set_marquee(false);
                 let Ok((brush, _, cell_zones)) = rendered else {
                     continue;
@@ -487,6 +487,24 @@ pub fn repaint() {
     });
 }
 
+/// Draws a cell again, on its sprite's current surface when the size allows.
+fn paint_again(
+    gfx: &Gfx,
+    id: WidgetId,
+    readings: &widgets::Readings,
+    frame: &Frame,
+    sprite: &windows::UI::Composition::SpriteVisual,
+) -> Result<(windows::UI::Composition::CompositionSurfaceBrush, bool, widgets::Zones)> {
+    let height = cell_height(frame) as u32;
+    let current = sprite
+        .Brush()
+        .ok()
+        .and_then(|brush| brush.cast::<windows::UI::Composition::CompositionSurfaceBrush>().ok());
+    match current {
+        Some(brush) => widgets::repaint_cell(gfx, id, readings, height, frame.theme.light, &brush),
+        None => widgets::render_cell(gfx, id, readings, height, frame.theme.light),
+    }
+}
 /// The timer fired: repaint only the moving cells (and rebuild if their
 /// width changed).
 fn repaint_music() {
@@ -517,7 +535,7 @@ fn repaint_music() {
                 }
                 widgets::set_marquee(true);
                 let rendered =
-                    widgets::render_cell(&gfx, *id, &readings, cell_height(&frame) as u32, frame.theme.light);
+                    paint_again(&gfx, *id, &readings, &frame, sprite);
                 widgets::set_marquee(false);
                 let Ok((brush, _, cell_zones)) = rendered else {
                     continue;

@@ -763,7 +763,24 @@ pub fn render_cell(
     bool,
     Zones,
 )> {
-    cell::render(gfx, id, dock_size(id), readings, height, light)
+    cell::render(gfx, id, dock_size(id), readings, height, light, None)
+}
+
+/// Like [`render_cell`], but draws again on `reuse`'s surface when the cell
+/// keeps its size: a repaint then allocates nothing and returns the same brush.
+pub fn repaint_cell(
+    gfx: &crate::gfx::Gfx,
+    id: WidgetId,
+    readings: &Readings,
+    height: u32,
+    light: bool,
+    reuse: &windows::UI::Composition::CompositionSurfaceBrush,
+) -> anyhow::Result<(
+    windows::UI::Composition::CompositionSurfaceBrush,
+    bool,
+    Zones,
+)> {
+    cell::render(gfx, id, dock_size(id), readings, height, light, Some(reuse))
 }
 
 /// Does what a click on a zone of a cell asks for.

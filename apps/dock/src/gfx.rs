@@ -204,6 +204,17 @@ impl Gfx {
             DirectXPixelFormat::B8G8R8A8UIntNormalized,
             DirectXAlphaMode::Premultiplied,
         )?;
+        self.redraw_surface(&surface, paint)?;
+        Ok(surface)
+    }
+
+    /// Clears an existing surface and draws on it again, keeping its size:
+    /// cheaper than a new surface (and its brush) on every repaint.
+    pub(crate) fn redraw_surface(
+        &self,
+        surface: &CompositionDrawingSurface,
+        paint: impl FnOnce(&ID2D1DeviceContext) -> Result<()>,
+    ) -> Result<()> {
         let interop: ICompositionDrawingSurfaceInterop = surface.cast()?;
 
         // SAFETY: BeginDraw and EndDraw are paired, and `offset` lives through the call.
@@ -218,7 +229,7 @@ impl Gfx {
             interop.EndDraw()?;
             painted?;
         }
-        Ok(surface)
+        Ok(())
     }
 
     pub fn icon_brush(&self, icon: &IconImage, side: u32) -> Result<CompositionSurfaceBrush> {

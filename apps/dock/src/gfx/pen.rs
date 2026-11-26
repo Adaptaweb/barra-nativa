@@ -518,6 +518,41 @@ impl Gfx {
         })
     }
 
+    /// Like [`Gfx::paint`], but draws again on `reuse`'s surface when it has
+    /// this size, so a repaint keeps its surface and brush (no new GPU
+    /// allocation, nothing for the visual to swap). Another size, or none,
+    /// gets a new surface.
+    pub fn paint_into(
+        &self,
+        reuse: Option<&windows::UI::Composition::CompositionSurfaceBrush>,
+        (width, height): (f32, f32),
+        scale: f32,
+        paint: impl FnOnce(&Pen<'_>) -> Result<()>,
+    ) -> Result<LabelBrush> {
+        let (w, h) = (width.ceil().max(1.0), height.ceil().max(1.0));
+        let surface = reuse.and_then(|brush| {
+            let surface: windows::UI::Composition::CompositionDrawingSurface =
+                windows::core::Interface::cast(&brush.Surface().ok()?).ok()?;
+            let size = surface.SizeInt32().ok()?;
+            (size.Width == w as i32 && size.Height == h as i32).then_some(surface)
+        });
+        if let (Some(brush), Some(surface)) = (reuse, surface) {
+            self.redraw_surface(&surface, |dc| {
+                paint(&Pen {
+                    dc,
+                    dwrite: &self.dwrite,
+                    scale,
+                })
+            })?;
+            return Ok(LabelBrush {
+                brush: brush.clone(),
+                width: w,
+                height: h,
+            });
+        }
+        self.paint((width, height), scale, paint)
+    }
+
     /// Width and height of one line of interface text, in physical pixels.
     pub fn measure(&self, text: &str, size: f32, scale: f32, weight: Weight) -> Result<(f32, f32)> {
         let (_, width, height) = one_line(&self.dwrite, text, text_font(), size * scale, weight)?;
