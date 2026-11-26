@@ -202,6 +202,10 @@ pub struct ScreenWidgets {
     /// This display's dock icon size, or the primary display's when unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_size: Option<u32>,
+    /// This display's island height in tenths of the icon, or the primary
+    /// display's when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub island_scale: Option<u8>,
 }
 
 impl Default for ScreenWidgets {
@@ -216,6 +220,7 @@ impl Default for ScreenWidgets {
             island_right: Vec::new(),
             dock_sizes: std::collections::BTreeMap::new(),
             icon_size: None,
+            island_scale: None,
         }
     }
 }
@@ -413,13 +418,15 @@ impl Config {
     }
 
     /// The settings as the dock of display `device` uses them: a display
-    /// other than the primary one can have its own icon size, and the
-    /// magnified size keeps the same proportion to it.
+    /// other than the primary one can have its own icon size (the magnified
+    /// size keeps the same proportion to it) and its own island height.
     #[must_use]
     pub fn for_display(mut self, device: Option<&str>) -> Self {
-        let own = device
-            .and_then(|device| self.widgets.screens.get(device))
-            .and_then(|screen| screen.icon_size);
+        let screen = device.and_then(|device| self.widgets.screens.get(device));
+        let (own, island) = screen.map_or((None, None), |s| (s.icon_size, s.island_scale));
+        if let Some(scale) = island {
+            self.widgets.island_scale = scale;
+        }
         if let Some(size) = own {
             let size = size.clamp(ICON_SIZE_RANGE.0, ICON_SIZE_RANGE.1);
             let ratio = self.magnified_size as f32 / self.icon_size.max(1) as f32;

@@ -116,6 +116,8 @@ export interface ScreenWidgets {
   dockSizes: Record<string, string>;
   /** This display's dock icon size; the primary display's when absent. */
   iconSize?: number | null;
+  /** This display's island height in tenths of the icon; the primary display's when absent. */
+  islandScale?: number | null;
 }
 
 export interface DisplayInfo {

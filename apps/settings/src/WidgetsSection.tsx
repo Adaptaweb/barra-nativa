@@ -124,16 +124,24 @@ function WidgetsPage({ config, update, part }: Props) {
       <Card>
         <ZoneMap boxes={map} counts={counts} selected={zone} onSelect={setSelected} />
         {part === "dock" ? (
-          <Row label="Alto de las islas" hint="Cuántas veces el icono mide de alto la burbuja de cada isla.">
+          <Row
+            label="Alto de las islas"
+            hint={editing
+              ? `Solo en ${editing.label}. Cuántas veces el icono mide de alto la burbuja de cada isla.`
+              : "Cuántas veces el icono mide de alto la burbuja de cada isla."}
+          >
             <Segmented<"10" | "12" | "15">
               label="Alto de las islas"
-              value={String(widgets.islandScale ?? 12) as "10" | "12" | "15"}
+              value={String((editing ? layout.islandScale : null) ?? widgets.islandScale ?? 12) as "10" | "12" | "15"}
               options={[
                 { value: "10", label: "1,0×" },
                 { value: "12", label: "1,2×" },
                 { value: "15", label: "1,5×" },
               ]}
-              onChange={(scale) => save({ islandScale: Number(scale) })}
+              onChange={(scale) =>
+                editing
+                  ? saveScreen(editing.device, { islandScale: Number(scale) })
+                  : save({ islandScale: Number(scale) })}
             />
           </Row>
         ) : null}
