@@ -222,49 +222,39 @@ fn notificaciones(c: &mut Cell<'_, '_>) -> Result<()> {
     Ok(())
 }
 
-/// Network, volume and battery, as the Windows quick settings button.
-fn control(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
-    let icon = 17.0;
-    let gap = c.px(9.0);
-    c.x += c.px(4.0);
-    let Some(d) = r.control else {
-        let (_, h) = c.gfx.measure_icon('\u{E713}', icon, c.unit)?;
-        c.x += c.pen.icon('\u{E713}', (c.x, (c.height - h) / 2.0), icon, c.strong())?;
-        c.x += c.px(4.0);
-        return Ok(());
-    };
-    let mut glyphs = vec![super::control::network_glyph(d.network), super::control::volume_glyph(d.volume)];
-    if d.bluetooth && size != Size::Compact {
-        glyphs.push('\u{E702}');
-    }
-    for (index, glyph) in glyphs.into_iter().enumerate() {
-        if index > 0 {
-            c.x += gap;
-        }
-        let (_, h) = c.gfx.measure_icon(glyph, icon, c.unit)?;
-        c.x += c.pen.icon(glyph, (c.x, (c.height - h) / 2.0), icon, c.strong())?;
-    }
-    if let Some(battery) = d.battery {
-        c.x += gap;
-        let glyph = super::control::battery_glyph(battery);
-        let (_, h) = c.gfx.measure_icon(glyph, icon, c.unit)?;
-        let color = if battery.charging {
-            GREEN
-        } else if battery.percent <= 20 {
-            RED
-        } else {
-            c.strong()
-        };
-        c.x += c.pen.icon(glyph, (c.x, (c.height - h) / 2.0), icon, color)?;
-        if size != Size::Compact {
-            c.x += c.px(4.0);
-            c.text(&format!("{}%", battery.percent), 12.0, Weight::Bold, c.strong())?;
-        }
-    }
-    c.x += c.px(4.0);
-    Ok(())
-}
+/// iOS control-centre blue for a switch that is on.
+const SWITCH_ON: Rgba = [0.04, 0.52, 1.0, 1.0];
 
+/// Network, Bluetooth and volume as round control-centre buttons: blue when
+/// on, grey when off, the glyph white on blue. The battery has its own
+/// widget. A click opens the Windows quick settings.
+fn control(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
+    let disc = (c.height * 0.72).round();
+    let gap = c.px(8.0);
+    let top = ((c.height - disc) / 2.0).round();
+    let glyph_size = 15.0;
+    let button = |c: &mut Cell<'_, '_>, glyph: char, on: bool| -> Result<()> {
+        let back = if on { SWITCH_ON } else { ink(c.light, 0.14) };
+        c.pen.round_rect((c.x, top), (disc, disc), disc / 2.0, back)?;
+        let (gw, gh) = c.gfx.measure_icon(glyph, glyph_size, c.unit)?;
+        let color = if on { [1.0, 1.0, 1.0, 1.0] } else { c.strong() };
+        c.pen.icon(glyph, (c.x + (disc - gw) / 2.0, top + (disc - gh) / 2.0), glyph_size, color)?;
+        c.x += disc;
+        Ok(())
+    };
+    let Some(d) = r.control else {
+        return button(c, '\u{E713}', false);
+    };
+    let online = !matches!(d.network, muelle_shell::status::Network::Offline);
+    button(c, super::control::network_glyph(d.network), online)?;
+    if size != Size::Compact {
+        c.x += gap;
+        button(c, '\u{E702}', d.bluetooth)?;
+    }
+    c.x += gap;
+    let muted = d.volume.is_none_or(|v| v.muted);
+    button(c, super::control::volume_glyph(d.volume), !muted)
+}
 /// Lays the cell out left to right.
 struct Cell<'a, 'b> {
     pen: &'a Pen<'b>,
@@ -522,7 +512,7 @@ fn draw_cloud(pen: &Pen<'_>, (x, y): (f32, f32), w: f32, color: Rgba) -> Result<
 
 /// The weather as a drawn icon in a `side` square at (`x`, `y`), in the
 /// iOS style: a yellow sun, a pale moon, white clouds, blue rain.
-fn weather_icon(pen: &Pen<'_>, (x, y): (f32, f32), side: f32, code: u8, day: bool) -> Result<()> {
+pub(super) fn weather_icon(pen: &Pen<'_>, (x, y): (f32, f32), side: f32, code: u8, day: bool) -> Result<()> {
     let sky = |pen: &Pen<'_>, center: (f32, f32), r: f32| {
         if day { draw_sun(pen, center, r) } else { pen.crescent(center, r * 1.15, (r * 0.6, -r * 0.4), MOON) }
     };

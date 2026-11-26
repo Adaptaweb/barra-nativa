@@ -121,11 +121,10 @@ function dockCell(key: string, size: PreviewSize) {
     }
     case "control":
       return (
-        <span className="wp-glyphs">
-          <span className="wp-glyph">{""}</span>
-          <span className="wp-glyph">{""}</span>
-          {compact ? null : <span className="wp-glyph">{""}</span>}
-          {compact ? null : <b>80%</b>}
+        <span className="wp-switches">
+          <span className="wp-switch wp-switch-on"><span className="wp-glyph">{""}</span></span>
+          {compact ? null : <span className="wp-switch wp-switch-on"><span className="wp-glyph">{""}</span></span>}
+          <span className="wp-switch wp-switch-on"><span className="wp-glyph">{""}</span></span>
         </span>
       );
     case "bandeja":

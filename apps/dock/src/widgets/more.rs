@@ -126,19 +126,13 @@ fn control_bar(
     let size = 13.0;
     let gap = (7.0 * scale).round();
     let mut glyphs = vec![super::control::network_glyph(d.network), super::control::volume_glyph(d.volume)];
+    // The battery has a widget of its own.
     if d.bluetooth {
         glyphs.push('\u{E702}');
-    }
-    if let Some(b) = d.battery {
-        glyphs.push(super::control::battery_glyph(b));
     }
     let mut width = 0.0;
     for (i, g) in glyphs.iter().enumerate() {
         width += gfx.measure_icon(*g, size, scale)?.0 + if i > 0 { gap } else { 0.0 };
-    }
-    let percent = d.battery.map(|b| format!("{}%", b.percent));
-    if let Some(p) = &percent {
-        width += (4.0 * scale).round() + gfx.measure(p, 12.0, scale, Weight::Normal)?.0;
     }
     gfx.paint((width.ceil(), height), scale, |pen| {
         let mut x = 0.0;
@@ -148,11 +142,6 @@ fn control_bar(
             }
             let (_, h) = gfx.measure_icon(*g, size, scale)?;
             x += pen.icon(*g, (x, (height - h) / 2.0), size, ink(light, 1.0))?;
-        }
-        if let Some(p) = &percent {
-            x += (4.0 * scale).round();
-            let (_, h) = gfx.measure(p, 12.0, scale, Weight::Normal)?;
-            pen.text(p, (x, (height - h) / 2.0), 12.0, Weight::Normal, ink(light, 1.0))?;
         }
         Ok(())
     })

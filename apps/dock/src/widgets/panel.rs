@@ -4,7 +4,7 @@
 //! Esc is pressed, or when its widget is clicked again. While open it
 //! follows the readings, so a light switched on shows at once.
 
-use super::{WidgetId, calendario, camara, casa_panel, musica_panel, panel_content};
+use super::{WidgetId, calendario, camara, casa_panel, clima_panel, musica_panel, panel_content};
 use crate::gfx::{Gfx, Rgba, Weight};
 use crate::menu::{apply_popup_frame, draw_popup_background};
 use anyhow::Result;
@@ -363,6 +363,13 @@ impl Panel {
             let height = px(musica_panel::height());
             let content = self.gfx.paint((width, height), self.scale, |pen| {
                 musica_panel::draw(pen, &self.gfx, &readings, self.scale, &mut hits, &mut slider)
+            })?;
+            (width, height, content)
+        } else if self.id == WidgetId::Clima && readings.clima.is_some() {
+            let width = px(clima_panel::WIDTH);
+            let height = px(clima_panel::height(&readings));
+            let content = self.gfx.paint((width, height), self.scale, |pen| {
+                clima_panel::draw(pen, &self.gfx, &readings, self.scale, &mut hits)
             })?;
             (width, height, content)
         } else if self.id == WidgetId::Casa && casa_panel::applies(&readings) {

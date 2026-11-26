@@ -14,6 +14,7 @@ mod casa;
 mod casa_panel;
 mod cell;
 mod clima;
+mod clima_panel;
 mod control;
 mod draw;
 mod google;
