@@ -4,7 +4,7 @@
 //! asks. Icon, big figures, faded
 //! details, thin separators.
 
-use super::draw::{BLUE, GREEN, ORANGE, RED, ink, symbol};
+use super::draw::{GREEN, ORANGE, RED, ink, symbol};
 use super::clima::describe;
 use super::musica::{NO_ARTWORK, NO_ARTWORK_2};
 use super::{Calendar, ClimaData, Home, Readings, WidgetId};
@@ -618,62 +618,55 @@ fn temp_color(t: u8) -> Rgba {
     }
 }
 
+/// A 270° gauge at `c.x`, as tall as most of the cell: its arc filled to
+/// `fraction` in `color`, `value` in big heavy figures (like the clock's,
+/// shrunk only if it would not fit inside) and `label` under it. Advances.
+fn gauge(c: &mut Cell<'_, '_>, value: &str, label: &str, fraction: f32, color: Rgba) -> Result<()> {
+    let ring = (c.height * 0.88).round();
+    let center = (c.x + ring / 2.0, c.height / 2.0);
+    let stroke = c.px(4.5);
+    let radius = ring / 2.0 - stroke / 2.0 - c.px(1.0);
+    c.pen.arc(center, radius, stroke, (225.0, 270.0), ink(c.light, 0.22))?;
+    let fraction = fraction.clamp(0.0, 1.0);
+    if fraction > 0.0 {
+        c.pen.arc(center, radius, stroke, (225.0, 270.0 * fraction), color)?;
+    }
+    // The figures fill the inside of the ring.
+    let room = 2.0 * (radius - stroke / 2.0) - c.px(3.0);
+    let mut size = 17.0;
+    let (mut nw, mut nh) = c.gfx.measure(value, size, c.unit, Weight::Heavy)?;
+    while nw > room && size > 10.0 {
+        size -= 1.0;
+        (nw, nh) = c.gfx.measure(value, size, c.unit, Weight::Heavy)?;
+    }
+    c.pen.text(value, (center.0 - nw / 2.0, center.1 - nh / 2.0 - c.px(2.0)), size, Weight::Heavy, c.strong())?;
+    let (lw, _) = c.gfx.measure(label, 8.0, c.unit, Weight::Bold)?;
+    c.pen.text(label, (center.0 - lw / 2.0, center.1 + radius - c.px(7.0)), 8.0, Weight::Bold, c.faded())?;
+    c.x += ring;
+    Ok(())
+}
+
+/// CPU temperature, CPU load and memory, each in its own gauge; compact
+/// keeps only the temperature (or the load without a sensor).
 fn sistema(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     let Some(d) = r.sistema else {
         return c.text("Sistema…", 11.0, Weight::Normal, c.faded());
     };
-    // The gauge: a 270° ring that always shows the CPU temperature.
-    let ring = c.height * 0.8;
-    let left = if size == Size::Compact { c.x } else { c.x - c.px(4.0) };
-    let center = (left + ring / 2.0, c.height / 2.0);
-    let stroke = c.px(4.5);
-    let radius = ring / 2.0 - stroke;
-    c.pen.arc(center, radius, stroke, (225.0, 270.0), ink(c.light, 0.22))?;
-    let number = match d.temp {
-        Some(t) => {
-            let fraction = (f32::from(t) / 100.0).clamp(0.0, 1.0);
-            c.pen.arc(center, radius, stroke, (225.0, 270.0 * fraction), temp_color(t))?;
-            format!("{t}°")
-        }
-        None => "—".to_owned(),
+    let temp = |c: &mut Cell<'_, '_>| match d.temp {
+        Some(t) => gauge(c, &format!("{t}°"), "TEMP", f32::from(t) / 100.0, temp_color(t)),
+        None => gauge(c, "—", "TEMP", 0.0, ink(c.light, 0.22)),
     };
-    let (nw, nh) = c.gfx.measure(&number, 13.0, c.unit, Weight::Bold)?;
-    c.pen.text(&number, (center.0 - nw / 2.0, center.1 - nh / 2.0 - c.px(3.0)), 13.0, Weight::Bold, c.strong())?;
-    let tag = if d.temp.is_some() { "CPU" } else { "sin sensor" };
-    let (lw, _) = c.gfx.measure(tag, 7.5, c.unit, Weight::Bold)?;
-    c.pen.text(tag, (center.0 - lw / 2.0, center.1 + radius - c.px(6.0)), 7.5, Weight::Bold, c.faded())?;
-    c.x = left + ring;
+    let cpu = |c: &mut Cell<'_, '_>| gauge(c, &format!("{}%", d.cpu), "CPU", f32::from(d.cpu) / 100.0, ram_color(d.cpu));
     if size == Size::Compact {
-        return Ok(());
+        return if d.temp.is_some() { temp(c) } else { cpu(c) };
     }
-    c.x += c.px(10.0);
-    // CPU and RAM rows: label, bar, percent.
-    let rows = [("CPU", d.cpu), ("RAM", d.ram)];
-    let row_h = c.line(15.0, Weight::Bold)?;
-    let top = (c.height - row_h * 2.0 - c.px(4.0)) / 2.0;
-    let (label_w, label_h) = c.gfx.measure("RAM", 11.0, c.unit, Weight::Bold)?;
-    let (pct_w, _) = c.gfx.measure("100%", 15.0, c.unit, Weight::Bold)?;
-    let bar_x = c.x + label_w + c.px(8.0);
-    let bar_w = c.px(44.0);
-    let pct_x = bar_x + bar_w + c.px(8.0);
-    for (index, (label, pct)) in rows.into_iter().enumerate() {
-        let y = top + (row_h + c.px(4.0)) * index as f32;
-        c.pen.text(label, (c.x, y + (row_h - label_h) / 2.0), 11.0, Weight::Bold, c.faded())?;
-        let bar_h = c.px(5.0);
-        let bar_y = y + (row_h - bar_h) / 2.0;
-        c.pen.round_rect((bar_x, bar_y), (bar_w, bar_h), bar_h / 2.0, ink(c.light, 0.15))?;
-        let filled = bar_w * f32::from(pct.min(100)) / 100.0;
-        if filled > 0.5 {
-            c.pen.round_rect((bar_x, bar_y), (filled.max(bar_h), bar_h), bar_h / 2.0, BLUE)?;
-        }
-        let text = format!("{pct}%");
-        let (tw, _) = c.gfx.measure(&text, 15.0, c.unit, Weight::Bold)?;
-        c.pen.text(&text, (pct_x + pct_w - tw, y), 15.0, Weight::Bold, c.strong())?;
-    }
-    c.x = pct_x + pct_w;
-    Ok(())
+    let gap = c.px(8.0);
+    temp(c)?;
+    c.x += gap;
+    cpu(c)?;
+    c.x += gap;
+    gauge(c, &format!("{}%", d.ram), "RAM", f32::from(d.ram) / 100.0, ram_color(d.ram))
 }
-
 /// Ring colour of the memory load: green, yellow from 70, red from 85.
 pub(super) fn ram_color(percent: u8) -> Rgba {
     match percent {
@@ -689,39 +682,30 @@ pub(super) fn gb_text(mb: u32) -> String {
     format!("{},{}", tenths / 10, tenths % 10)
 }
 
-/// Memory: the same 270° ring as the CPU gauge, with the load in it. Medium
-/// adds the gigabytes in use and installed; wide, a used / free bar.
+/// Memory: the load in a gauge like the CPU's. Medium adds the gigabytes in
+/// use in big figures (like the date's) over the installed and free ones;
+/// wide, a used / free bar.
 fn memoria(c: &mut Cell<'_, '_>, size: Size, r: &Readings) -> Result<()> {
     let Some(d) = r.sistema else {
         return c.text("Memoria…", 11.0, Weight::Normal, c.faded());
     };
-    let ring = c.height * 0.8;
-    let left = if size == Size::Compact { c.x } else { c.x - c.px(4.0) };
-    let center = (left + ring / 2.0, c.height / 2.0);
-    let stroke = c.px(4.5);
-    let radius = ring / 2.0 - stroke;
-    c.pen.arc(center, radius, stroke, (225.0, 270.0), ink(c.light, 0.22))?;
     let fraction = (f32::from(d.ram) / 100.0).clamp(0.0, 1.0);
-    if fraction > 0.0 {
-        c.pen.arc(center, radius, stroke, (225.0, 270.0 * fraction), ram_color(d.ram))?;
-    }
-    let number = format!("{}%", d.ram);
-    let (nw, nh) = c.gfx.measure(&number, 13.0, c.unit, Weight::Bold)?;
-    c.pen.text(&number, (center.0 - nw / 2.0, center.1 - nh / 2.0 - c.px(3.0)), 13.0, Weight::Bold, c.strong())?;
-    let (lw, _) = c.gfx.measure("RAM", 7.5, c.unit, Weight::Bold)?;
-    c.pen.text("RAM", (center.0 - lw / 2.0, center.1 + radius - c.px(6.0)), 7.5, Weight::Bold, c.faded())?;
-    c.x = left + ring;
+    gauge(c, &format!("{}%", d.ram), "RAM", fraction, ram_color(d.ram))?;
     if size == Size::Compact || d.ram_total_mb == 0 {
         return Ok(());
     }
     c.x += c.px(10.0);
     let used = format!("{} GB", gb_text(d.ram_used_mb));
-    let total = format!("de {} GB", gb_text(d.ram_total_mb));
+    let total = format!(
+        "de {} GB · {} libres",
+        gb_text(d.ram_total_mb),
+        gb_text(d.ram_total_mb.saturating_sub(d.ram_used_mb))
+    );
     c.column(
-        (&used, 17.0, Weight::Bold, c.strong()),
+        (&used, 24.0, Weight::Heavy, c.strong()),
         (&total, 10.5, Weight::Normal, c.faded()),
         false,
-        16,
+        24,
     )?;
     if size != Size::Wide {
         return Ok(());

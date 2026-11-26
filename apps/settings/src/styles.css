@@ -761,7 +761,7 @@ textarea.text-field { width: 100%; resize: vertical; font-family: ui-monospace, 
 .wp-emoji { font-size: 20px; }
 .wp-logo { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: #d97757; font-weight: 800; }
 .wp-ring { width: 40px; height: 40px; }
-.wp-ring-value { fill: #fff; font-size: 10px; font-weight: 700; }
+.wp-ring-value { fill: #fff; font-size: 12px; font-weight: 800; }
 .wp-ring-label { fill: rgba(255, 255, 255, 0.6); font-size: 6px; font-weight: 700; }
 .wp-meter { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
 .wp-track { width: 52px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.18); overflow: hidden; }

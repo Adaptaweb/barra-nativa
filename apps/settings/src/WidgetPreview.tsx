@@ -51,15 +51,15 @@ function dockCell(key: string, size: PreviewSize) {
     case "sistema":
       return (
         <>
-          <Ring value="52°" color="#34c759" label="CPU" />
-          {compact ? null : <span className="wp-stack"><Bar label="CPU" value={18} color="#0a84ff" /><Bar label="RAM" value={47} color="#34c759" /></span>}
+          <Ring value="52°" color="#34c759" label="TEMP" />
+          {compact ? null : <><Ring value="18%" color="#34c759" label="CPU" /><Ring value="47%" color="#34c759" label="RAM" /></>}
         </>
       );
     case "memoria":
       return (
         <>
           <Ring value="54%" color="#34c759" label="RAM" />
-          {compact ? null : <span className="wp-stack"><b className="wp-big">8,2 GB</b><span className="wp-dim">de 16 GB</span></span>}
+          {compact ? null : <span className="wp-stack"><b className="wp-big">8,2 GB</b><span className="wp-dim">de 16 GB · 7,8 libres</span></span>}
           {wide ? <span className="wp-stack"><Bar label="Uso" value={54} color="#34c759" /><span className="wp-dim">7,8 GB libres</span></span> : null}
         </>
       );
