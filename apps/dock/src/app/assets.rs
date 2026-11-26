@@ -249,6 +249,11 @@ impl App {
         if wanted == 0 {
             return Ok(());
         }
+        // Readings arrive every second (the clock): with no widget inside
+        // the dock there is nothing here to redraw, so skip listing its entries.
+        if crate::widgets::dock().is_empty() && crate::widgets::dock_left().is_empty() {
+            return Ok(());
+        }
         if self.current_entries() != self.entries {
             return self.refresh();
         }

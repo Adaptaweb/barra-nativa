@@ -168,14 +168,34 @@ pub fn render(
             Ok(())
         })
     };
-    // First on a roomy surface to learn the width, then at that width.
-    let mut end = 0.0;
-    draw(height * 9.0, &mut end, &mut Vec::new())?;
     // In steps of a tenth of an icon, so small changes do not move the dock.
-    let hundredths = ((((end + pad) / height) * 10.0).ceil() * 10.0).clamp(60.0, 900.0) as u16;
-    let width = (height * f32::from(hundredths) / 100.0).round();
+    let step = |end: f32| ((((end + pad) / height) * 10.0).ceil() * 10.0).clamp(60.0, 900.0) as u16;
+    let to_px = |hundredths: u16| (height * f32::from(hundredths) / 100.0).round();
+    let known = WIDTHS
+        .lock()
+        .ok()
+        .and_then(|w| w.iter().find(|(key, _)| *key == (id, size)).map(|(_, v)| *v));
+    let mut end = 0.0;
     let mut zones = Vec::new();
-    let cell = draw(width, &mut end, &mut zones)?;
+    // Drawn once at the width it had last time: the content's end tells
+    // whether that still fits. Only a new width needs a second pass (the
+    // first time, a roomy surface just to learn it).
+    let (hundredths, cell) = match known {
+        Some(hundredths) => {
+            let cell = draw(to_px(hundredths), &mut end, &mut zones)?;
+            let now = step(end);
+            if now == hundredths {
+                (hundredths, cell)
+            } else {
+                (now, draw(to_px(now), &mut end, &mut zones)?)
+            }
+        }
+        None => {
+            draw(height * 9.0, &mut end, &mut Vec::new())?;
+            let now = step(end);
+            (now, draw(to_px(now), &mut end, &mut zones)?)
+        }
+    };
     let changed = WIDTHS.lock().is_ok_and(|mut widths| {
         match widths.iter_mut().find(|(key, _)| *key == (id, size)) {
             Some((_, old)) if *old == hundredths => false,

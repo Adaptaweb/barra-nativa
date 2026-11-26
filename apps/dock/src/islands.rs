@@ -70,8 +70,9 @@ fn pill_height(frame: &Frame) -> f32 {
 /// Timer that repaints the moving cells: music while its title or artist
 /// scrolls, and the battery's water.
 const MARQUEE_TIMER: usize = 0x4D51;
-/// Marquee repaint period (about 30 frames per second).
-const MARQUEE_MS: u32 = 33;
+/// Repaint period of the moving cells (20 frames per second: smooth enough
+/// for a scrolling title or water, at two thirds of the cost of 30).
+const MARQUEE_MS: u32 = 50;
 
 struct Island {
     side: Side,
@@ -92,6 +93,9 @@ struct Island {
     /// Per cell, the parts a click acts on: x from, x to (in the cell), what.
     zones: Vec<widgets::Zones>,
     sprites: Vec<windows::UI::Composition::SpriteVisual>,
+    /// Per cell, what it showed when last drawn (its fingerprint): a cell
+    /// whose reading did not change is not drawn again.
+    prints: Vec<String>,
     left: i32,
     top: i32,
     width: i32,
@@ -262,12 +266,19 @@ fn build(gfx: &Gfx, frame: &Frame, side: Side, list: &[WidgetId], visible: bool)
         cells,
         zones,
         sprites,
+        prints: prints(list),
         left,
         top,
         width: width as i32,
     };
     island.place(visible);
     Ok(Some(island))
+}
+
+/// The fingerprint of each widget's current reading, in order.
+fn prints(list: &[WidgetId]) -> Vec<String> {
+    let readings = widgets::readings();
+    list.iter().map(|id| id.fingerprint(&readings)).collect()
 }
 
 /// Lays an island's cells out again in place, reusing its window, target,
@@ -284,6 +295,7 @@ fn relayout(island: &mut Island, gfx: &Gfx, frame: &Frame, list: &[WidgetId], vi
     island.sprites = make_sprites(gfx, &island.root, frame, &cells, &brushes)?;
     island.cells = cells;
     island.zones = zones;
+    island.prints = prints(list);
     island.left = island_left(frame, island.side, width);
     island.top = (frame.monitor.screen.bottom as f32 - frame.margin - island.height) as i32;
     island.width = width as i32;
@@ -291,10 +303,9 @@ fn relayout(island: &mut Island, gfx: &Gfx, frame: &Frame, list: &[WidgetId], vi
     Ok(())
 }
 
-/// Runs the timer only while the island has a cell that moves.
-fn sync_marquee(island: &Island) {
-    let readings = widgets::readings();
-    let wanted = island.cells.iter().any(|(id, _, _)| widgets::animates(*id, &readings));
+/// Runs the timer only while the island is on screen and has a cell that moves.
+fn sync_marquee(island: &Island, readings: &widgets::Readings, visible: bool) {
+    let wanted = visible && island.cells.iter().any(|(id, _, _)| widgets::animates(*id, readings));
     // SAFETY: Our own live window; the timer is replaced or killed by id.
     unsafe {
         if wanted {
@@ -382,6 +393,7 @@ fn rebuild(state: &mut State) {
         return;
     };
     let visible = state.visible;
+    let readings = widgets::readings();
     let mut old = std::mem::take(&mut state.islands);
     for side in [Side::Left, Side::Right] {
         let list: Vec<WidgetId> = widgets::islands(side == Side::Left)
@@ -400,7 +412,7 @@ fn rebuild(state: &mut State) {
             if reusable {
                 match relayout(&mut island, &gfx, &frame, &list, visible) {
                     Ok(()) => {
-                        sync_marquee(&island);
+                        sync_marquee(&island, &readings, visible);
                         state.islands.push(island);
                         continue;
                     }
@@ -411,7 +423,7 @@ fn rebuild(state: &mut State) {
         }
         match build(&gfx, &frame, side, &list, visible) {
             Ok(Some(island)) => {
-                sync_marquee(&island);
+                sync_marquee(&island, &readings, visible);
                 state.islands.push(island);
             }
             Ok(None) => {}
@@ -420,8 +432,10 @@ fn rebuild(state: &mut State) {
     }
 }
 
-/// A reading changed: repaint the cells in place, or lay the islands out
-/// again if a cell's width changed.
+/// A reading changed: repaint, in place, only the cells whose reading did
+/// (the clock's every second, the others when their data moves), or lay the
+/// islands out again if a cell's width changed. Nothing is drawn while the
+/// islands are hidden; they catch up on the next reading once shown.
 pub fn repaint() {
     STATE.with(|state| {
         let Ok(mut state) = state.try_borrow_mut() else {
@@ -430,15 +444,24 @@ pub fn repaint() {
         let (Some(gfx), Some(frame)) = (state.gfx.clone(), state.frame) else {
             return;
         };
+        if !state.visible {
+            return;
+        }
         let readings = widgets::readings();
         let mut resized = false;
         'all: for island in &mut state.islands {
-            for (((id, _, width), sprite), zones) in island
+            for ((((id, _, width), sprite), zones), print) in island
                 .cells
                 .iter()
                 .zip(&island.sprites)
                 .zip(island.zones.iter_mut())
+                .zip(island.prints.iter_mut())
             {
+                let now_print = id.fingerprint(&readings);
+                if *print == now_print {
+                    continue;
+                }
+                *print = now_print;
                 widgets::set_marquee(true);
                 let rendered =
                     widgets::render_cell(&gfx, *id, &readings, cell_height(&frame) as u32, frame.theme.light);
@@ -459,7 +482,7 @@ pub fn repaint() {
             rebuild(&mut state);
         }
         for island in &state.islands {
-            sync_marquee(island);
+            sync_marquee(island, &readings, state.visible);
         }
     });
 }
@@ -475,6 +498,12 @@ fn repaint_music() {
             return;
         };
         let readings = widgets::readings();
+        if !state.visible {
+            for island in &state.islands {
+                sync_marquee(island, &readings, false);
+            }
+            return;
+        }
         let mut resized = false;
         'all: for island in &mut state.islands {
             for (((id, _, width), sprite), zones) in island
@@ -506,20 +535,23 @@ fn repaint_music() {
             rebuild(&mut state);
         }
         for island in &state.islands {
-            sync_marquee(island);
+            sync_marquee(island, &readings, state.visible);
         }
     });
 }
 
-/// Shows or hides the islands with the dock (full screen, auto-hide).
+/// Shows or hides the islands with the dock (full screen, auto-hide); the
+/// animation timer stops while they are hidden.
 pub fn set_visible(visible: bool) {
     STATE.with(|state| {
         if let Ok(mut state) = state.try_borrow_mut()
             && state.visible != visible
         {
             state.visible = visible;
+            let readings = widgets::readings();
             for island in &state.islands {
                 island.place(visible);
+                sync_marquee(island, &readings, visible);
             }
         }
     });
