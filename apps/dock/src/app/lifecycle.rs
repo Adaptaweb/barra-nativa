@@ -407,6 +407,9 @@ pub fn run() -> Result<()> {
         startup.elapsed().as_millis()
     ));
     message_loop();
+    // The screen capture behind liquid glass is closed on this thread before
+    // anything else goes: left open, the process could hang on its way out.
+    crate::liquid::stop();
     // SAFETY: The drop target was registered on this window in this thread.
     unsafe {
         let _ = RevokeDragDrop(HWND(DROP_WINDOW.load(Ordering::Relaxed) as *mut _));

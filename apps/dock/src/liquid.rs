@@ -65,8 +65,11 @@ static PENDING: AtomicBool = AtomicBool::new(false);
 static NOTIFY: AtomicIsize = AtomicIsize::new(0);
 static MESSAGE: AtomicU32 = AtomicU32::new(0);
 
-/// Keeps `hwnd` out of (`on`) or back in screen captures.
+/// Keeps `hwnd` out of (`on`) or back in screen captures. With
+/// `BARRA_LIQUID_SHOW` set, windows stay in captures (the glass then also
+/// shows itself), so a screenshot can show what the glass looks like.
 pub fn exclude(hwnd: HWND, on: bool) {
+    let on = on && std::env::var_os("BARRA_LIQUID_SHOW").is_none();
     // SAFETY: Our own live window.
     unsafe {
         let _ = SetWindowDisplayAffinity(hwnd, if on { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE });
@@ -208,8 +211,11 @@ impl Layers {
         let clear_brush = brush()?;
         let mut visuals = vec![sprite(&clear_brush.cast()?)?];
         let mut rings = Vec::new();
-        // Rings stay inside the corners' curve, where the nine-grid keeps them.
-        let side = (radius * 2.0 + 2.0).ceil();
+        // Rings stay inside the corners' curve, where the nine-grid keeps
+        // them. The picture has a straight stretch between its corners: the
+        // nine-grid stretches those middle slices along each edge, and with
+        // none the ring showed only as four corner arcs.
+        let side = (radius * 2.0 + 2.0).ceil() + 8.0;
         for (from, to, shift) in RINGS {
             let (from, to) = ((from * scale).round(), (to * scale).round().min(radius - 1.0));
             if to <= from {
