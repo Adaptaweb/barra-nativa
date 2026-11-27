@@ -6,7 +6,7 @@
 //! draws reads `current()` when it builds, and a change rebuilds through the
 //! same keys a Windows theme change does.
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use muelle_config::Appearance;
 use muelle_shell::system::{transparency_enabled, uses_light_theme};
@@ -55,9 +55,42 @@ pub struct Look {
 }
 
 static CHOICE: AtomicU8 = AtomicU8::new(Appearance::Auto as u8);
+/// The desktop is being streamed (see [`set_streaming`]).
+static STREAMING: AtomicBool = AtomicBool::new(false);
 
 pub fn set(choice: Appearance) {
     CHOICE.store(choice as u8, Ordering::Relaxed);
+    refresh_streaming();
+}
+
+/// Reads again whether the desktop is being streamed; `true` if that changed.
+pub fn refresh_streaming() -> bool {
+    let on = streaming_marker().is_some_and(|path| path.exists());
+    STREAMING.swap(on, Ordering::Relaxed) != on
+}
+
+/// The file whose presence says the desktop is being streamed.
+fn streaming_marker() -> Option<std::path::PathBuf> {
+    Some(std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Muelle").join("streaming"))
+}
+
+/// `muelle --stream on|off`, for a streaming host such as Sunshine to run
+/// when a session starts and ends. Liquid glass keeps the dock's windows out
+/// of screen captures, and so out of the stream too; while streaming they
+/// use the clear glass instead and stay in captures. The state is kept in a
+/// file so a dock started mid-stream knows, and every dock is told to reload.
+pub fn set_streaming(on: bool) -> anyhow::Result<()> {
+    let marker = anyhow::Context::context(streaming_marker(), "sin LOCALAPPDATA")?;
+    if on {
+        if let Some(folder) = marker.parent() {
+            std::fs::create_dir_all(folder)?;
+        }
+        std::fs::write(&marker, b"")?;
+    } else if marker.exists() {
+        std::fs::remove_file(&marker)?;
+    }
+    muelle_shell::dock_link::notify_config_changed();
+    Ok(())
 }
 
 const CHOICES: [Appearance; 8] = [
@@ -102,7 +135,12 @@ pub fn current() -> Look {
     let choice = decode(CHOICE.load(Ordering::Relaxed));
     // Only `Auto` needs the Windows theme.
     let system_light = choice == Appearance::Auto && uses_light_theme();
-    resolve(choice, system_light, transparency_enabled())
+    let mut look = resolve(choice, system_light, transparency_enabled());
+    // While streaming, liquid glass would be missing from the stream.
+    if look.material.is_liquid() && STREAMING.load(Ordering::Relaxed) {
+        look.material = Material::Clear;
+    }
+    look
 }
 
 /// Whether menus and labels are drawn light, with dark content.

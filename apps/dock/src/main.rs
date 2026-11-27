@@ -5,6 +5,7 @@
 //! - `muelle --quit`              closes the running dock
 //! - `muelle --restore`           restores the Windows taskbar
 //! - `muelle --autostart on|off`  enables or disables startup with Windows
+//! - `muelle --stream on|off`     the desktop is (no longer) being streamed
 //! - `muelle --guard <pid>`       internal watchdog process
 //! - `muelle --usage-worker`      internal one-shot quota reader
 //! - `muelle --shell-worker`      internal one-shot shell action
@@ -93,6 +94,8 @@ fn main() -> Result<()> {
             Ok(autostart::set(Some(&exe.to_string_lossy()))?)
         }
         ["--autostart", "off"] => Ok(autostart::set(None)?),
+        ["--stream", "on"] => appearance::set_streaming(true),
+        ["--stream", "off"] => appearance::set_streaming(false),
         [guard::FLAG, pid] => guard::run(pid.parse().context("pid no válido")?),
         ["--usage-worker"] => usage::worker_main(),
         ["--usage-worker", "all"] => usage::worker_all_main(),
@@ -100,7 +103,7 @@ fn main() -> Result<()> {
         [accessories::FLAG, visibility] => accessories::worker_main(Some(visibility)),
         [accessories::USB_FLAG] => accessories::usb_worker_main(),
         [shell_work::FLAG] => shell_work::worker_main(),
-        _ => bail!("uso: muelle [--quit | --restore | --autostart on|off]"),
+        _ => bail!("uso: muelle [--quit | --restore | --autostart on|off | --stream on|off]"),
     }
 }
 

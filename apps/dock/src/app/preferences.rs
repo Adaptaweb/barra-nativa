@@ -179,7 +179,9 @@ impl App {
             taskbar_pins: self.config.taskbar_pins.clone(),
             ..for_this_display(saved)
         };
-        if config == self.config {
+        // `muelle --stream` changes the look without changing the settings.
+        let streaming_changed = crate::appearance::refresh_streaming();
+        if config == self.config && !streaming_changed {
             return Ok(());
         }
         self.stop_mascot();
