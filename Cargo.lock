@@ -2265,7 +2265,7 @@ dependencies = [
 
 [[package]]
 name = "muelle"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2288,7 +2288,7 @@ dependencies = [
 
 [[package]]
 name = "muelle-config"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2297,11 +2297,11 @@ dependencies = [
 
 [[package]]
 name = "muelle-core"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "muelle-settings"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.3.4",
@@ -2321,7 +2321,7 @@ dependencies = [
 
 [[package]]
 name = "muelle-shell"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
