@@ -129,9 +129,25 @@ fn diagnose(when: &str) {
     } else {
         "la de Windows"
     };
-    let count = ENTRIES.lock().map_or(0, |list| list.len());
+    let (count, apps) = ENTRIES.lock().map_or((0, String::new()), |list| {
+        let apps: Vec<String> = list
+            .iter()
+            .map(|e| {
+                let name = e.tip.lines().next().unwrap_or("").chars().take(40).collect::<String>();
+                let mut flags = String::new();
+                if e.hidden {
+                    flags.push_str(" oculto");
+                }
+                if e.hicon == 0 {
+                    flags.push_str(" sin icono");
+                }
+                format!("«{name}»{flags}")
+            })
+            .collect();
+        (list.len(), apps.join(", "))
+    });
     crate::log::line(&format!(
-        "bandeja ({when}): las apps encuentran {found}; barra de Windows {}; Barra como administrador: {}; avisos recibidos {}, iconos {count}",
+        "bandeja ({when}): las apps encuentran {found}; barra de Windows {}; Barra como administrador: {}; avisos recibidos {}, iconos {count}: {apps}",
         if explorer_tray().is_some() { "presente" } else { "ausente" },
         if crate::launcher::process_is_elevated(std::process::id()) { "sí" } else { "no" },
         RECEIVED.load(Ordering::Relaxed),
@@ -194,7 +210,10 @@ fn apply(data: &ShellTrayData) {
         NIM_ADD | NIM_MODIFY => {
             let index = match list.iter().position(|e| same(e, n)) {
                 Some(index) => index,
-                None if data.message == NIM_MODIFY => return,
+                // An icon added before this tray existed, whose app only
+                // updates it now (many never answer "TaskbarCreated"): known
+                // from its picture, it is taken in as if just added.
+                None if data.message == NIM_MODIFY && n.flags & NIF_ICON == 0 => return,
                 None => {
                     list.push(Entry {
                         hwnd: n.hwnd,
@@ -340,9 +359,19 @@ pub fn start(changed: fn()) {
             // the window lets them in.
             let _ = ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, None);
             diagnose("al iniciar");
+            // Asked again a little later: apps still starting, or busy at the
+            // first call, answer one of these.
             thread::spawn(|| {
-                thread::sleep(Duration::from_secs(8));
-                diagnose("a los 8 s");
+                let created = RegisterWindowMessageW(w!("TaskbarCreated"));
+                for (wait, when) in [(3, None), (5, Some("a los 8 s")), (12, None), (40, Some("al minuto"))] {
+                    thread::sleep(Duration::from_secs(wait));
+                    match when {
+                        Some(when) => diagnose(when),
+                        None => {
+                            let _ = PostMessageW(Some(HWND_BROADCAST), created, WPARAM(0), LPARAM(0));
+                        }
+                    }
+                }
             });
             let raised = hwnd.0 as isize;
             // Stay first among the Shell_TrayWnd windows apps look for.
