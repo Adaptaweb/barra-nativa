@@ -116,6 +116,33 @@ static OWN: AtomicIsize = AtomicIsize::new(0);
 /// `Shell_NotifyIcon` calls received, for the startup diagnosis in the log.
 static RECEIVED: AtomicUsize = AtomicUsize::new(0);
 
+/// The file name of the program that owns `hwnd`, for the log.
+fn program_of(hwnd: u32) -> String {
+    use windows::{
+        Win32::{
+            Foundation::CloseHandle,
+            System::Threading::{OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW},
+        },
+        core::PWSTR,
+    };
+    let pid = pid_of(HWND(hwnd as isize as _));
+    // SAFETY: The handle is closed before leaving; the buffer has its stated length.
+    unsafe {
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return format!("pid {pid}");
+        };
+        let mut buffer = [0u16; 512];
+        let mut len = buffer.len() as u32;
+        let name = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buffer.as_mut_ptr()), &mut len)
+            .ok()
+            .map(|()| String::from_utf16_lossy(&buffer[..len as usize]))
+            .and_then(|path| path.rsplit('\\').next().map(str::to_owned))
+            .unwrap_or_else(|| format!("pid {pid}"));
+        let _ = CloseHandle(process);
+        name
+    }
+}
+
 /// Writes to the log what decides whether apps' icons reach this tray: a
 /// tray that shows no apps on one machine can then be told apart.
 fn diagnose(when: &str) {
@@ -133,7 +160,7 @@ fn diagnose(when: &str) {
         let apps: Vec<String> = list
             .iter()
             .map(|e| {
-                let name = e.tip.lines().next().unwrap_or("").chars().take(40).collect::<String>();
+                let name = e.tip.lines().next().unwrap_or("").chars().take(30).collect::<String>();
                 let mut flags = String::new();
                 if e.hidden {
                     flags.push_str(" oculto");
@@ -141,7 +168,7 @@ fn diagnose(when: &str) {
                 if e.hicon == 0 {
                     flags.push_str(" sin icono");
                 }
-                format!("«{name}»{flags}")
+                format!("{} «{name}»{flags}", program_of(e.hwnd))
             })
             .collect();
         (list.len(), apps.join(", "))
