@@ -23,7 +23,8 @@ use windows::{
         Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
         System::{DataExchange::COPYDATASTRUCT, LibraryLoader::GetModuleHandleW},
         UI::WindowsAndMessaging::{
-            AllowSetForegroundWindow, CreateWindowExW, DefWindowProcW, DispatchMessageW,
+            AllowSetForegroundWindow, ChangeWindowMessageFilterEx, CreateWindowExW, FindWindowW,
+            MSGFLT_ALLOW, DefWindowProcW, DispatchMessageW,
             EnumWindows, GetClassNameW, GetCursorPos, GetMessageW, GetWindowThreadProcessId,
             HICON, HWND_BOTTOM, HWND_BROADCAST, HWND_TOPMOST, IsWindow, MSG, PostMessageW, RegisterClassW,
             RegisterWindowMessageW, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
@@ -112,6 +113,30 @@ pub struct TrayIcon {
 static ENTRIES: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
 static CHANGED: OnceLock<Sender<()>> = OnceLock::new();
 static OWN: AtomicIsize = AtomicIsize::new(0);
+/// `Shell_NotifyIcon` calls received, for the startup diagnosis in the log.
+static RECEIVED: AtomicUsize = AtomicUsize::new(0);
+
+/// Writes to the log what decides whether apps' icons reach this tray: a
+/// tray that shows no apps on one machine can then be told apart.
+fn diagnose(when: &str) {
+    let own = OWN.load(Ordering::Acquire);
+    // SAFETY: A read-only window lookup, the same one `Shell_NotifyIcon` does.
+    let first = unsafe { FindWindowW(w!("Shell_TrayWnd"), None) }.map_or(0, |h| h.0 as isize);
+    let found = if first == 0 {
+        "ninguna"
+    } else if first == own {
+        "la de Barra"
+    } else {
+        "la de Windows"
+    };
+    let count = ENTRIES.lock().map_or(0, |list| list.len());
+    crate::log::line(&format!(
+        "bandeja ({when}): las apps encuentran {found}; barra de Windows {}; Barra como administrador: {}; avisos recibidos {}, iconos {count}",
+        if explorer_tray().is_some() { "presente" } else { "ausente" },
+        if crate::launcher::process_is_elevated(std::process::id()) { "sí" } else { "no" },
+        RECEIVED.load(Ordering::Relaxed),
+    ));
+}
 
 fn text(buffer: &[u16]) -> String {
     let n = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
@@ -220,6 +245,7 @@ unsafe extern "system" fn tray_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) 
                 && !copy.lpData.is_null()
             {
                 let data = std::ptr::read_unaligned(copy.lpData as *const ShellTrayData);
+                RECEIVED.fetch_add(1, Ordering::Relaxed);
                 apply(&data);
                 if let Some(tx) = CHANGED.get() {
                     let _ = tx.send(());
@@ -309,6 +335,15 @@ pub fn start(changed: fn()) {
                 return;
             };
             OWN.store(hwnd.0 as isize, Ordering::Release);
+            // Apps send their icons with WM_COPYDATA. Should Barra run with
+            // more rights than they do, Windows drops those messages unless
+            // the window lets them in.
+            let _ = ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, None);
+            diagnose("al iniciar");
+            thread::spawn(|| {
+                thread::sleep(Duration::from_secs(8));
+                diagnose("a los 8 s");
+            });
             let raised = hwnd.0 as isize;
             // Stay first among the Shell_TrayWnd windows apps look for.
             thread::spawn(move || {
