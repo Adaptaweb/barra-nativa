@@ -63,9 +63,14 @@ pub fn set(choice: Appearance) {
     refresh_streaming();
 }
 
+/// Whether the streaming marker is there now.
+pub fn streaming_marked() -> bool {
+    streaming_marker().is_some_and(|path| path.exists())
+}
+
 /// Reads again whether the desktop is being streamed; `true` if that changed.
 pub fn refresh_streaming() -> bool {
-    let on = streaming_marker().is_some_and(|path| path.exists());
+    let on = streaming_marked();
     STREAMING.swap(on, Ordering::Relaxed) != on
 }
 

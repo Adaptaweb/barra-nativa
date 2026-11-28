@@ -392,6 +392,10 @@ pub fn run() -> Result<()> {
     // Hiding the taskbar is a synchronous Explorer call that takes 50–500 ms
     // depending on load. Run it off the UI thread after the dock is visible.
     query_bin_in_background();
+    // Moonlight sessions through Sunshine: liquid glass steps aside while one is connected.
+    if !muelle_shell::displays::is_secondary_process() {
+        crate::stream_watch::spawn();
+    }
     with_app("ocultar la barra de Windows", |app| {
         app.request_taskbar(false)
     });
